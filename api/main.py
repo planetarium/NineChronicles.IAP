@@ -2,8 +2,9 @@ import logging
 
 import uvicorn
 from fastapi import FastAPI
+from starlette.responses import FileResponse
 
-from api.config import config
+from api import settings
 
 __VERSION__ = "0.1.0"
 
@@ -27,7 +28,7 @@ def ping():
     return "pong"
 
 
-@app.get("/robots.txt", tags=["Default"])
+@app.get("/robots.txt", response_class=FileResponse, tags=["Default"])
 def robots():
     """
     # robots.txt: Disallow bots
@@ -39,7 +40,7 @@ def robots():
 
 
 logger = logging.getLogger()
-logger.setLevel(config.get("LOG_LEVEL", logging.INFO))
+logger.setLevel(settings.LOGGING_LEVEL)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", reload=config.get("DEBUG", False))
+    uvicorn.run("main:app", reload=settings.DEBUG)
