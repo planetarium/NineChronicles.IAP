@@ -161,3 +161,6 @@ cython_debug/
 
 # Local app settings
 **/settings/local.py
+
+# Alembic
+alembic.ini
