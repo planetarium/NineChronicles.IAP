@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "NineChronicles In-app Purchase Service"
 authors = ["hyeon <hyeon@planetariumhq.com>"]
 readme = "README.md"
-packages = [{include = "api"}]
+packages = [{include = "iap"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"

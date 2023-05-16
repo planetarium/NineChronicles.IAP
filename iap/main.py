@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.responses import FileResponse
 
-from api import settings
+from iap import routes, settings
 
 __VERSION__ = "0.1.0"
 
@@ -12,7 +12,7 @@ app = FastAPI(
     title="Nine Chronicles In-app Purchase Validation Service",
     description="",
     version=__VERSION__,
-    root_path=f"/",
+    root_path="/",
 )
 
 
@@ -41,6 +41,9 @@ def robots():
 
 logger = logging.getLogger()
 logger.setLevel(settings.LOGGING_LEVEL)
+
+for router in routes.__all__:
+    app.include_router(router.router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", reload=settings.DEBUG)

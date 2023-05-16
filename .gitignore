@@ -160,4 +160,4 @@ cython_debug/
 .idea/
 
 # Local app settings
-api/settings/local.py
+**/settings/local.py

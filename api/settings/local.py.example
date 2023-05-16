@@ -1,4 +1,0 @@
-import logging
-
-DEBUG = True
-LOGGING_LEVEL = logging.DEBUG
