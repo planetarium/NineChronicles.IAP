@@ -159,6 +159,9 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 
+# Google developeer API credential
+*-credentials.json
+
 # Local app settings
 **/settings/local.py
 
