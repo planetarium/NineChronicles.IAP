@@ -2,12 +2,12 @@
 name = "ninechronicles-iap"
 version = "0.1.0"
 description = "NineChronicles In-app Purchase Service"
-authors = ["hyeon <hyeon@planetariumhq.com>"]
+authors = ["hyeon <hyeon+iap@planetariumhq.com>"]
 readme = "README.md"
 packages = [{include = "iap"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 fastapi = "^0.95.1"
 psycopg2-binary = "^2.9.6"
 sqlalchemy = "^2.0.12"
