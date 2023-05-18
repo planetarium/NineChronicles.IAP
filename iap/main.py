@@ -21,8 +21,6 @@ app = FastAPI(
 @app.get("/ping", tags=["Default"])
 def ping():
     """
-    # Ping
-    ---
     This API is for test connectivity.
 
     This API always returns string "pong" with HTTP status code 200
@@ -30,12 +28,11 @@ def ping():
     return "pong"
 
 
-@app.get("/robots.txt", response_class=FileResponse, tags=["Default"])
+@app.get("/robots.txt", response_class=FileResponse, tags=["Default"], summary="Returns robots.txt")
 def robots():
     """
-    # robots.txt: Disallow bots
-    ---
     This API returns standard robots.txt file.
+
     The robots.txt blocks all agent for all routes.
     """
     return "api/robots.txt"
