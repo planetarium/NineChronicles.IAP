@@ -4,6 +4,7 @@ import os.path
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from starlette.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 
 from iap import routes, settings
 
@@ -40,6 +41,11 @@ def robots():
     return "api/robots.txt"
 
 
+@app.get("/favicon.png", response_class=FileResponse, tags=["Default"])
+def favicon():
+    return "frontend/build/favicon.png"
+
+
 @app.get("/", response_class=FileResponse, tags=["View"], summary="Index page")
 @app.get(
     "/{page}", response_class=FileResponse, tags=["View"], summary="Opens pages provided name",
@@ -59,6 +65,7 @@ logger.setLevel(settings.LOGGING_LEVEL)
 
 for router in routes.__all__:
     app.include_router(router.router)
+app.mount("", StaticFiles(directory="frontend/build"))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", reload=settings.DEBUG)
