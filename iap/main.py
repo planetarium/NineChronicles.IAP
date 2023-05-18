@@ -1,7 +1,8 @@
 import logging
+import os.path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from starlette.responses import FileResponse
 
 from iap import routes, settings
@@ -37,6 +38,20 @@ def robots():
     The robots.txt blocks all agent for all routes.
     """
     return "api/robots.txt"
+
+
+@app.get("/", response_class=FileResponse, tags=["View"], summary="Index page")
+@app.get(
+    "/{page}", response_class=FileResponse, tags=["View"], summary="Opens pages provided name",
+    description="""Frontend pages are controlled by Svelte.  
+If you access to any page other than index directly from browser, this function will find right page to show.
+"""
+)
+def view_page(page: str = "index"):
+    # NOTICE: Set html name matches to path.
+    if os.path.isfile(f"frontend/build/{page}.html"):
+        return f"frontend/build/{page}.html"
+    raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
 
 
 logger = logging.getLogger()
