@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
-from iap import routes, settings
+from iap import api, settings
 
 __VERSION__ = "0.1.0"
 
@@ -60,7 +60,7 @@ def view_page(page: str = "index"):
 logger = logging.getLogger()
 logger.setLevel(settings.LOGGING_LEVEL)
 
-for router in routes.__all__:
+for router in api.__all__:
     app.include_router(router.router)
 app.mount("", StaticFiles(directory="frontend/build"))
 
