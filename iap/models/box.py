@@ -1,7 +1,7 @@
 from enum import IntEnum
 
 from sqlalchemy import Column, Enum, Float, ForeignKey, Integer, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from iap.models.base import AutoIdMixin, Base
 
@@ -20,14 +20,14 @@ class BoxItem(AutoIdMixin, Base):
     __tablename__ = "box_item"
     box_id = Column(Integer, ForeignKey("box.id"), primary_key=True)
     item_id = Column(Integer, ForeignKey("item.id"))
-    item = relationship("Item", foreign_keys=[item_id], lazy="eager")
+    item = relationship("Item", foreign_keys=[item_id], lazy="joined")
     count = Column(Integer, nullable=False, doc="Packed item count in this box")
 
 
 class Box(AutoIdMixin, Base):
     __tablename__ = "box"
     name = Column(Text, nullable=False, doc="Box Name for Manager")
-    item_list = relationship(BoxItem, lazy="eager")
+    item_list = relationship(BoxItem, lazy="joined", backref=backref("box"))
     price = Column(Float, nullable=False, doc="NCG price to pack this box")
     status = Column(Enum(BoxStatus), nullable=False, default=BoxStatus.CREATED, doc="Status of this box")
     # DISCUSS: Are they needed?
