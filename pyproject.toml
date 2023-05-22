@@ -12,6 +12,7 @@ fastapi = "^0.95.1"
 psycopg2-binary = "^2.9.6"
 sqlalchemy = "^2.0.12"
 uvicorn = "^0.22.0"
+boto3 = "^1.26.137"
 
 
 [tool.poetry.group.dev.dependencies]
