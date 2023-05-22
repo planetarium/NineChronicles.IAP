@@ -13,7 +13,7 @@ router = APIRouter(
 )
 
 
-@router.get("/list", response_model=List[ItemSchema])
+@router.get("", response_model=List[ItemSchema])
 def item_list(sess=Depends(session)):
     items = sess.execute(select(Item)).scalars().fetchall()
     return items
