@@ -47,7 +47,10 @@ def favicon():
 @app.get(
     "/{page}", response_class=FileResponse, tags=["View"], summary="Opens pages provided name",
     description="""Frontend pages are controlled by Svelte.  
-If you access to any page other than index directly from browser, this function will find right page to show.
+If you access to any page other than index directly from browser, this function will find right page to show.  
+
+Available page list:
+- box
 """
 )
 def view_page(page: str = "index"):
@@ -60,8 +63,7 @@ def view_page(page: str = "index"):
 logger = logging.getLogger()
 logger.setLevel(settings.LOGGING_LEVEL)
 
-for router in api.__all__:
-    app.include_router(router.router)
+app.include_router(api.router)
 app.mount("", StaticFiles(directory="frontend/build"))
 
 if __name__ == "__main__":
