@@ -1,0 +1,38 @@
+{
+	"compilerOptions": {
+		"paths": {},
+		"rootDirs": [
+			"frontend",
+			"./types"
+		],
+		"importsNotUsedAsValues": "error",
+		"isolatedModules": true,
+		"preserveValueImports": true,
+		"lib": [
+			"esnext",
+			"DOM",
+			"DOM.Iterable"
+		],
+		"moduleResolution": "node",
+		"module": "esnext",
+		"target": "esnext"
+	},
+	"include": [
+		"ambient.d.ts",
+		"./types/**/$types.d.ts",
+		"frontend/vite.config.ts",
+		"frontend/src/**/*.js",
+		"frontend/src/**/*.ts",
+		"frontend/src/**/*.svelte",
+		"frontend/tests/**/*.js",
+		"frontend/tests/**/*.ts",
+		"frontend/tests/**/*.svelte"
+	],
+	"exclude": [
+		"frontend/node_modules/**",
+		"./[!ambient.d.ts]**",
+		"frontend/src/service-worker.js",
+		"frontend/src/service-worker.ts",
+		"frontend/src/service-worker.d.ts"
+	]
+}
