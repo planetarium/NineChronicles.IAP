@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  MyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: MyFunction
+      Runtime: python3.10
+      CodeUri: worker
+      Handler: handler.handle
+      Timeout: 10
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !Ref MyQueue
+
+  MyQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: MyQueue
