@@ -9,7 +9,7 @@ sys.path = ["", ".."] + sys.path[1:]
 from common import models
 
 for model in models.__all__:
-    import_module(f".{model}", "iap.models")
+    import_module(f".{model}", "common.models")
 from common.models.base import Base
 
 # this is the Alembic Config object, which provides
