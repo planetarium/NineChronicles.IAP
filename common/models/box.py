@@ -3,7 +3,7 @@ from enum import IntEnum
 from sqlalchemy import Column, Enum, Float, ForeignKey, Integer, Text
 from sqlalchemy.orm import backref, relationship
 
-from iap.models.base import AutoIdMixin, Base
+from common.models.base import AutoIdMixin, Base
 
 
 class BoxStatus(IntEnum):

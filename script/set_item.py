@@ -4,7 +4,7 @@ from csv import DictReader
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from iap.models.item import Item
+from common.models import Item
 
 
 def set_item_from_csv_to_db(csv_path: str, db_uri: str):

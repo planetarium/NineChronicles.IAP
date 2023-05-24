@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, Text
 
-from iap.models.base import Base
+from common.models.base import Base
 
 
 class Item(Base):

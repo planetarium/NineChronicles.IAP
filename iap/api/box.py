@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from iap.dependencies import session
-from iap.models.box import Box, BoxItem
+from common.models.box import Box, BoxItem
 from iap.schemas.box import BoxSchema
 
 router = APIRouter(

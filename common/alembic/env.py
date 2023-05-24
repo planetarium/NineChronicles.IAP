@@ -6,11 +6,11 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 sys.path = ["", ".."] + sys.path[1:]
-from iap import models
+from common import models
 
 for model in models.__all__:
     import_module(f".{model}", "iap.models")
-from iap.models.base import Base
+from common.models.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

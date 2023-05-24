@@ -1,8 +1,8 @@
 from typing import List, Optional
 
-from pydantic import BaseModel as Schema, Field, validator
+from pydantic import BaseModel as Schema, validator
 
-from iap.models.box import BoxStatus
+from common.models import BoxStatus
 from iap.schemas.item import ItemSchema
 
 
