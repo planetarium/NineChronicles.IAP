@@ -35,12 +35,12 @@ def robots():
 
     The robots.txt blocks all agent for all routes.
     """
-    return "api/robots.txt"
+    return "iap/robots.txt"
 
 
 @app.get("/favicon.png", response_class=FileResponse, tags=["Default"])
 def favicon():
-    return "frontend/build/favicon.png"
+    return "iap/frontend/build/favicon.png"
 
 
 @app.get("/", response_class=FileResponse, tags=["View"], summary="Index page")
@@ -55,8 +55,8 @@ Available page list:
 )
 def view_page(page: str = "index"):
     # NOTICE: Set html name matches to path.
-    if os.path.isfile(f"frontend/build/{page}.html"):
-        return f"frontend/build/{page}.html"
+    if os.path.isfile(f"iap/frontend/build/{page}.html"):
+        return f"iap/frontend/build/{page}.html"
     raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
 
 
@@ -64,7 +64,7 @@ logger = logging.getLogger()
 logger.setLevel(settings.LOGGING_LEVEL)
 
 app.include_router(api.router)
-app.mount("", StaticFiles(directory="frontend/build"))
+app.mount("", StaticFiles(directory="iap/frontend/build"))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", reload=settings.DEBUG)

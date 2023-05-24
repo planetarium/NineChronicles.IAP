@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel as Schema, validator
 
-from common.models import BoxStatus
+from common.models.box import BoxStatus
 from iap.schemas.item import ItemSchema
 
 

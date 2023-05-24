@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from iap.dependencies import session
 from common.models.box import Box, BoxItem
+from iap.dependencies import session
 from iap.schemas.box import BoxSchema
 
 router = APIRouter(

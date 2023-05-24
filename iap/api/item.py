@@ -3,8 +3,8 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
-from iap.dependencies import session
 from common.models.item import Item
+from iap.dependencies import session
 from iap.schemas.item import ItemSchema
 
 router = APIRouter(
