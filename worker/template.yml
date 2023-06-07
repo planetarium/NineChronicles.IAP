@@ -2,14 +2,23 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
 Resources:
-  MyFunction:
+  WorkerLayer:
+    Type: AWS::Serverless::LayerVersion
+    LayerName: WorkerLayer
+    Properties:
+      ContentUri: layer
+      CompatibleRuntimes:
+        - python3.10
+  WorkerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: MyFunction
+      FunctionName: WorkerFunction
       Runtime: python3.10
       CodeUri: worker
       Handler: handler.handle
       Timeout: 10
+      Layers:
+        - !Ref WorkerLayer
       Events:
         MySQSEvent:
           Type: SQS
