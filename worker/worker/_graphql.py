@@ -30,7 +30,8 @@ HOST_LIST = {
 
 class GQL:
     def __init__(self):
-        self._url = f"{random.choice(HOST_LIST[os.environ.get('STAGE')])}/graphql"
+        stage = os.environ.get("STAGE", "development")
+        self._url = f"{random.choice(HOST_LIST[stage])}/graphql"
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
