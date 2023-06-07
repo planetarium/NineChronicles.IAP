@@ -66,9 +66,9 @@ class GQL:
             logging.error(f"GQL failed to get next Nonce: {resp['errors']}")
             return -1
 
-        return max(resp["transaction"]["nextTxNonce"], 1)  # 1 is minimum nonce
+        return resp["transaction"]["nextTxNonce"]
 
-    def _transfer_asset(self, pubkey: str, nonce: int, **kwargs) -> bytes:
+    def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
         ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
         sender = kwargs.get("sender")
         recipient = kwargs.get("recipient")
@@ -85,7 +85,7 @@ class GQL:
         query = dsl_gql(
             DSLQuery(
                 self.ds.StandaloneQuery.actionTxQuery.args(
-                    publicKey=pubkey,
+                    publicKey=pubkey.hex(),
                     nonce=nonce,
                     timestamp=ts,
                 ).select(
