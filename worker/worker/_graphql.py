@@ -12,8 +12,8 @@ from graphql import DocumentNode
 CURRENCY_LIST = ("NCG", "CRYSTAL")
 
 HOST_LIST = {
-    "local": [
-        "http://localhost",
+    "development": [
+        os.environ.get("LOCAL_HEADLESS", "http://localhost/graphql")
     ],
     "internal": [
         "https://9c-internal-rpc-1.nine-chronicles.com",
