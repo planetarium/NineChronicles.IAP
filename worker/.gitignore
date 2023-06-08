@@ -1,0 +1,8 @@
+# AWS Lambda & SAM
+.aws-sam/
+layer/
+## requirements.txt is just for lambda layer deployment
+requirements.txt
+
+# Test
+sample_event.json
