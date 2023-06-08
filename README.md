@@ -158,3 +158,65 @@ env=local uvicorn iap.main:app --reload
 ```
 
 You can set `env=local` environment variable with your favorite ways.
+
+# Build and deploy
+
+NineChronicles.IAP uses [AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/cli.html) to build and deploy application to
+AWS.
+
+## 0. Setup your AWS account
+
+There are several ways to deploy lambda functions to AWS.  
+In this document, only "IAM user with credentials" case is covered.
+
+1. Create or select IAM user for CDK.
+2. Setup IAM permissions.  
+   You can reference `iam_role_example.json` to check what permissions are required to where.
+3. Create credentials and set it to your local machine.
+    - You can set it to `~/.aws/credentials`
+
+Replace `[AWS_PROFILE]` to your profile name in following commands.
+
+## 1. Prepare Lambda Layer
+
+Functions in NineChronicles.IAP cannot run itself without dependencies and AWS Lambda Layer ca do this.  
+Since we're managing packages using poetry, we need to make directory with dependent packages for lamda layer.
+
+```shell
+# For iap service
+pushd iap
+poetry shell
+poetry export --without-hashes -o requirements.txt
+pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/ --upgrade
+exit
+popd
+# For worker
+pushd worker
+poetry shell
+poetry export --without-hashes -o requirements.txt
+pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/ --upgrade
+exit
+popd
+```
+
+## 2. Synthesize CDK Stack
+
+```shell
+cdk synth --profile [AWS_PROFILE]
+```
+
+## 3. (Optional) Bootstrap CDK to Deploy CDK Stack
+
+You have to bootstrap CDK when you're very first time to deploy stack on your AWS account.  
+You don't need to check whether this step is required or not. Just run `step 4` and the CDK will let you know if you
+need to bootstrap.
+
+```shell
+cdk bootstrap --profile [AWS_PROFILE]
+```
+
+## 4. Deploy CDK Stack
+
+```shell
+cdk deploy --profile [AWS_PROFILE] --app "cdk.out" --all
+```
