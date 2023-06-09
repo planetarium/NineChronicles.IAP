@@ -162,15 +162,5 @@ cython_debug/
 # Google developeer API credential
 *-credentials.json
 
-# Local app settings
-**/settings/local.py
-
-# Alembic
-alembic.ini
-
 # CDK
-*/layer/
 cdk.out/
-## These are created by poetry to create Lambda Layer. Manage packages using pyproject.toml.
-iap/requirements.txt
-worker/requirements.txt

@@ -1,8 +1,7 @@
-# AWS Lambda & SAM
-.aws-sam/
+# AWS Lambda
 layer/
 ## requirements.txt is just for lambda layer
 requirements.txt
 
-# Test
-sample_event.json
+# Settings
+settings/local.py
