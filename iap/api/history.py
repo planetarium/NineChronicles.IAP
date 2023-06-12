@@ -21,6 +21,7 @@ router = APIRouter(
 
 stage = os.environ.get("STAGE", "development")
 explorer_url = f"{random.choice(HOST_LIST[stage])}/graphql/explorer"
+logger = logging.getLogger("iap_logger")
 
 
 def request(url: str, data: Dict) -> Dict:
@@ -38,6 +39,7 @@ def request(url: str, data: Dict) -> Dict:
 
 
 def sync_block(block_data):
+    # TODO
     print(block_data)
     print("=" * 32)
 
@@ -63,7 +65,7 @@ def sync_block_history(start: int = None, end: int = None, limit: int = 100, ses
         if not last_block:
             start = end - limit
 
-    print(f"{start} ~ {end}, limit {limit}")
+    logger.info(f"{start} ~ {end}, limit {limit}")
 
     query = f"""
     query {{ blockQuery {{ blocks(desc: true offset: {tip - start} limit: {limit}) {{ 
@@ -73,10 +75,15 @@ def sync_block_history(start: int = None, end: int = None, limit: int = 100, ses
     resp = request(explorer_url, {"query": query})
 
     block_list = resp["data"]["blockQuery"]["blocks"]
+    logger.info(f"{len(block_list)} blocks are fetched")
     if len(block_list) == 0:
-        return f"No block containing transactions found between {start} and {end}"
+        msg = f"No block containing transactions found between {start} and {end}"
+        logger.warning(msg)
+        return msg
 
     for block in block_list:
         sync_block(block)
 
-    return f"{len(block_list)} blocks synced: from {block_list[-1]['index']} to {block_list[0]['index']}"
+    result = f"{len(block_list)} blocks synced: from {block_list[-1]['index']} to {block_list[0]['index']}"
+    logging.info(result)
+    return result
