@@ -2,7 +2,7 @@ import os
 
 HOST_LIST = {
     "development": [
-        os.environ.get("LOCAL_HEADLESS", "http://localhost/graphql")
+        os.environ.get("LOCAL_HEADLESS", "http://localhost")
     ],
     "internal": [
         "https://9c-internal-rpc-1.nine-chronicles.com",
