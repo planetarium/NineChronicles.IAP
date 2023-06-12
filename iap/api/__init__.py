@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from iap.api import box, item, history
+from iap.api import history
 
 router = APIRouter(
     prefix="/api",
@@ -8,8 +8,6 @@ router = APIRouter(
 )
 
 __all__ = [
-    box,
-    item,
     history,
 ]
 
