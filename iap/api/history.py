@@ -10,6 +10,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
+from common import logger
 from common.consts import HOST_LIST
 from common.models.garage import GarageActionHistory
 from iap.dependencies import session
@@ -28,12 +29,12 @@ def request(url: str, data: Dict) -> Dict:
     resp = requests.post(url, json=data)
     if resp.status_code != 200:
         err = f"Block tip query to {explorer_url} failed with status code {resp.status_code}"
-        logging.error(err)
+        logger.error(err)
         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=err)
     r = resp.json()
     if "errors" in r:
         err = f"Block tip query failed with error : {r['errors']}"
-        logging.error(err)
+        logger.error(err)
         raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail=err)
     return r
 
@@ -85,5 +86,5 @@ def sync_block_history(start: int = None, end: int = None, limit: int = 100, ses
         sync_block(block)
 
     result = f"{len(block_list)} blocks synced: from {block_list[-1]['index']} to {block_list[0]['index']}"
-    logging.info(result)
+    logger.info(result)
     return result

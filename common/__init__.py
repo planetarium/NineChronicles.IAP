@@ -11,9 +11,14 @@ COMMON_LAMBDA_EXCLUDE = [
     "common/pyproject.toml",
 ]
 
-logger = logging.Logger("iap_logger")
 try:
-    logger.setLevel(getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper()))
+    loglevel = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper())
 except AttributeError:
-    # Default loglevel is info
-    logger.setLevel(logging.INFO)
+    loglevel = logging.INFO
+
+logger = logging.Logger("iap_logger")
+logger.setLevel(loglevel)
+
+handler = logging.StreamHandler()
+handler.setLevel(loglevel)
+logger.addHandler(handler)
