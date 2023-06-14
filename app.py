@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import aws_cdk as cdk
 
+from common.shared_stack import SharedStack
 from iap.iap_cdk_stack import APIStack
-from shared_stack import SharedStack
 from worker.worker_cdk_stack import WorkerStack
 
 
