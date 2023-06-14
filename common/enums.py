@@ -15,6 +15,14 @@ class Store(IntEnum):
     GOOGLE_TEST = 92
 
 
+class ReceiptStatus(IntEnum):
+    INIT = 0
+    VALIDATION_REQUEST = 1
+    VALID = 10
+    INVALID = 91
+    UNKNOWN = 99
+
+
 class TxStatus(IntEnum):
     CREATED = 1
     STAGED = 2
