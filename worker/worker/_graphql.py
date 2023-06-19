@@ -52,6 +52,33 @@ class GQL:
 
         return resp["transaction"]["nextTxNonce"]
 
+    def _unload_from_garage(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
+        ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
+        fav_data = kwargs.get("fav_data")
+        inventory_addr = kwargs.get("inventory_addr")
+        item_data = kwargs.get("item_data")
+
+        if not fav_data and not item_data:
+            raise ValueError("Nothing to unload")
+
+        query = dsl_gql(
+            DSLQuery(
+                self.ds.StandaloneQuery.actionTxQuery.args(
+                    publicKey=pubkey.hex(),
+                    nonce=nonce,
+                    timestamp=ts,
+                ).select(
+                    self.ds.ActionTxQuery.unloadFromMyGarages.args(
+                        addressAndFungibleAssetValues=fav_data,
+                        inventoryAddr=inventory_addr,
+                        fungibleIdAndCounts=item_data,
+                    )
+                )
+            )
+        )
+        result = self.client.execute(query)
+        return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
+
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
         ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
         sender = kwargs.get("sender")
