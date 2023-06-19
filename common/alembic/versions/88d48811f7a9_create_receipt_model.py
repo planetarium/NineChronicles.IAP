@@ -1,4 +1,4 @@
-"""Update Receipt model
+"""Create Receipt model
 
 Revision ID: 88d48811f7a9
 Revises: 1ab63d3081f4
