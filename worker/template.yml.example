@@ -1,6 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
+Globals:
+  Function:
+    Environment:
+      Variables:
+        STAGE: development
+        LOCAL_HEADLESS: [SCHEME]://[HOST]:[PORT]
+        DB_URI: [SCHEME]://[ID]:[PW]@[HOST]/[DB_NAME]
+
 Resources:
   WorkerLayer:
     Type: AWS::Serverless::LayerVersion
@@ -19,6 +27,7 @@ Resources:
       Timeout: 10
       Layers:
         - !Ref WorkerLayer
+
       Events:
         MySQSEvent:
           Type: SQS
