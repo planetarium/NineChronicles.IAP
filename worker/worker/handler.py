@@ -73,7 +73,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     } for x in product.fav_list]
 
     item_data = [{
-        "fungibleId": {"value": x.fungible_id},
+        "fungibleId": x.fungible_id,
         "count": x.amount
     } for x in product.item_list]
 

@@ -69,7 +69,7 @@ class GQL:
                     timestamp=ts,
                 ).select(
                     self.ds.ActionTxQuery.unloadFromMyGarages.args(
-                        addressAndFungibleAssetValues=fav_data,
+                        fungibleAssetValues=fav_data,
                         inventoryAddr=inventory_addr,
                         fungibleIdAndCounts=item_data,
                     )
