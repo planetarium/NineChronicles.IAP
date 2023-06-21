@@ -47,7 +47,7 @@ class WorkerStack(Stack):
             "DB_URI": f"{shared_stack.credentials.username}:{shared_stack.credentials.password}@{shared_stack.rds.instance_endpoint}/iap",
         }
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".gitignore", ]
+        exclude_list = [".idea", ".gitignore", ]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(WORKER_LAMBDA_EXCLUDE)
 
@@ -55,8 +55,8 @@ class WorkerStack(Stack):
             self, f"{stage}-9c-iap-worker-function",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c Action making worker of NineChronicles.IAP",
-            code=_lambda.AssetCode(".", exclude=exclude_list),
-            handler="worker.handler.handle",
+            code=_lambda.AssetCode("worker/worker/", exclude=exclude_list),
+            handler="handler.handle",
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
