@@ -1,4 +1,5 @@
 import aws_cdk as cdk_core
+import boto3
 from aws_cdk import (
     RemovalPolicy, Stack,
     aws_iam as _iam,
@@ -13,7 +14,9 @@ from worker import WORKER_LAMBDA_EXCLUDE
 
 class WorkerStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+        envs = kwargs.get("env")
         stage = kwargs.pop("stage", "development")
+        profile_name = kwargs.pop("profile_name", "default")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
             raise ValueError("Shared stack not found. Please provide shared stack.")
@@ -38,13 +41,43 @@ class WorkerStack(Stack):
                 _iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaVPCAccessExecutionRole"),
             ]
         )
+        # DB Password
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[shared_stack.rds.secret.secret_arn],
+            )
+        )
+        # KMS
+        # FIXME: Move this to github secrets?
+        sess = boto3.Session(region_name=envs.region, profile_name=profile_name)
+        ssm = sess.client("ssm")
+        resp = ssm.get_parameter(Name=f"{stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)
+        kms_key_id = resp["Parameter"]["Value"]
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["kms:GetPublicKey"],
+                resources=[f"arn:aws:kms:{envs.region}:{envs.account}:key/{kms_key_id}"]
+            )
+        )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[f"arn:aws:ssm:ap-northeast-2:838612679705:parameter/{stage}_9c_IAP_KMS_KEY_ID"]
+            )
+        )
 
         # Environment variables
         # ssm = boto3.client("ssm", region_name="us-east-1")
         # Get env.variables from SSM by stage
         env = {
+            "REGION": envs.region,
             "ENV": stage,
-            "DB_URI": f"{shared_stack.credentials.username}:{shared_stack.credentials.password}@{shared_stack.rds.instance_endpoint}/iap",
+            "SECRET_ARN": shared_stack.rds.secret.secret_arn,
+            "DB_URI": f"postgresql://"
+                      f"{shared_stack.credentials.username}:[DB_PASSWORD]"
+                      f"@{shared_stack.rds.db_instance_endpoint_address}"
+                      f"/iap",
         }
         # Lambda Function
         exclude_list = [".idea", ".gitignore", ]

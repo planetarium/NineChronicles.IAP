@@ -1,8 +1,17 @@
 import hmac
+import json
 from hashlib import sha1
 from typing import Union
 
+import boto3
 import eth_utils
+
+
+def fetch_db_password(region: str, secret_arn: str) -> str:
+    sm = boto3.client("secretsmanager", region_name=region)
+    resp = sm.get_secret_value(SecretId=secret_arn)
+    secret = json.loads(resp["SecretString"])
+    return secret["password"]
 
 
 def checksum_encode(addr: bytes) -> str:  # Takes a 20-byte binary address as input

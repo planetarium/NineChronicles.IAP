@@ -15,8 +15,13 @@ from common import logger
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils import fetch_db_password
 
-engine = create_engine(os.environ.get("DB_URI"), pool_size=5, max_overflow=5)
+DB_URI = os.environ.get("DB_URI")
+db_password = fetch_db_password(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
+DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
+
+engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
 @dataclass
