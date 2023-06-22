@@ -5,21 +5,22 @@ description = "NineChronicles In-app Purchase Service"
 authors = ["hyeon <hyeon+iap@planetariumhq.com>"]
 readme = "README.md"
 
-# Main, Common
 [tool.poetry.dependencies]
+# Main, Common
 python = "^3.10"
 psycopg2-binary = "^2.9.6"
 sqlalchemy = "^2.0.15"
 boto3 = "^1.26.137"
 requests = "^2.30.0"
 
-# IAP API
 [tool.poetry.group.iap.dependencies]
+# IAP API
 fastapi = "^0.95.1"
 uvicorn = "^0.22.0"
+mangum = "^0.17.0"
 
-# IAP Worker
 [tool.poetry.group.worker.dependencies]
+# IAP Worker
 pyasn1 = "^0.5.0"
 pycryptodome = "^3.18.0"
 eth-utils = "^2.1.0"
@@ -28,6 +29,7 @@ hexbytes = "^0.3.0"
 gql = { extras = ["requests"], version = "^3.4.1" }
 
 [tool.poetry.group.dev.dependencies]
+# Only for development
 ipython = "^8.13.1"
 pytest = "^7.3.1"
 alembic = "^1.10.4"
