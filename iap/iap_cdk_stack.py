@@ -1,5 +1,4 @@
 import aws_cdk as cdk_core
-import boto3
 from aws_cdk import (
     RemovalPolicy, Stack,
     aws_apigateway as _apig,
@@ -15,6 +14,7 @@ from iap import IAP_LAMBDA_EXCLUDE
 
 class APIStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+        envs = kwargs.get("env")
         stage = kwargs.pop("stage", "development")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
@@ -38,15 +38,29 @@ class APIStack(Stack):
             assumed_by=_iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 _iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaVPCAccessExecutionRole"),
-            ]
+            ],
+        )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[shared_stack.rds.secret.secret_arn],
+            )
         )
 
         # Environment Variables
-        ssm = boto3.client("ssm", region_name="us-east-2")
-        # Get env. variables from SSM by stage
         env = {
+            "REGION_NAME": envs.region,
             "ENV": stage,
-            "DB_URI": f"{shared_stack.credentials.username}:{shared_stack.credentials.password}@{shared_stack.rds.instance_endpoint}/iap",
+            "SECRET_ARN": shared_stack.rds.secret.secret_arn,
+            "DB_URI": f"postgresql://"
+                      f"{shared_stack.credentials.username}:[DB_PASSWORD]"
+                      f"@{shared_stack.rds.db_instance_endpoint_address}"
+                      f"/iap",
+            "LOGGING_LEVEL": "INFO",
+            "DB_ECHO": "False",
+            "SQS_URL": shared_stack.q.queue_url,
+            "GOOGLE_VALIDATION_URL": "",
+            "APPLE_VALIDATION_URL": "",
         }
 
         # Lambda Function

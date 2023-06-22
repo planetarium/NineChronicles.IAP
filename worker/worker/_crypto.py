@@ -14,6 +14,8 @@ from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.type import namedtype, univ
 from pyasn1.type.univ import Integer, SequenceOf
 
+from common.utils import derive_address
+
 
 class ECDSASignatureRecord(univ.Sequence):
     componentType = namedtype.NamedTypes(
@@ -38,7 +40,7 @@ class SPKIRecord(univ.Sequence):
 
 class Account:
     def __init__(self, kms_key: str):
-        self.client = boto3.client("kms", region_name=os.environ.get("REGION", "us-east-2"))  # specify region
+        self.client = boto3.client("kms", region_name=os.environ.get("REGION"))  # specify region
         self._kms_key: str = kms_key
         try:
             self.pubkey_der: bytes = self.client.get_public_key(KeyId=self._kms_key)["PublicKey"]
@@ -53,6 +55,9 @@ class Account:
         record, _ = der_decode(self.pubkey_der, asn1Spec=SPKIRecord())
         print(record)
         self.pubkey: bytes = record["subjectPublicKey"].asOctets()
+
+    def get_item_garage_addr(self, item_id: str):
+        return derive_address(derive_address(self.address, "garage"), item_id)
 
     def __public_key_int_to_eth_address(self, pubkey: int) -> str:
         """

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 import aws_cdk as cdk
 
@@ -14,15 +15,15 @@ class Env:
     stage: str
     account_id: str
     region: str
+    profile_name: Optional[str] = None
 
 
 env = Env(
     stage=os.environ.get("STAGE", "development"),
     account_id=os.environ.get("ACCOUNT_ID", "838612679705"),  # AWS Dev Account
     region=os.environ.get("REGION", "ap-northeast-2"),
+    profile_name=os.environ.get("PROFILE", "default")
 )
-
-print(env.__dict__)
 
 app = cdk.App()
 shared = SharedStack(
@@ -49,6 +50,7 @@ WorkerStack(
     ),
     stage=env.stage,
     shared_stack=shared,
+    profile_name=env.profile_name,
 )
 
 app.synth()

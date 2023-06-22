@@ -9,3 +9,7 @@ DB_ECHO = True
 # Receipt Validation
 GOOGLE_VALIDATION_URL = ""
 APPLE_VALIDATION_URL = ""
+
+# AWS
+REGION_NAME = ""
+SQS_URL = ""
