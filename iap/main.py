@@ -3,18 +3,20 @@ import os.path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from mangum import Mangum
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
 from iap import api, settings
 
 __VERSION__ = "0.1.0"
+env = os.environ.get("ENV", "local")
 
 app = FastAPI(
     title="Nine Chronicles In-app Purchase Validation Service",
     description="",
     version=__VERSION__,
-    root_path="/",
+    root_path=f"/{env}" if env != "local" else "",
 )
 
 
@@ -65,6 +67,8 @@ logger.setLevel(settings.LOGGING_LEVEL)
 
 app.include_router(api.router)
 app.mount("", StaticFiles(directory="iap/frontend/build"))
+
+handler = Mangum(app)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", reload=settings.DEBUG)
