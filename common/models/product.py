@@ -16,13 +16,16 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     weekly_limit = Column(Integer, nullable=True, doc="Purchase limit in 7 days (24 * 7 hours)")
     display_order = Column(Integer, nullable=False, default=-1, doc="Display order in client. Ascending sort.")
     active = Column(Boolean, nullable=False, default=False, doc="Is this product active?")
+
+    fav_list = relationship("FungibleAssetProduct", backref=backref("product"))
+
     ordering = [display_order]
 
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_asset_product"
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
-    product = relationship("Product", foreign_keys=[product_id], backref=backref("fav_list"))
+    # product = relationship("Product", foreign_keys=[product_id], backref=backref("fav_list"))
     ticker = Column(ENUM(Currency, create_type=False), nullable=False)
     amount = Column(Numeric, CheckConstraint("amount > 0"), nullable=False)
 
