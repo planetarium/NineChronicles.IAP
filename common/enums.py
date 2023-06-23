@@ -15,6 +15,11 @@ class Store(IntEnum):
     GOOGLE_TEST = 92
 
 
+class ProductType(Enum):
+    SINGLE = "SINGLE"
+    PKG = "PACKAGE"
+
+
 class ReceiptStatus(IntEnum):
     INIT = 0
     VALIDATION_REQUEST = 1
