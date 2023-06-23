@@ -3,11 +3,15 @@ import os.path
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from mangum import Mangum
+from pydantic import ValidationError
+from pydantic.error_wrappers import _display_error_type_and_ctx
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
+from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
 from common import logger
 from . import api, settings
+from iap.exceptions import ReceiptNotFoundException
 
 __VERSION__ = "0.1.0"
 
@@ -19,6 +23,40 @@ app = FastAPI(
     version=__VERSION__,
     root_path=f"/{env}" if env != "local" else "",
 )
+
+
+@app.exception_handler(ValidationError)
+def handle_validation_error(e: ValidationError):
+    logger.debug(e)
+    ers = e.errors()
+    raise HTTPException(
+        status_code=HTTP_400_BAD_REQUEST, detail={
+            "message": f"{len(ers)} validation errors found",
+            "detail": [
+                {
+                    "location": f"{e['loc']}",
+                    "error_type": _display_error_type_and_ctx(e)
+                }
+                for e in ers
+            ],
+        }
+    )
+
+
+@app.exception_handler(ValueError)
+@app.exception_handler(ReceiptNotFoundException)
+def handle_value_error(e: ValueError):
+    logger.debug(e)
+    raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.exception_handler(Exception)
+def handle_exceptions(e: Exception):
+    logger.error(e)
+    raise HTTPException(
+        status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="An unexpected error occurred. Please contact to manager."
+    )
 
 
 @app.get("/ping", tags=["Default"])
