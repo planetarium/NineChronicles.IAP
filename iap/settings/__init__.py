@@ -5,7 +5,7 @@ from starlette.config import Config
 
 from common.utils import fetch_db_password
 
-env = os.environ.get("ENV")
+env = os.environ.get("ENV", "local")
 db_password = None
 
 if not env:
