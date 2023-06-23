@@ -19,8 +19,6 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
 
     fav_list = relationship("FungibleAssetProduct", backref=backref("product"))
 
-    ordering = [display_order]
-
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_asset_product"

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from iap.api import history, purchase
+from iap.api import history, purchase, product
 
 router = APIRouter(
     prefix="/api",
@@ -10,6 +10,7 @@ router = APIRouter(
 __all__ = [
     history,
     purchase,
+    product,
 ]
 
 for view in __all__:
