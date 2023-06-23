@@ -1,4 +1,3 @@
-import logging
 import os.path
 
 import uvicorn
@@ -7,9 +6,11 @@ from mangum import Mangum
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
-from iap import api, settings
+from common import logger
+from . import api, settings
 
 __VERSION__ = "0.1.0"
+
 env = os.environ.get("ENV", "local")
 
 app = FastAPI(
@@ -61,9 +62,6 @@ def view_page(page: str = "index"):
         return f"iap/frontend/build/{page}.html"
     raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
 
-
-logger = logging.getLogger()
-logger.setLevel(settings.LOGGING_LEVEL)
 
 app.include_router(api.router)
 app.mount("", StaticFiles(directory="iap/frontend/build"))
