@@ -5,13 +5,14 @@ from fastapi import FastAPI, HTTPException
 from mangum import Mangum
 from pydantic import ValidationError
 from pydantic.error_wrappers import _display_error_type_and_ctx
-from starlette.responses import FileResponse
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
 from common import logger
-from . import api, settings
 from iap.exceptions import ReceiptNotFoundException
+from . import api, settings
 
 __VERSION__ = "0.1.0"
 
@@ -25,12 +26,14 @@ app = FastAPI(
 )
 
 
+# Error handler
 @app.exception_handler(ValidationError)
-def handle_validation_error(e: ValidationError):
+def handle_validation_error(request: Request, e: ValidationError):
     logger.debug(e)
     ers = e.errors()
-    raise HTTPException(
-        status_code=HTTP_400_BAD_REQUEST, detail={
+    return JSONResponse(
+        status_code=HTTP_400_BAD_REQUEST,
+        content={
             "message": f"{len(ers)} validation errors found",
             "detail": [
                 {
@@ -43,20 +46,19 @@ def handle_validation_error(e: ValidationError):
     )
 
 
-@app.exception_handler(ValueError)
-@app.exception_handler(ReceiptNotFoundException)
-def handle_value_error(e: ValueError):
-    logger.debug(e)
-    raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=str(e))
+VALUE_ERR_LIST = (ValueError, ReceiptNotFoundException)
 
 
 @app.exception_handler(Exception)
-def handle_exceptions(e: Exception):
+def handle_exceptions(request: Request, e: Exception):
     logger.error(e)
-    raise HTTPException(
-        status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="An unexpected error occurred. Please contact to manager."
-    )
+    if type(e) in VALUE_ERR_LIST:
+        status_code = HTTP_400_BAD_REQUEST
+        content = str(e)
+    else:
+        status_code = HTTP_500_INTERNAL_SERVER_ERROR
+        content = "An unexpected error occurred. Please contact to administrator."
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @app.get("/ping", tags=["Default"])
