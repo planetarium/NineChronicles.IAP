@@ -78,7 +78,7 @@ class APIStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            allow_public_subnet=True,
+            security_groups=[shared_stack.rds_security_group],
             timeout=cdk_core.Duration.seconds(10),
             environment=env,
         )
