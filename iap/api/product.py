@@ -18,7 +18,7 @@ router = APIRouter(
 def product_list(agent_addr: str, sess=Depends(session)):
     all_product_list = (
         sess.query(Product)
-        .options(joinedload(Product.fav_list)).options(joinedload(Product.item_list))
+        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
         .filter_by(active=True)
         .order_by(Product.display_order)
     ).all()

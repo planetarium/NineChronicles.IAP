@@ -14,8 +14,8 @@ class FungibleAssetValueSchema(BaseSchema):
 
 
 class FungibleItemSchema(BaseSchema):
-    item_id: int
-    # fungible_id: str
+    sheet_item_id: int
+    fungible_item_id: str
     amount: int
 
     class Config:
@@ -32,7 +32,7 @@ class ProductSchema(BaseSchema):
     active: bool
 
     fav_list: List[FungibleAssetValueSchema]
-    item_list: List[FungibleItemSchema]
+    fungible_item_list: List[FungibleItemSchema]
 
     class Config:
         orm_mode = True

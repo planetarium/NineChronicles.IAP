@@ -31,10 +31,10 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
 class FungibleItemProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_item_product"
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
-    product = relationship("Product", foreign_keys=[product_id], backref=backref("item_list"))
-    item_id = Column(Integer, nullable=False, doc="9c Item sheet ID e.g., 300010")
+    product = relationship("Product", foreign_keys=[product_id], backref=backref("fungible_item_list"))
+    sheet_item_id = Column(Integer, nullable=False, doc="9c Item sheet ID e.g., 300010")
     name = Column(Text, nullable=False)
-    fungible_id = Column(Text, nullable=False, doc="9c Fungible ID of item, which is derived from item info")
+    fungible_item_id = Column(Text, nullable=False, doc="9c Fungible ID of item, which is derived from item info")
     amount = Column(Integer, CheckConstraint("amount > 0"), nullable=False)
 
 
