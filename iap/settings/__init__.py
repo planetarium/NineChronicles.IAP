@@ -23,7 +23,7 @@ DEBUG = config("DEBUG", cast=bool, default=False)
 LOGGING_LEVEL = logging.getLevelName(config("LOGGING_LEVEL", default="INFO"))
 DB_URI = config("DB_URI")
 if db_password is not None:
-    DB_URI.replace("[DB_PASSWORD]", db_password)
+    DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 DB_ECHO = config("DB_ECHO", cast=bool, default=False)
 GOOGLE_VALIDATION_URL = config("GOOGLE_VALIDATION_URL")
 APPLE_VALIDATION_URL = config("APPLE_VALIDATION_URL")
