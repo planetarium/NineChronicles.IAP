@@ -25,6 +25,11 @@ DB_URI = config("DB_URI")
 if db_password is not None:
     DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 DB_ECHO = config("DB_ECHO", cast=bool, default=False)
+
+GOOGLE_PACKAGE_NAME = config("GOOGLE_PACKAGE_NAME")
 GOOGLE_VALIDATION_URL = config("GOOGLE_VALIDATION_URL")
+GOOGLE_CREDENTIALS = config("GOOGLE_CREDENTIALS")
+
 APPLE_VALIDATION_URL = config("APPLE_VALIDATION_URL")
+
 REGION_NAME = config("REGION_NAME")

@@ -1,9 +1,11 @@
 import datetime
 
+import requests
 from sqlalchemy import func
 
 from common import logger
 from common.models.receipt import Receipt
+from common.consts import HOST_LIST
 
 
 def get_purchase_count(sess, agent_addr: str, product_id: int, hour_limit: int) -> int:

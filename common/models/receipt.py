@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship, backref
 
 from common.enums import ReceiptStatus, Store, TxStatus
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
+from common.models.product import Product
 
 
 class Receipt(AutoIdMixin, TimeStampMixin, Base):
@@ -21,7 +22,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     )
     purchased_at = Column(DateTime(timezone=True), nullable=False)
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
-    product = relationship("Product", foreign_keys=[product_id], backref=backref("purchase_list"))
+    product = relationship(Product, foreign_keys=[product_id], backref=backref("purchase_list"))
     agent_addr = Column(Text, doc="9c agent address where to get FAVs")
     inventory_addr = Column(Text, doc="9c avatar's inventory address where to get items")
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")

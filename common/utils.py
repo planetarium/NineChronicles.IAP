@@ -5,6 +5,8 @@ from typing import Union
 
 import boto3
 import eth_utils
+import googleapiclient.discovery
+from google.oauth2 import service_account
 
 
 def fetch_db_password(region: str, secret_arn: str) -> str:
@@ -69,3 +71,9 @@ def derive_address(address: Union[str, bytes], key: Union[str, bytes], get_byte:
 
     derived = hmac.new(key, address, sha1).digest()
     return derived if get_byte else checksum_encode(derived)
+
+
+def get_google_client(credential_data: str):
+    scopes = ["https://www.googleapis.com/auth/androidpublisher"]
+    credential = service_account.Credentials.from_service_account_info(json.loads(credential_data), scopes=scopes)
+    return googleapiclient.discovery.build("androidpublisher", "v3", credentials=credential)
