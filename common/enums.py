@@ -2,6 +2,23 @@ from enum import Enum, IntEnum
 
 
 class Currency(Enum):
+    """
+    # Currency
+    ---
+    Currencies that are used inside Nine Chronicles.
+
+    - **`NCG`**
+
+        NCG is 9c's main in-game token.
+
+    - **`CRYSTAL`**
+
+        CRYSTAL is token that is used to combine items.
+
+    - **`GARAGE`**
+
+        `GARAGE` is token that is used to load fungible assets/fungible items into garage from balance/inventory.
+    """
     NCG = "NCG"
     CRYSTAL = "CRYSTAL"
     GARAGE = "GARAGE"
@@ -45,6 +62,22 @@ class Store(IntEnum):
 
 
 class ProductType(Enum):
+    """
+    # ProductType
+    ---
+    Product type is the flag to specify IAP product type.
+
+    - **`SINGLE`**
+
+        `SINGLE` type product has just one fungible item.  
+        `SINGLE` type product has no limitation to buy.
+
+    - **`PACKAGE`**
+
+        `PACKAGE` type product has multiple fungible items in it.  
+        `PACKAGE` type product has daily/weekly limitation to buy.  
+        If all limitation is exhausted, the package will be locked before next period.
+    """
     SINGLE = "SINGLE"
     PKG = "PACKAGE"
 
