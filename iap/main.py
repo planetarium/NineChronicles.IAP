@@ -57,7 +57,7 @@ def handle_exceptions(request: Request, e: Exception):
         content = str(e)
     else:
         status_code = HTTP_500_INTERNAL_SERVER_ERROR
-        content = "An unexpected error occurred. Please contact to administrator."
+        content = f"An unexpected error occurred. Please contact to administrator. :: {str(e)}"
     return JSONResponse(status_code=status_code, content=content)
 
 
