@@ -2,12 +2,12 @@ import datetime
 import logging
 import os
 import random
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, Dict, Union
 
 from gql import Client
 from gql.dsl import DSLMutation, DSLQuery, DSLSchema, dsl_gql
 from gql.transport.requests import RequestsHTTPTransport
-from graphql import DocumentNode
+from graphql import DocumentNode, ExecutionResult
 
 from common.consts import CURRENCY_LIST, HOST_LIST
 
@@ -22,7 +22,7 @@ class GQL:
             assert self.client.schema is not None
             self.ds = DSLSchema(self.client.schema)
 
-    def execute(self, query: DocumentNode) -> object:
+    def execute(self, query: DocumentNode) -> Union[Dict[str, Any], ExecutionResult]:
         with self.client as sess:
             return sess.execute(query)
 
@@ -44,7 +44,7 @@ class GQL:
                 )
             )
         )
-        resp = self.client.execute(query)
+        resp = self.execute(query)
 
         if "errors" in resp:
             logging.error(f"GQL failed to get next Nonce: {resp['errors']}")
@@ -76,7 +76,7 @@ class GQL:
                 )
             )
         )
-        result = self.client.execute(query)
+        result = self.execute(query)
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
@@ -106,7 +106,7 @@ class GQL:
                 )
             )
         )
-        result = self.client.execute(query)
+        result = self.execute(query)
         return bytes.fromhex(result["actionTxQuery"]["transferAsset"])
 
     def create_action(self, action_type: str, pubkey: bytes, nonce: int, **kwargs) -> bytes:
@@ -127,7 +127,7 @@ class GQL:
                 )
             )
         )
-        result = self.client.execute(query)
+        result = self.execute(query)
         return bytes.fromhex(result["transaction"]["signTransaction"])
 
     def stage(self, signed_tx: bytes) -> Tuple[bool, str, Optional[str]]:
@@ -138,7 +138,7 @@ class GQL:
                 )
             )
         )
-        result = self.client.execute(query)
+        result = self.execute(query)
         if "errors" in result:
             return False, result["errors"][0]["message"], None
         return True, "", result["stageTransaction"]
