@@ -125,3 +125,20 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     finally:
         sess.add(receipt)
         sess.commit()
+
+
+@router.get("/status", response_model=Dict[UUID, Optional[ReceiptDetailSchema]])
+def purchase_status(uuid_list: List[UUID] = None, sess=Depends(session)):
+    """
+    Get current status of receipt.
+    You can provide receipt uuid or store-provided order id, but not both at the same time.
+
+    :param uuid_list:
+    :param sess:
+    :return:
+    """
+    if uuid_list is None:
+        uuid_list = []
+
+    receipt_dict = {x.uuid: x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list))).fetchall()}
+    return {x: receipt_dict.get(x, None) for x in uuid_list}
