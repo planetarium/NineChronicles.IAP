@@ -120,6 +120,6 @@ class WorkerStack(Stack):
         # Every minute
         event_rule = _events.Rule(
             self, f"{stage}-9c-iap-tracker-event",
-            schedule=_events.Schedule.cron(expression="cron(* * * * ? *)")
+            schedule=_events.Schedule.cron(minute="*")  # Every minute
         )
         event_rule.add_target(_event_targets.LambdaFunction(tracker))
