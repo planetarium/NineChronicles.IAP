@@ -8,6 +8,7 @@ import requests
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
+from starlette.responses import Response
 
 from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
@@ -16,6 +17,7 @@ from common.utils import get_google_client
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger
+from iap.schemas.purchase import GoogleNotificationSchema
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema
 
 router = APIRouter(
@@ -142,3 +144,14 @@ def purchase_status(uuid_list: List[UUID] = None, sess=Depends(session)):
 
     receipt_dict = {x.uuid: x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list))).fetchall()}
     return {x: receipt_dict.get(x, None) for x in uuid_list}
+
+
+@router.post("/notification")
+def receive_purchase_notification(message: GoogleNotificationSchema, sess=Depends(session)):
+    """
+    Receive purchase notification from google and update purchase state.
+    """
+    print(message.message.data)
+    # TODO: Fetch full receipt info and update
+    # TODO: ? If refund occurred, send slack notification ?
+    return Response(status_code=200)
