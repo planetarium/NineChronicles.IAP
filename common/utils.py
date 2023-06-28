@@ -1,12 +1,14 @@
 import hmac
 import json
 from hashlib import sha1
-from typing import Union
+from typing import Union, Optional
 
 import boto3
 import eth_utils
 import googleapiclient.discovery
 from google.oauth2 import service_account
+
+from common import logger
 
 
 def fetch_db_password(region: str, secret_arn: str) -> str:
@@ -14,6 +16,15 @@ def fetch_db_password(region: str, secret_arn: str) -> str:
     resp = sm.get_secret_value(SecretId=secret_arn)
     secret = json.loads(resp["SecretString"])
     return secret["password"]
+
+
+def fetch_kms_key_id(stage: str, region: str) -> Optional[str]:
+    client = boto3.client("ssm", region_name=region)
+    try:
+        return client.get_parameter(Name=f"{stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)["Parameter"]["Value"]
+    except Exception as e:
+        logger.error(e)
+        return None
 
 
 def checksum_encode(addr: bytes) -> str:  # Takes a 20-byte binary address as input
