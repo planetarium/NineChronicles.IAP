@@ -2,14 +2,14 @@ import datetime
 import logging
 import os
 import random
-from typing import Optional, Tuple, Any, Dict, Union
+from typing import Union, Dict, Any, Tuple, Optional
 
 from gql import Client
-from gql.dsl import DSLMutation, DSLQuery, DSLSchema, dsl_gql
+from gql.dsl import DSLSchema, dsl_gql, DSLQuery, DSLMutation
 from gql.transport.requests import RequestsHTTPTransport
 from graphql import DocumentNode, ExecutionResult
 
-from common.consts import CURRENCY_LIST, HOST_LIST
+from common.consts import HOST_LIST, CURRENCY_LIST
 
 
 class GQL:

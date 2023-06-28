@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from common.enums import TxStatus
 from common.models.receipt import Receipt
 from common.utils import fetch_db_password
-from _graphql import GQL
+from common._graphql import GQL
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_db_password(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
