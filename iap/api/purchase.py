@@ -37,7 +37,7 @@ def validate_google(sku: str, token: str, receipt: Receipt) -> Tuple[bool, str, 
     client = get_google_client(settings.GOOGLE_CREDENTIALS)
     resp = GooglePurchaseSchema(
         **(client.purchases().products()
-           .get(packageName=settings.GOOGLE_PACKAGE_NAME, product_id=sku, token=token)
+           .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
            .execute())
     )
     msg = ""
@@ -45,6 +45,14 @@ def validate_google(sku: str, token: str, receipt: Receipt) -> Tuple[bool, str, 
         receipt.status = ReceiptStatus.INVALID
         msg = f"Purchase state of this receipt is not valid: {resp.purchaseState.name}"
     return True, msg, receipt
+
+
+def consume_google(sku: str, token: str):
+    client = get_google_client(settings.GOOGLE_CREDENTIALS)
+    resp = client.purchases().products().consume(
+        packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token
+    )
+    logger.debug(resp)
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
@@ -89,6 +97,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             logger.error(f"{product_id} from google store does not exist or is not active")
             raise ValueError(f"Product {product_id} does not exist or is not active.")
         receipt.product_id = product.id
+        consume_google(product_id, token)
 
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg = validate_apple()
