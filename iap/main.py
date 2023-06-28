@@ -1,15 +1,21 @@
-import logging
 import os.path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from mangum import Mangum
-from starlette.responses import FileResponse
+from pydantic import ValidationError
+from pydantic.error_wrappers import _display_error_type_and_ctx
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
+from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
-from iap import api, settings
+from common import logger
+from iap.exceptions import ReceiptNotFoundException
+from . import api, settings
 
 __VERSION__ = "0.1.0"
+
 env = os.environ.get("ENV", "local")
 
 app = FastAPI(
@@ -18,6 +24,41 @@ app = FastAPI(
     version=__VERSION__,
     root_path=f"/{env}" if env != "local" else "",
 )
+
+
+# Error handler
+@app.exception_handler(ValidationError)
+def handle_validation_error(request: Request, e: ValidationError):
+    logger.debug(e)
+    ers = e.errors()
+    return JSONResponse(
+        status_code=HTTP_400_BAD_REQUEST,
+        content={
+            "message": f"{len(ers)} validation errors found",
+            "detail": [
+                {
+                    "location": f"{e['loc']}",
+                    "error_type": _display_error_type_and_ctx(e)
+                }
+                for e in ers
+            ],
+        }
+    )
+
+
+VALUE_ERR_LIST = (ValueError, ReceiptNotFoundException)
+
+
+@app.exception_handler(Exception)
+def handle_exceptions(request: Request, e: Exception):
+    logger.error(e)
+    if type(e) in VALUE_ERR_LIST:
+        status_code = HTTP_400_BAD_REQUEST
+        content = str(e)
+    else:
+        status_code = HTTP_500_INTERNAL_SERVER_ERROR
+        content = f"An unexpected error occurred. Please contact to administrator. :: {str(e)}"
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @app.get("/ping", tags=["Default"])
@@ -61,9 +102,6 @@ def view_page(page: str = "index"):
         return f"iap/frontend/build/{page}.html"
     raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
 
-
-logger = logging.getLogger()
-logger.setLevel(settings.LOGGING_LEVEL)
 
 app.include_router(api.router)
 app.mount("", StaticFiles(directory="iap/frontend/build"))

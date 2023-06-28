@@ -4,18 +4,16 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
-import boto3
-from botocore.exceptions import ClientError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 
-from _crypto import Account
-from _graphql import GQL
 from common import logger
+from common._crypto import Account
+from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils import fetch_db_password
+from common.utils import fetch_db_password, fetch_kms_key_id
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_db_password(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
@@ -52,14 +50,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     stage = os.environ.get("STAGE", "development")
     region = os.environ.get("REGION", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region}")
-    client = boto3.client("ssm", region_name=region)
-    try:
-        kms_key_id = client.get_parameter(Name=f"{stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)
-    except ClientError as e:
-        logging.error(e)
-        return False, str(e), None
-
-    account = Account(kms_key_id["Parameter"]["Value"])
+    account = Account(fetch_kms_key_id(stage, region))
     gql = GQL()
     nonce = gql.get_next_nonce(account.address)
 

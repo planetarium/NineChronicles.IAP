@@ -47,14 +47,16 @@ class SharedStack(Stack):
         )
 
         # RDS
-        security_group = _ec2.SecurityGroup(self, f"{stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True)
-        security_group.add_ingress_rule(
+        self.rds_security_group = _ec2.SecurityGroup(
+            self, f"{stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True
+        )
+        self.rds_security_group.add_ingress_rule(
             peer=_ec2.Peer.ipv4("0.0.0.0/0"),
             connection=_ec2.Port.tcp(5432),
             description="Allow PSQL from outside",
         )
-        security_group.add_ingress_rule(
-            peer=security_group,
+        self.rds_security_group.add_ingress_rule(
+            peer=self.rds_security_group,
             connection=_ec2.Port.tcp(5432),
             description="Allow PSQL from outside",
         )
@@ -67,5 +69,5 @@ class SharedStack(Stack):
             database_name="iap",
             credentials=self.credentials,
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
-            security_groups=[security_group]
+            security_groups=[self.rds_security_group]
         )

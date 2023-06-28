@@ -5,6 +5,8 @@ from aws_cdk import (
     aws_iam as _iam,
     aws_lambda as _lambda,
     aws_lambda_event_sources as _evt_src,
+    aws_events as _events,
+    aws_events_targets as _event_targets,
 )
 from constructs import Construct
 
@@ -79,12 +81,13 @@ class WorkerStack(Stack):
                       f"@{shared_stack.rds.db_instance_endpoint_address}"
                       f"/iap",
         }
-        # Lambda Function
+
+        # Worker Lambda Function
         exclude_list = [".idea", ".gitignore", ]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(WORKER_LAMBDA_EXCLUDE)
 
-        function = _lambda.Function(
+        worker = _lambda.Function(
             self, f"{stage}-9c-iap-worker-function",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c Action making worker of NineChronicles.IAP",
@@ -99,3 +102,24 @@ class WorkerStack(Stack):
                 _evt_src.SqsEventSource(shared_stack.q)
             ]
         )
+
+        # Tracker Lambda Function
+        tracker = _lambda.Function(
+            self, f"{stage}-9c-iap-tracker-function",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            description="9c transaction status tracker of NineChronicles.IAP",
+            code=_lambda.AssetCode("worker/worker/", exclude=exclude_list),
+            handler="tracker.track_tx",
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(50),
+            environment=env,
+        )
+
+        # Every minute
+        event_rule = _events.Rule(
+            self, f"{stage}-9c-iap-tracker-event",
+            schedule=_events.Schedule.cron(expression="cron(* * * * ? *)")
+        )
+        event_rule.add_target(_event_targets.LambdaFunction(tracker))

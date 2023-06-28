@@ -12,6 +12,7 @@ psycopg2-binary = "^2.9.6"
 sqlalchemy = "^2.0.15"
 boto3 = "^1.26.137"
 requests = "^2.30.0"
+google-api-python-client = "^2.90.0"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API

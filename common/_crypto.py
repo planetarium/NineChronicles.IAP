@@ -12,7 +12,7 @@ from eth_utils import to_checksum_address
 from pyasn1.codec.der.decoder import decode as der_decode
 from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.type import namedtype, univ
-from pyasn1.type.univ import Integer, SequenceOf
+from pyasn1.type.univ import SequenceOf, Integer
 
 from common.utils import derive_address
 

@@ -7,7 +7,9 @@ DB_URI = "postgresql://[ID]:[PW]@[HOST]/[DB_NAME]"
 DB_ECHO = True
 
 # Receipt Validation
+GOOGLE_PACKAGE_NAME = ""
 GOOGLE_VALIDATION_URL = ""
+GOOGLE_CREDENTIALS = ""
 APPLE_VALIDATION_URL = ""
 
 # AWS
