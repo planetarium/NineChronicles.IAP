@@ -1,7 +1,7 @@
 import hmac
 import json
 from hashlib import sha1
-from typing import Union, Optional
+from typing import Union, Optional, Dict
 
 import boto3
 import eth_utils
@@ -11,11 +11,10 @@ from google.oauth2 import service_account
 from common import logger
 
 
-def fetch_db_password(region: str, secret_arn: str) -> str:
+def fetch_secrets(region: str, secret_arn: str) -> Dict:
     sm = boto3.client("secretsmanager", region_name=region)
     resp = sm.get_secret_value(SecretId=secret_arn)
-    secret = json.loads(resp["SecretString"])
-    return secret["password"]
+    return json.loads(resp["SecretString"])
 
 
 def fetch_kms_key_id(stage: str, region: str) -> Optional[str]:
