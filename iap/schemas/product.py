@@ -30,6 +30,7 @@ class ProductSchema(BaseSchema):
     weekly_limit: Optional[int] = None
     display_order: int
     active: bool
+    buyable: bool = True
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
