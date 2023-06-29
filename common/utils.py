@@ -99,9 +99,17 @@ def update_google_price(sess, credential_data: str, package_name: str):
     client = get_google_client(credential_data)
     all_product_dict = {x.google_sku: x for x in
                         (sess.query(Product).options(joinedload(Product.price_list))
-                         # .filter(Price.store == store)
+                        # DISCUSS: Should I filter by store too?
+                         .filter(Price.active.is_(True))
                          ).all()
                         }
+    if not all_product_dict:
+        # In case DB does not have any price, former query result can be empty.
+        # Then, just get all products.
+        all_product_dict = {x.google_sku: x for x in
+                            (sess.query(Product).options(joinedload(Product.price_list))).all()
+                            }
+
     google_product_info = client.inappproducts().list(packageName=package_name).execute()
     product_list = [GoogleIAPProductSchema(**x) for x in google_product_info["inappproduct"]]
     for product in product_list:
@@ -111,6 +119,7 @@ def update_google_price(sess, credential_data: str, package_name: str):
 
         target_product = all_product_dict.get(product.sku)
         if not target_product:
+            # Do not update unknown product
             logger.error(f"Product with google SKU {product.sku} not found in DB.")
             continue
 
