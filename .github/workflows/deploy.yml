@@ -1,0 +1,59 @@
+name: NineChronicles.IAP
+
+on:
+  push:
+    branches:
+      - development
+      - main
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.4.2
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry
+        id: cache-poetry
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry install
+          yarn add aws-cdk
+
+      - name: Create API Lambda layer
+        run: |
+          pushd iap
+          poetry export --with=iap --without-hashes -o requirements.txt
+          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
+          popd
+
+      - name: Create Worker Lambda layer
+        run: |
+          pushd worker
+          poetry export --with=worker --without-hashes -o requirements.txt
+          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
+          popd
+
+      - name: Build and deploy CDK stack
+        env:
+          
