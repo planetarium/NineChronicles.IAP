@@ -114,15 +114,15 @@ def update_google_price(sess, credential_data: str, package_name: str):
             logger.error(f"Product with google SKU {product.sku} not found in DB.")
             continue
 
-        # for price in target_product.price_list:
-        #     price.active = False
+        for price in target_product.price_list:
+            price.active = False
 
         target_product.price_list.append(Price(
             product_id=target_product.id,
             store=store,
             currency=product.defaultPrice.currency,
             price=product.defaultPrice.price,
-            # active=True
+            active=True
         ))
 
         for country, price_info in product.prices.items():
@@ -131,7 +131,7 @@ def update_google_price(sess, credential_data: str, package_name: str):
                 store=store,
                 currency=price_info.currency,
                 price=price_info.price,
-                # active=True
+                active=True
             ))
 
         sess.add(target_product)
