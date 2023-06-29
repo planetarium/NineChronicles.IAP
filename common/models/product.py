@@ -17,7 +17,8 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     display_order = Column(Integer, nullable=False, default=-1, doc="Display order in client. Ascending sort.")
     active = Column(Boolean, nullable=False, default=False, doc="Is this product active?")
 
-    fav_list = relationship("FungibleAssetProduct", backref=backref("product"))
+    fav_list = relationship("FungibleAssetProduct", backref=backref("product", uselist=False))
+    price_list = relationship("Price", backref=backref("product", uselist=False))
 
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
@@ -41,7 +42,7 @@ class FungibleItemProduct(AutoIdMixin, TimeStampMixin, Base):
 class Price(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "price"
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
-    product = relationship("Product", foreign_keys=[product_id], backref=backref("price_list"))
+    # product = relationship("Product", foreign_keys=[product_id], backref=backref("price_list"))
     store = Column(ENUM(Store), nullable=False)
     currency = Column(Text, nullable=False)
     price = Column(Numeric, nullable=False)

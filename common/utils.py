@@ -1,5 +1,6 @@
 import hmac
 import json
+import os
 from hashlib import sha1
 from typing import Union, Optional, Dict
 
@@ -7,8 +8,12 @@ import boto3
 import eth_utils
 import googleapiclient.discovery
 from google.oauth2 import service_account
+from sqlalchemy.orm import joinedload
 
 from common import logger
+from common.enums import Store
+from common.models.product import Product, Price
+from common.schemas.product import GoogleIAPProductSchema
 
 
 def fetch_secrets(region: str, secret_arn: str) -> Dict:
@@ -87,3 +92,53 @@ def get_google_client(credential_data: str):
     scopes = ["https://www.googleapis.com/auth/androidpublisher"]
     credential = service_account.Credentials.from_service_account_info(json.loads(credential_data), scopes=scopes)
     return googleapiclient.discovery.build("androidpublisher", "v3", credentials=credential)
+
+
+def update_google_price(sess, credential_data: str, package_name: str):
+    store = Store.GOOGLE if os.environ.get("ENV") == "mainnet" else Store.GOOGLE_TEST
+    client = get_google_client(credential_data)
+    all_product_dict = {x.google_sku: x for x in
+                        (sess.query(Product).options(joinedload(Product.price_list))
+                         # .filter(Price.store == store)
+                         ).all()
+                        }
+    google_product_info = client.inappproducts().list(packageName=package_name).execute()
+    product_list = [GoogleIAPProductSchema(**x) for x in google_product_info["inappproduct"]]
+    for product in product_list:
+        if product.status != "active":
+            logger.warning(f"Google product {product.sku} is not active. Skip this product from updating price.")
+            continue
+
+        target_product = all_product_dict.get(product.sku)
+        if not target_product:
+            logger.error(f"Product with google SKU {product.sku} not found in DB.")
+            continue
+
+        # for price in target_product.price_list:
+        #     price.active = False
+
+        target_product.price_list.append(Price(
+            product_id=target_product.id,
+            store=store,
+            currency=product.defaultPrice.currency,
+            price=product.defaultPrice.price,
+            # active=True
+        ))
+
+        for country, price_info in product.prices.items():
+            target_product.price_list.append(Price(
+                product_id=target_product.id,
+                store=store,
+                currency=price_info.currency,
+                price=price_info.price,
+                # active=True
+            ))
+
+        sess.add(target_product)
+    try:
+        sess.commit()
+    except Exception as e:
+        logger.error(f"Google price update failed: {e}")
+        raise e
+    finally:
+        sess.rollback()
