@@ -2,7 +2,7 @@ import hmac
 import json
 import os
 from hashlib import sha1
-from typing import Union, Optional, Dict
+from typing import Union, Optional, Dict, Tuple, List
 
 import boto3
 import eth_utils
@@ -112,6 +112,7 @@ def update_google_price(sess, credential_data: str, package_name: str):
 
     google_product_info = client.inappproducts().list(packageName=package_name).execute()
     product_list = [GoogleIAPProductSchema(**x) for x in google_product_info["inappproduct"]]
+    change_count = [0, 0]
     for product in product_list:
         if product.status != "active":
             logger.warning(f"Google product {product.sku} is not active. Skip this product from updating price.")
@@ -123,9 +124,11 @@ def update_google_price(sess, credential_data: str, package_name: str):
             logger.error(f"Product with google SKU {product.sku} not found in DB.")
             continue
 
+        change_count[0] += 1
         for price in target_product.price_list:
             price.active = False
 
+        change_count[1] += 1
         target_product.price_list.append(Price(
             product_id=target_product.id,
             store=store,
@@ -135,6 +138,7 @@ def update_google_price(sess, credential_data: str, package_name: str):
         ))
 
         for country, price_info in product.prices.items():
+            change_count[1] += 1
             target_product.price_list.append(Price(
                 product_id=target_product.id,
                 store=store,
@@ -146,6 +150,7 @@ def update_google_price(sess, credential_data: str, package_name: str):
         sess.add(target_product)
     try:
         sess.commit()
+        return change_count
     except Exception as e:
         logger.error(f"Google price update failed: {e}")
         raise e
