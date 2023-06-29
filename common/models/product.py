@@ -46,3 +46,4 @@ class Price(AutoIdMixin, TimeStampMixin, Base):
     store = Column(ENUM(Store), nullable=False)
     currency = Column(Text, nullable=False)
     price = Column(Numeric, nullable=False)
+    active = Column(Boolean, nullable=False, default=False)
