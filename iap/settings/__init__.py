@@ -15,7 +15,9 @@ if not env:
     raise FileNotFoundError(f"No config file for environment")
 
 if os.path.exists(os.path.join("iap", "settings", f"{env}.py")):
-    config = Config(os.path.join("iap", "settings", f"{env}.py"))
+    env_module = __import__(f"iap.settings.{env}", fromlist=["iap.settings"])
+    envs = {k: v for k, v in env_module.__dict__.items() if k.upper() == k}
+    config = Config(environ=envs)
 else:
     config = Config()
     secrets = fetch_secrets(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
