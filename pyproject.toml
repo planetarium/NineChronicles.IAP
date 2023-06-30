@@ -36,6 +36,7 @@ pytest = "^7.3.1"
 alembic = "^1.10.4"
 aws-cdk-lib = "^2.80.0"
 constructs = "^10.2.31"
+fastapi-debug-toolbar = "^0.4.0"
 
 [build-system]
 requires = ["poetry-core"]

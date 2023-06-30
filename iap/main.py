@@ -23,7 +23,16 @@ app = FastAPI(
     description="",
     version=__VERSION__,
     root_path=f"/{env}" if env != "local" else "",
+    debug=settings.DEBUG,
 )
+
+if settings.DEBUG:
+    from debug_toolbar.middleware import DebugToolbarMiddleware
+
+    app.add_middleware(
+        DebugToolbarMiddleware,
+        panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"]
+    )
 
 
 # Error handler
@@ -104,7 +113,7 @@ def view_page(page: str = "index"):
 
 
 app.include_router(api.router)
-app.mount("", StaticFiles(directory="iap/frontend/build"))
+app.mount("/_app", StaticFiles(directory="iap/frontend/build/_app"), name="static")
 
 handler = Mangum(app)
 
