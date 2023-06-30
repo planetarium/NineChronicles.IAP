@@ -5,6 +5,14 @@ from pydantic import BaseModel as BaseSchema
 from common.enums import ProductType, Currency
 
 
+class PriceSchema(BaseSchema):
+    currency: str
+    price: float
+
+    class Config:
+        orm_mode = True
+
+
 class FungibleAssetValueSchema(BaseSchema):
     ticker: Currency
     amount: float
@@ -34,6 +42,7 @@ class ProductSchema(BaseSchema):
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
+    price_list: List[PriceSchema]
 
     class Config:
         orm_mode = True
