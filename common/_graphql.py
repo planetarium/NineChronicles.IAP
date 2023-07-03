@@ -55,7 +55,7 @@ class GQL:
     def _unload_from_garage(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
         ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
         fav_data = kwargs.get("fav_data")
-        inventory_addr = kwargs.get("inventory_addr")
+        avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
 
         if not fav_data and not item_data:
@@ -69,8 +69,8 @@ class GQL:
                     timestamp=ts,
                 ).select(
                     self.ds.ActionTxQuery.unloadFromMyGarages.args(
+                        recipientAvatarAddr=avatar_addr,
                         fungibleAssetValues=fav_data,
-                        inventoryAddr=inventory_addr,
                         fungibleIdAndCounts=item_data,
                     )
                 )

@@ -56,11 +56,11 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
 
     product = sess.scalar(
         select(Product)
-        .options(joinedload(Product.fav_list)).options(joinedload(Product.item_list))
+        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
     )
 
     fav_data = [{
-        "balanceAddr": "",
+        "balanceAddr": message.body.get("agent_addr"),
         "fungibleAssetValue": {
             "currency": x.currency.name,
             "majorUnit": x.amount,
@@ -69,13 +69,13 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     } for x in product.fav_list]
 
     item_data = [{
-        "fungibleId": x.fungible_id,
+        "fungibleId": x.fungible_item_id,
         "count": x.amount
-    } for x in product.item_list]
+    } for x in product.fungible_item_list]
 
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
-        fav_data=fav_data, inventory_addr=message.body.get("inventory_addr"), item_data=item_data,
+        fav_data=fav_data, avatar_addr=message.body.get("avatar_addr"), item_data=item_data,
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)

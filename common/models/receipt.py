@@ -20,10 +20,10 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         ENUM(ReceiptStatus, create_type=False), nullable=False, default=ReceiptStatus.INIT,
         doc="IAP receipt validation status"
     )
-    purchased_at = Column(DateTime(timezone=True), nullable=False)
-    product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
+    purchased_at = Column(DateTime(timezone=True), nullable=True)
+    product_id = Column(Integer, ForeignKey("product.id"), nullable=True)
     product = relationship(Product, foreign_keys=[product_id], backref=backref("purchase_list"))
     agent_addr = Column(Text, doc="9c agent address where to get FAVs")
-    inventory_addr = Column(Text, doc="9c avatar's inventory address where to get items")
+    avatar_addr = Column(Text, doc="9c avatar's address where to get items")
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")
     tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True, doc="Transaction status")
