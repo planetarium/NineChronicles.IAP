@@ -1,7 +1,8 @@
-from typing import Optional
+import json
+from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel as BaseSchema
+from pydantic import BaseModel as BaseSchema, validator
 
 from common.enums import (ReceiptStatus, Store, TxStatus, GooglePurchaseState, GoogleConsumptionState,
                           GooglePurchaseType, GoogleAckState, )
@@ -27,9 +28,16 @@ class GooglePurchaseSchema(BaseSchema):
 
 class ReceiptSchema(BaseSchema):
     store: Store
-    data: str
+    data: Union[str, object]
     agentAddress: str
     avatarAddress: str
+
+    @validator("data")
+    def load_data(cls, value):
+        try:
+            return json.loads(value) if type(value) == str else value
+        except Exception as e:
+            raise ValueError("Invalid JSON format in receipt data")
 
     class Config:
         orm_mode = True

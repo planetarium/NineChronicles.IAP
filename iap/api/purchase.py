@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from typing import Tuple, List, Dict, Optional
 from uuid import UUID
 
@@ -57,52 +58,96 @@ def consume_google(sku: str, token: str):
 
 @router.post("/request", response_model=ReceiptDetailSchema)
 def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
+    """
+    # Purchase Request
+    ---
+
+    **Request receipt validation and unload product from IAP garage to buyer.**
+
+    ### Request Body
+    - `store` :: int : Store type in IntEnum Please see StoreType Enum.
+    - `data` :: str : JSON serialized string of full details of receipt.
+        For `TEST` type store, the `data` should have following fields:
+        - `productId` :: int : IAP service managed product id.
+        - `orderId` :: str : Unique order ID of this purchase. Sending random UUID string is good.
+        - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
+    - `agentAddress` :: str : 9c agent address who bought product on store.
+    - `avatarAddress` :: str : 9c avatar address to get items in bought product.
+
+    """
+    order_id = None
+    product_id = None
+    product = None
     # If prev. receipt exists, check current status and returns result
-    if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST, Store.TEST):
-        data = json.loads(receipt_data.data)
-        prev_receipt = sess.scalar(select(Receipt).where(Receipt.order_id == data.get('orderId')))
-        if prev_receipt:
-            return prev_receipt
-    elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        pass
-
-    # Save incoming data first
-    receipt = Receipt(
-        store=receipt_data.store, data=receipt_data.data,
-        agent_addr=receipt_data.agentAddress,
-        inventory_addr=receipt_data.inventoryAddress,
-        order_id=order_id,
-        purchased_at=purchased_at,
-        product_id=product.id,
-    )
-    sess.add(receipt)
-    sess.commit()
-    sess.refresh(receipt)
-
-    receipt.status = ReceiptStatus.VALIDATION_REQUEST
-    # validate
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
-        data = json.loads(receipt_data.data)
-        product_id = data.get("productId")
-        token = data.get("purchaseToken")
-        if not (product_id and token):
-            receipt.status = ReceiptStatus.INVALID
-            raise ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data")
+        # Test based on google for soft launch v1
+        product_id = receipt_data.data.get("productId")
 
-        success, msg, receipt = validate_google(product_id, token, receipt)
+        order_id = receipt_data.data.get("orderId")
+        purchased_at = datetime.fromtimestamp(receipt_data.data.get("purchaseTime") // 1000)
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
             .where(Product.active.is_(True), Product.google_sku == product_id)
         )
-        if not product:
+    elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
+        # FIXME: Get real product when you support apple
+        #  This is just to avoid error
+        product_id = 1
+        product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+            .where(Product.active.is_(True), Product.id == product_id)
+        )
+    elif receipt_data.store == Store.TEST:
+        data = json.loads(receipt_data.data)
+        product_id = data.get("productId")
+        order_id = data.get("orderId")
+        purchased_at = datetime.fromtimestamp(data.get("purchaseTime"))
+        product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+            .where(Product.active.is_(True), Product.id == product_id)
+        )
+
+    prev_receipt = sess.scalar(
+        select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)
+    )
+    if prev_receipt:
+        return prev_receipt
+
+    # Save incoming data first
+    receipt = Receipt(
+        store=receipt_data.store,
+        data=receipt_data.data,
+        agent_addr=receipt_data.agentAddress,
+        avatar_addr=receipt_data.avatarAddress,
+        order_id=order_id,
+        purchased_at=purchased_at,
+        product_id=product.id if product is not None else None,
+    )
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    if not product:
+        receipt.status = ReceiptStatus.INVALID
+        raise ValueError(f"{product_id} is not valid product ID for {receipt_data.store.name} store.")
+
+    receipt.status = ReceiptStatus.VALIDATION_REQUEST
+
+    # validate
+    if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
+        token = receipt_data.data.get("purchaseToken")
+        if not (product_id and token):
             receipt.status = ReceiptStatus.INVALID
-            logger.error(f"{product_id} from google store does not exist or is not active")
-            raise ValueError(f"Product {product_id} does not exist or is not active.")
-        receipt.product_id = product.id
+            raise ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data")
+
+        success, msg, receipt = validate_google(product_id, token, receipt)
         consume_google(product_id, token)
 
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
+        # TODO: Support Apple
         success, msg = validate_apple()
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
