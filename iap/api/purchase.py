@@ -34,7 +34,7 @@ def validate_apple() -> Tuple[bool, str]:
     return True, ""
 
 
-def validate_google(sku: str, token: str, receipt: Receipt) -> Tuple[bool, str, Receipt]:
+def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
     client = get_google_client(settings.GOOGLE_CREDENTIALS)
     resp = GooglePurchaseSchema(
         **(client.purchases().products()
@@ -43,9 +43,8 @@ def validate_google(sku: str, token: str, receipt: Receipt) -> Tuple[bool, str, 
     )
     msg = ""
     if resp.purchaseState != GooglePurchaseState.PURCHASED:
-        receipt.status = ReceiptStatus.INVALID
-        msg = f"Purchase state of this receipt is not valid: {resp.purchaseState.name}"
-    return True, msg, receipt
+        return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
+    return True, msg, resp
 
 
 def consume_google(sku: str, token: str):
@@ -142,7 +141,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.INVALID
             raise ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data")
 
-        success, msg, receipt = validate_google(product_id, token, receipt)
+        success, msg, purchase = validate_google(product_id, token)
         consume_google(product_id, token)
 
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
