@@ -7,6 +7,7 @@ from uuid import UUID
 import boto3
 import requests
 from fastapi import APIRouter, Depends
+from googleapiclient.errors import HttpError
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
@@ -49,10 +50,14 @@ def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSche
 
 def consume_google(sku: str, token: str):
     client = get_google_client(settings.GOOGLE_CREDENTIALS)
-    resp = client.purchases().products().consume(
-        packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token
-    )
-    logger.debug(resp)
+    try:
+        resp = client.purchases().products().consume(
+            packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token
+        )
+        logger.debug(resp)
+    except HttpError as e:
+        logger.error(e)
+        raise e
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
