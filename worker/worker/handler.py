@@ -56,7 +56,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
 
     product = sess.scalar(
         select(Product)
-        .options(joinedload(Product.fav_list)).options(joinedload(Product.item_list))
+        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
     )
 
     fav_data = [{
@@ -69,9 +69,9 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     } for x in product.fav_list]
 
     item_data = [{
-        "fungibleId": x.fungible_id,
+        "fungibleId": x.fungible_item_id,
         "count": x.amount
-    } for x in product.item_list]
+    } for x in product.fungible_item_list]
 
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,

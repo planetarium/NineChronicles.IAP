@@ -70,7 +70,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     receipt = Receipt(
         store=receipt_data.store, data=receipt_data.data,
         agent_addr=receipt_data.agentAddress,
-        inventory_addr=receipt_data.inventoryAddress
+        inventory_addr=receipt_data.inventoryAddress,
+        order_id=order_id,
+        purchased_at=purchased_at,
+        product_id=product.id,
     )
     sess.add(receipt)
     sess.commit()
@@ -125,12 +128,14 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     try:
         resp = sqs.send_message(QueueUrl=SQS_URL, messageBody=json.dumps(msg))
+        sess.add(receipt)
+        sess.commit()
+        sess.refresh(receipt)
+        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+        return receipt
     except Exception as e:
         logger.error(f"[{receipt.uuid}] :: SQS message failed: {e}")
         raise e
-    else:
-        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
-        return receipt
     finally:
         sess.add(receipt)
         sess.commit()
