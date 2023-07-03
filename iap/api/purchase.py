@@ -81,10 +81,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # If prev. receipt exists, check current status and returns result
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
         # Test based on google for soft launch v1
-        product_id = receipt_data.data.get("productId")
+        product_id = receipt_data.order.get("productId")
 
-        order_id = receipt_data.data.get("orderId")
-        purchased_at = datetime.fromtimestamp(receipt_data.data.get("purchaseTime") // 1000)
+        order_id = receipt_data.order.get("orderId")
+        purchased_at = datetime.fromtimestamp(receipt_data.order.get("purchaseTime") // 1000)
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
@@ -100,10 +100,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             .where(Product.active.is_(True), Product.id == product_id)
         )
     elif receipt_data.store == Store.TEST:
-        data = json.loads(receipt_data.data)
-        product_id = data.get("productId")
-        order_id = data.get("orderId")
-        purchased_at = datetime.fromtimestamp(data.get("purchaseTime"))
+        product_id = receipt_data.order.get("productId")
+        order_id = receipt_data.order.get("orderId")
+        purchased_at = datetime.fromtimestamp(receipt_data.order.get("purchaseTime"))
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
@@ -138,7 +137,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     # validate
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
-        token = receipt_data.data.get("purchaseToken")
+        token = receipt_data.order.get("purchaseToken")
         if not (product_id and token):
             receipt.status = ReceiptStatus.INVALID
             raise ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data")
