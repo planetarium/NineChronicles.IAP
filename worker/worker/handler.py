@@ -60,7 +60,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     )
 
     fav_data = [{
-        "balanceAddr": "",
+        "balanceAddr": message.body.get("agent_addr"),
         "fungibleAssetValue": {
             "currency": x.currency.name,
             "majorUnit": x.amount,
@@ -75,7 +75,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
 
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
-        fav_data=fav_data, inventory_addr=message.body.get("inventory_addr"), item_data=item_data,
+        fav_data=fav_data, avatar_addr=message.body.get("avatar_addr"), item_data=item_data,
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)

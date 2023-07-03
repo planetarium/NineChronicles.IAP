@@ -166,7 +166,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # TODO: check balance and inventory
 
     msg = {
-        "inventory_addr": receipt_data.inventoryAddress,
+        "agent_addr": receipt_data.agentAddress,
+        "avatar_addr": receipt_data.avatarAddress,
         "product_id": product.id,
         "uuid": receipt.uuid,
     }
