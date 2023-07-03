@@ -29,7 +29,7 @@ class ReceiptSchema(BaseSchema):
     store: Store
     data: str
     agentAddress: str
-    inventoryAddress: str
+    avatarAddress: str
 
     class Config:
         orm_mode = True

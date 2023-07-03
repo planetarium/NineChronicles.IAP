@@ -24,6 +24,6 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
     product = relationship(Product, foreign_keys=[product_id], backref=backref("purchase_list"))
     agent_addr = Column(Text, doc="9c agent address where to get FAVs")
-    inventory_addr = Column(Text, doc="9c avatar's inventory address where to get items")
+    avatar_addr = Column(Text, doc="9c avatar's address where to get items")
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")
     tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True, doc="Transaction status")
