@@ -102,10 +102,21 @@ class ReceiptStatus(IntEnum):
         Receipt validation succeed.  
         The IAP service send message to create transaction. Please check transaction status to check.
 
+    - **20: `REFUNDED_BY_ADMIN`**
+
+        Receipt has been refunded by administrator.  
+        This occurs due to lack of garage stock or server-side failure.  
+        This status does not make any penalty to buyer.
+
     - **91: `INVALID`**
 
         Receipt validation failed.  
         The IAP service will return exception and no transaction will be created.
+
+    - **92: `REFUNDED_BY_BUYER`**
+
+        Receipt has been refunded by buyer.  
+        If a receipt is refunded by buyer, it can cause halting Mead.
 
     - **99: `UNKNOWN`**
 
@@ -116,7 +127,9 @@ class ReceiptStatus(IntEnum):
     INIT = 0
     VALIDATION_REQUEST = 1
     VALID = 10
+    REFUNDED_BY_ADMIN = 20
     INVALID = 91
+    REFUNDED_BY_BUYER = 92
     UNKNOWN = 99
 
 

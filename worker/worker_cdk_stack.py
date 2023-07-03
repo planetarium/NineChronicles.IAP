@@ -80,6 +80,7 @@ class WorkerStack(Stack):
                       f"{shared_stack.credentials.username}:[DB_PASSWORD]"
                       f"@{shared_stack.rds.db_instance_endpoint_address}"
                       f"/iap",
+            "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
         }
 
         # Worker Lambda Function
@@ -118,8 +119,30 @@ class WorkerStack(Stack):
         )
 
         # Every minute
-        event_rule = _events.Rule(
+        minute_event_rule = _events.Rule(
             self, f"{stage}-9c-iap-tracker-event",
             schedule=_events.Schedule.cron(minute="*")  # Every minute
         )
-        event_rule.add_target(_event_targets.LambdaFunction(tracker))
+        minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
+
+        # Price updater Lambda function
+        updater = _lambda.Function(
+            self, f"{stage}-9c-iap-price-updater-function",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            description="9c IAP price updater from google/apple store",
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="updater.update_prices",
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(60),
+            environment=env,
+        )
+
+        # Every hour
+        hourly_event_rule = _events.Rule(
+            self, f"{stage}-9c-iap-price-updater-event",
+            schedule=_events.Schedule.cron(minute="0")  # Every hour
+        )
+
+        hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))

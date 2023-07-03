@@ -1,9 +1,10 @@
 from typing import List
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import joinedload
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload, contains_eager
 
-from common.models.product import Product
+from common.models.product import Product, Price
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
 from iap.utils import get_purchase_count
@@ -16,12 +17,14 @@ router = APIRouter(
 
 @router.get("", response_model=List[ProductSchema])
 def product_list(agent_addr: str, sess=Depends(session)):
-    all_product_list = (
-        sess.query(Product)
-        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-        .filter_by(active=True)
+    all_product_list = sess.execute(
+        select(Product).filter_by(active=True)
+        .join(Product.price_list).where(Price.active.is_(True))
+        .options(contains_eager(Product.price_list))
+        .options(joinedload(Product.fav_list))
+        .options(joinedload(Product.fungible_item_list))
         .order_by(Product.display_order)
-    ).all()
+    ).unique().scalars().all()
 
     # TODO: Change query to dict and compare balance and requirement
     # garage = get_iap_garage(sess)
