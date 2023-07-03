@@ -53,3 +53,15 @@ class ReceiptDetailSchema(BaseSchema):
 
     class Config:
         orm_mode = True
+
+class RefundedReceiptSchema(BaseSchema):
+    store: Store
+    uuid: UUID
+    order_id: str
+    status: ReceiptStatus
+    tx_id: Optional[str] = None
+    tx_status: Optional[TxStatus] = None
+    agent_addr: Optional[str] = None
+
+    class Config:
+        orm_mode = True
