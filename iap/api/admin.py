@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, Date, desc
 
 from common.enums import Store, ReceiptStatus
@@ -37,9 +37,21 @@ def update_price(store: Store, sess=Depends(session)):
 
 
 @router.get("/refunded", response_model=List[RefundedReceiptSchema])
-def fetch_refunded(start: Optional[int] = None, limit: int = 100, sess=Depends(session)):
+def fetch_refunded(
+        start: Annotated[
+            Optional[int], Query(description="Where to start to find refunded receipt in unix timestamp format. "
+                                             "If not provided, search starts from 24 hours ago.")
+        ] = None,
+        limit: Annotated[int, Query(description="Limitation of receipt in response.")] = 100,
+        sess=Depends(session)):
+    """
+    # List refunded receipts
+    ---
+    
+    Get list of refunded receipts. This only returns user-refunded receipts.
+    """
     if not start:
-        start = (datetime.utcnow() - timedelta(days=1)).date()
+        start = (datetime.utcnow() - timedelta(hours=24)).date()
     else:
         start = datetime.fromtimestamp(start)
 
