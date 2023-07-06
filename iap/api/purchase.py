@@ -1,11 +1,11 @@
 import json
 import os
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
 
 import boto3
 import requests
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
@@ -182,17 +182,13 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
 
 @router.get("/status", response_model=Dict[UUID, Optional[ReceiptDetailSchema]])
-def purchase_status(uuid_list: List[UUID] = None, sess=Depends(session)):
+def purchase_status(uuid: Annotated[List[UUID], Query()] = ..., sess=Depends(session)):
     """
-    Get current status of receipt.
-    You can provide receipt uuid or store-provided order id, but not both at the same time.
+    Get current status of receipt.  
+    You can validate multiple UUIDs at once.
 
-    :param uuid_list:
-    :param sess:
-    :return:
+    **NOTE**  
+    For the non-existing UUID, response body of that UUID would be `null`. Please be aware client must handle `null`.
     """
-    if uuid_list is None:
-        uuid_list = []
-
-    receipt_dict = {x.uuid: x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list))).fetchall()}
-    return {x: receipt_dict.get(x, None) for x in uuid_list}
+    receipt_dict = {x.uuid: x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid))).fetchall()}
+    return {x: receipt_dict.get(x, None) for x in uuid}
