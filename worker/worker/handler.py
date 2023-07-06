@@ -16,7 +16,7 @@ from common.models.receipt import Receipt
 from common.utils import fetch_secrets, fetch_kms_key_id
 
 DB_URI = os.environ.get("DB_URI")
-db_password = fetch_secrets(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))["password"]
+db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
@@ -48,7 +48,7 @@ class SQSMessage:
 
 def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Optional[str]]:
     stage = os.environ.get("STAGE", "development")
-    region = os.environ.get("REGION", "us-east-2")
+    region = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region}")
     account = Account(fetch_kms_key_id(stage, region))
     gql = GQL()
@@ -57,6 +57,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     product = sess.scalar(
         select(Product)
         .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+        .where(Product.id == message.body.get("product_id"))
     )
 
     fav_data = [{
@@ -100,9 +101,7 @@ def handle(event, context):
     try:
         sess = scoped_session(sessionmaker(bind=engine))
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
-        print(uuid_list)
         receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-        print(receipt_dict)
         for i, record in enumerate(message.Records):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ

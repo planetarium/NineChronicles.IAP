@@ -6,7 +6,7 @@ Globals:
     Environment:
       Variables:
         STAGE: development
-        LOCAL_HEADLESS: [SCHEME]://[HOST]:[PORT]
+        HEADLESS: [SCHEME]://[HOST]:[PORT]
         DB_URI: [SCHEME]://[ID]:[PW]@[HOST]/[DB_NAME]
 
 Resources:
