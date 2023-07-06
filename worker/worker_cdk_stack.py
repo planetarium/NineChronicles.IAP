@@ -19,6 +19,7 @@ class WorkerStack(Stack):
         envs = kwargs.get("env")
         stage = kwargs.pop("stage", "development")
         profile_name = kwargs.pop("profile_name", "default")
+        headless = kwargs.pop("headless", "http://localhost")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
             raise ValueError("Shared stack not found. Please provide shared stack.")
@@ -81,6 +82,7 @@ class WorkerStack(Stack):
                       f"@{shared_stack.rds.db_instance_endpoint_address}"
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
+            "HEADLESS": headless,
         }
 
         # Worker Lambda Function
