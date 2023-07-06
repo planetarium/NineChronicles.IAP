@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import datetime
 from typing import Tuple, List, Dict, Optional
 from uuid import UUID
 
@@ -19,6 +18,7 @@ from iap import settings
 from iap.dependencies import session
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema
+from iap.validator.common import get_order_data
 
 router = APIRouter(
     prefix="/purchase",
@@ -84,18 +84,19 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
     - `agentAddress` :: str : 9c agent address who bought product on store.
     - `avatarAddress` :: str : 9c avatar address to get items in bought product.
-
     """
-    order_id = None
-    product_id = None
+    order_id, product_id, purchased_at = get_order_data(receipt_data)
+    prev_receipt = sess.scalar(
+        select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)
+    )
+    if prev_receipt:
+        logger.debug(f"prev. receipt exists: {prev_receipt.uuid}")
+        return prev_receipt
+
     product = None
     # If prev. receipt exists, check current status and returns result
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
         # Test based on google for soft launch v1
-        product_id = receipt_data.order.get("productId")
-
-        order_id = receipt_data.order.get("orderId")
-        purchased_at = datetime.fromtimestamp(receipt_data.order.get("purchaseTime") // 1000)
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
@@ -104,27 +105,17 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         # FIXME: Get real product when you support apple
         #  This is just to avoid error
-        product_id = 1
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
             .where(Product.active.is_(True), Product.id == product_id)
         )
     elif receipt_data.store == Store.TEST:
-        product_id = receipt_data.order.get("productId")
-        order_id = receipt_data.order.get("orderId")
-        purchased_at = datetime.fromtimestamp(receipt_data.order.get("purchaseTime"))
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
             .where(Product.active.is_(True), Product.id == product_id)
         )
-
-    prev_receipt = sess.scalar(
-        select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)
-    )
-    if prev_receipt:
-        return prev_receipt
 
     # Save incoming data first
     receipt = Receipt(
