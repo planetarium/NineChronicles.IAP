@@ -170,7 +170,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         "agent_addr": receipt_data.agentAddress,
         "avatar_addr": receipt_data.avatarAddress,
         "product_id": product.id,
-        "uuid": receipt.uuid,
+        "uuid": str(receipt.uuid),
     }
 
     resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
