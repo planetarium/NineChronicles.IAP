@@ -74,7 +74,7 @@ class WorkerStack(Stack):
         # ssm = boto3.client("ssm", region_name="us-east-1")
         # Get env.variables from SSM by stage
         env = {
-            "REGION": envs.region,
+            "REGION_NAME": envs.region,
             "ENV": stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
