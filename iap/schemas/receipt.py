@@ -1,12 +1,15 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 from uuid import UUID
 
-from pydantic import BaseModel as BaseSchema, validator
+from pydantic import BaseModel as BaseSchema
 
-from common.enums import (ReceiptStatus, Store, TxStatus, GooglePurchaseState, GoogleConsumptionState,
-                          GooglePurchaseType, GoogleAckState, )
+from common.enums import (
+    ReceiptStatus, Store, TxStatus,
+    GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
+)
 
 
 class GooglePurchaseSchema(BaseSchema):
@@ -27,21 +30,32 @@ class GooglePurchaseSchema(BaseSchema):
     regionCode: str
 
 
-class ReceiptSchema(BaseSchema):
+@dataclass
+class ReceiptSchema:
     store: Store
-    data: Union[str, object]
+    data: Union[str, Dict, object]
     agentAddress: str
     avatarAddress: str
 
-    @validator("data")
-    def load_data(cls, value):
-        try:
-            return json.loads(value) if type(value) == str else value
-        except Exception as e:
-            raise ValueError("Invalid JSON format in receipt data")
+    # Google
+    payload: Optional[Dict] = None
+    order: Optional[Dict] = None
 
-    class Config:
-        orm_mode = True
+    # Apple
+
+    def __post_init__(self):
+        if type(self.data) == str:
+            self.data = json.loads(self.data)
+
+        if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
+            self.payload = json.loads(self.data["Payload"])
+            self.order = json.loads(self.payload["json"])
+        elif self.store in (Store.APPLE, Store.APPLE_TEST):
+            # TODO: Support Apple
+            pass
+        elif self.store == Store.TEST:
+            # No further action
+            pass
 
 
 class ReceiptDetailSchema(BaseSchema):

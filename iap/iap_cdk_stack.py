@@ -16,6 +16,7 @@ class APIStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         envs = kwargs.get("env")
         stage = kwargs.pop("stage", "development")
+        headless = kwargs.pop("headless", "http://localhost")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
             raise ValueError("Shared stack not found. Please provide shared stack.")
@@ -46,6 +47,12 @@ class APIStack(Stack):
                 resources=[shared_stack.rds.secret.secret_arn],
             )
         )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["sqs:sendmessage"],
+                resources=[shared_stack.q.queue_arn]
+            )
+        )
 
         # Environment Variables
         env = {
@@ -62,6 +69,7 @@ class APIStack(Stack):
             "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
             "GOOGLE_VALIDATION_URL": "",
             "APPLE_VALIDATION_URL": "",
+            "HEADLESS": headless,
         }
 
         # Lambda Function

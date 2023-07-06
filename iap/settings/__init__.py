@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 
@@ -20,9 +19,9 @@ if os.path.exists(os.path.join("iap", "settings", f"{env}.py")):
     config = Config(environ=envs)
 else:
     config = Config()
-    secrets = fetch_secrets(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
+    secrets = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))
     db_password = secrets["password"]
-    google_credentials = json.loads(secrets["google_credentials"])
+    google_credentials = secrets["google_credentials"]
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)

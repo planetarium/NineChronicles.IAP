@@ -19,6 +19,7 @@ class WorkerStack(Stack):
         envs = kwargs.get("env")
         stage = kwargs.pop("stage", "development")
         profile_name = kwargs.pop("profile_name", "default")
+        headless = kwargs.pop("headless", "http://localhost")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
             raise ValueError("Shared stack not found. Please provide shared stack.")
@@ -58,7 +59,7 @@ class WorkerStack(Stack):
         kms_key_id = resp["Parameter"]["Value"]
         role.add_to_policy(
             _iam.PolicyStatement(
-                actions=["kms:GetPublicKey"],
+                actions=["kms:GetPublicKey", "kms:Sign"],
                 resources=[f"arn:aws:kms:{envs.region}:{envs.account}:key/{kms_key_id}"]
             )
         )
@@ -73,7 +74,7 @@ class WorkerStack(Stack):
         # ssm = boto3.client("ssm", region_name="us-east-1")
         # Get env.variables from SSM by stage
         env = {
-            "REGION": envs.region,
+            "REGION_NAME": envs.region,
             "ENV": stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
@@ -81,6 +82,7 @@ class WorkerStack(Stack):
                       f"@{shared_stack.rds.db_instance_endpoint_address}"
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
+            "HEADLESS": headless,
         }
 
         # Worker Lambda Function

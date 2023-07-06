@@ -16,13 +16,15 @@ class Env:
     account_id: str
     region: str
     profile_name: Optional[str] = None
+    headless: str = "http://localhost"
 
 
 env = Env(
     stage=os.environ.get("STAGE", "development"),
     account_id=os.environ.get("ACCOUNT_ID", "838612679705"),  # AWS Dev Account
     region=os.environ.get("REGION", "ap-northeast-2"),
-    profile_name=os.environ.get("PROFILE", "default")
+    profile_name=os.environ.get("PROFILE", "default"),
+    headless=os.environ.get("HEADLESS", "http://localhost"),
 )
 
 app = cdk.App()
@@ -40,7 +42,7 @@ APIStack(
         account=env.account_id, region=env.region,
     ),
     stage=env.stage,
-    shared_stack=shared,
+    shared_stack=shared, headless=env.headless,
 )
 
 WorkerStack(
@@ -51,6 +53,7 @@ WorkerStack(
     stage=env.stage,
     shared_stack=shared,
     profile_name=env.profile_name,
+    headless=env.headless,
 )
 
 app.synth()

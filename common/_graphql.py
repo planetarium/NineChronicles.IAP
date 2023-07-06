@@ -14,7 +14,7 @@ from common.consts import HOST_LIST, CURRENCY_LIST
 
 class GQL:
     def __init__(self):
-        stage = os.environ.get("STAGE", "development")
+        stage = os.environ.get("ENV", "development")
         self._url = f"{random.choice(HOST_LIST[stage])}/graphql"
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)

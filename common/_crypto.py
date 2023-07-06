@@ -40,7 +40,7 @@ class SPKIRecord(univ.Sequence):
 
 class Account:
     def __init__(self, kms_key: str):
-        self.client = boto3.client("kms", region_name=os.environ.get("REGION"))  # specify region
+        self.client = boto3.client("kms", region_name=os.environ.get("REGION_NAME"))  # specify region
         self._kms_key: str = kms_key
         try:
             self.pubkey_der: bytes = self.client.get_public_key(KeyId=self._kms_key)["PublicKey"]
