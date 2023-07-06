@@ -59,7 +59,7 @@ class WorkerStack(Stack):
         kms_key_id = resp["Parameter"]["Value"]
         role.add_to_policy(
             _iam.PolicyStatement(
-                actions=["kms:GetPublicKey"],
+                actions=["kms:GetPublicKey", "kms:Sign"],
                 resources=[f"arn:aws:kms:{envs.region}:{envs.account}:key/{kms_key_id}"]
             )
         )

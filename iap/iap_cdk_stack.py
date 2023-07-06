@@ -47,6 +47,12 @@ class APIStack(Stack):
                 resources=[shared_stack.rds.secret.secret_arn],
             )
         )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["sqs:sendmessage"],
+                resources=[shared_stack.q.queue_arn]
+            )
+        )
 
         # Environment Variables
         env = {
