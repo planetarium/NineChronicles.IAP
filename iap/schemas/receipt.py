@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Optional, Union
 from uuid import UUID
 
@@ -54,6 +55,7 @@ class ReceiptDetailSchema(BaseSchema):
     class Config:
         orm_mode = True
 
+
 class RefundedReceiptSchema(BaseSchema):
     store: Store
     uuid: UUID
@@ -62,6 +64,8 @@ class RefundedReceiptSchema(BaseSchema):
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
     agent_addr: Optional[str] = None
+    purchased_at: datetime
+    updated_at: datetime
 
     class Config:
         orm_mode = True
