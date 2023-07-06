@@ -2,8 +2,8 @@ import os.path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from mangum import Mangum
-from pydantic import ValidationError
 from pydantic.error_wrappers import _display_error_type_and_ctx
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
@@ -36,9 +36,9 @@ if settings.DEBUG:
 
 
 # Error handler
-@app.exception_handler(ValidationError)
-def handle_validation_error(request: Request, e: ValidationError):
-    logger.debug(e)
+@app.exception_handler(RequestValidationError)
+def handle_validation_error(request: Request, e: RequestValidationError):
+    logger.error(e)
     ers = e.errors()
     return JSONResponse(
         status_code=HTTP_400_BAD_REQUEST,
@@ -55,19 +55,28 @@ def handle_validation_error(request: Request, e: ValidationError):
     )
 
 
-VALUE_ERR_LIST = (ValueError, ReceiptNotFoundException)
+def handle_400(e):
+    logger.error(e)
+    return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=str(e))
+
+
+@app.exception_handler(ValueError)
+def handle_value_error(request: Request, e: ValueError):
+    return handle_400(e)
+
+
+@app.exception_handler(ReceiptNotFoundException)
+def handle_receipt_not_found(request: Request, e: ReceiptNotFoundException):
+    return handle_400(e)
 
 
 @app.exception_handler(Exception)
-def handle_exceptions(request: Request, e: Exception):
-    logger.error(e)
-    if type(e) in VALUE_ERR_LIST:
-        status_code = HTTP_400_BAD_REQUEST
-        content = str(e)
-    else:
-        status_code = HTTP_500_INTERNAL_SERVER_ERROR
-        content = f"An unexpected error occurred. Please contact to administrator. :: {str(e)}"
-    return JSONResponse(status_code=status_code, content=content)
+def handle_500(request, e):
+    """
+    This can cause Exception inside itself: Please track https://github.com/tiangolo/fastapi/discussions/8647
+    """
+    return JSONResponse(status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                        content=f"An unexpected error occurred. Please contact to administrator. :: {str(e)}")
 
 
 @app.get("/ping", tags=["Default"])

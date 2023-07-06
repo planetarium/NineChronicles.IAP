@@ -60,6 +60,13 @@ def consume_google(sku: str, token: str):
         raise e
 
 
+def raise_error(sess, receipt: Receipt, e: Exception):
+    sess.add(receipt)
+    sess.commit()
+    logger.error(f"[{receipt.uuid}] :: {e}")
+    raise e
+
+
 @router.post("/request", response_model=ReceiptDetailSchema)
 def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     """
@@ -130,12 +137,13 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         product_id=product.id if product is not None else None,
     )
     sess.add(receipt)
-    sess.commit()
+    sess.flush()
     sess.refresh(receipt)
 
     if not product:
         receipt.status = ReceiptStatus.INVALID
-        raise ValueError(f"{product_id} is not valid product ID for {receipt_data.store.name} store.")
+        raise_error(sess, receipt,
+                    ValueError(f"{product_id} is not valid product ID for {receipt_data.store.name} store."))
 
     receipt.status = ReceiptStatus.VALIDATION_REQUEST
 
@@ -144,7 +152,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         token = receipt_data.order.get("purchaseToken")
         if not (product_id and token):
             receipt.status = ReceiptStatus.INVALID
-            raise ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data")
+            raise_error(sess, receipt,
+                        ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
         success, msg, purchase = validate_google(product_id, token)
         consume_google(product_id, token)
@@ -156,13 +165,11 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         success, msg = True, "This is test"
     else:
         receipt.status = ReceiptStatus.UNKNOWN
-        logger.error(f"[{receipt.uuid}] :: {receipt.store} is not validatable store.")
-        raise ValueError(f"{receipt.store} is not validatable store.")
+        success, msg = False, f"{receipt.store} is not validatable store."
 
     if not success:
         receipt.status = ReceiptStatus.INVALID
-        logger.error(f"[{receipt.uuid}] :: {msg}")
-        raise ValueError(f"Receipt validation failed: {msg}")
+        raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
 
@@ -175,19 +182,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         "uuid": receipt.uuid,
     }
 
-    try:
-        resp = sqs.send_message(QueueUrl=SQS_URL, messageBody=json.dumps(msg))
-        sess.add(receipt)
-        sess.commit()
-        sess.refresh(receipt)
-        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
-        return receipt
-    except Exception as e:
-        logger.error(f"[{receipt.uuid}] :: SQS message failed: {e}")
-        raise e
-    finally:
-        sess.add(receipt)
-        sess.commit()
+    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+    return receipt
 
 
 @router.get("/status", response_model=Dict[UUID, Optional[ReceiptDetailSchema]])
