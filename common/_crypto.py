@@ -44,16 +44,13 @@ class Account:
         self._kms_key: str = kms_key
         try:
             self.pubkey_der: bytes = self.client.get_public_key(KeyId=self._kms_key)["PublicKey"]
-            print(self.pubkey_der)
             self.address: str = self.__der_encoded_public_key_to_eth_address(self.pubkey_der)
-            print(self.address)
         except ClientError as e:
             logging.error(f"An error occurred getting KMS Key with Key ID \"{self._kms_key}\.")
             logging.error(e)
             raise e
 
         record, _ = der_decode(self.pubkey_der, asn1Spec=SPKIRecord())
-        print(record)
         self.pubkey: bytes = record["subjectPublicKey"].asOctets()
 
     def get_item_garage_addr(self, item_id: str):
