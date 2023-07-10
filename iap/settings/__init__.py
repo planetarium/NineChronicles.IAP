@@ -3,11 +3,11 @@ import os
 
 from starlette.config import Config
 
-from common.utils import fetch_secrets
+from common.utils import fetch_secrets, fetch_parameter
 
 env = os.environ.get("ENV", "local")
 db_password = None
-google_credentials = None
+google_credential = None
 
 if not env:
     logging.error("Config file not found")
@@ -21,7 +21,11 @@ else:
     config = Config()
     secrets = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))
     db_password = secrets["password"]
-    google_credentials = secrets["google_credentials"]
+    google_credential = fetch_parameter(
+        os.environ.get("REGION_NAME"),
+        f"{env}_9c_IAP_GOOGLE_CREDENTIAL",
+        True
+    )
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
@@ -32,8 +36,7 @@ if db_password is not None:
 DB_ECHO = config("DB_ECHO", cast=bool, default=False)
 
 GOOGLE_PACKAGE_NAME = config("GOOGLE_PACKAGE_NAME")
-GOOGLE_VALIDATION_URL = config("GOOGLE_VALIDATION_URL")
-GOOGLE_CREDENTIALS = google_credentials or config("GOOGLE_CREDENTIALS")
+GOOGLE_CREDENTIAL = google_credential or config("GOOGLE_CREDENTIAL")
 
 APPLE_VALIDATION_URL = config("APPLE_VALIDATION_URL")
 
