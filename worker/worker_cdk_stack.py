@@ -1,3 +1,5 @@
+import os
+
 import aws_cdk as cdk_core
 import boto3
 from aws_cdk import (
@@ -49,10 +51,11 @@ class WorkerStack(Stack):
             )
         )
         # KMS
-        # FIXME: Move this to github secrets?
-        sess = boto3.Session(region_name=envs.region, profile_name=profile_name)
-        ssm = sess.client("ssm")
-        resp = ssm.get_parameter(Name=f"{stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)
+        ssm = boto3.client("ssm", region_name=config.region,
+                           aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+                           aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+                           )
+        resp = ssm.get_parameter(Name=f"{config.stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)
         kms_key_id = resp["Parameter"]["Value"]
         role.add_to_policy(
             _iam.PolicyStatement(
