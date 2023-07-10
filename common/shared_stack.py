@@ -9,6 +9,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from common import logger, Config
+
 
 @dataclass
 class ResourceDict:
@@ -30,25 +32,25 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
 
 class SharedStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
-        stage = kwargs.pop("stage", "development")
-        resource_data = RESOURCE_DICT.get(stage, None)
+        config: Config = kwargs.pop("config")
+        resource_data = RESOURCE_DICT.get(config.stage, None)
         if resource_data is None:
-            raise KeyError(f"{stage} is not valid stage. Please select one of {list(RESOURCE_DICT.keys())}")
+            raise KeyError(f"{config.stage} is not valid stage. Please select one of {list(RESOURCE_DICT.keys())}")
         super().__init__(scope, construct_id, **kwargs)
 
         # VPC
-        self.vpc = _ec2.Vpc.from_lookup(self, f"{stage}-9c-iap-vpc", vpc_id=resource_data.vpc_id)
+        self.vpc = _ec2.Vpc.from_lookup(self, f"{config.stage}-9c-iap-vpc", vpc_id=resource_data.vpc_id)
 
         # SQS
-        self.dlq = _sqs.Queue(self, f"{stage}-9c-iap-dlq")
+        self.dlq = _sqs.Queue(self, f"{config.stage}-9c-iap-dlq")
         self.q = _sqs.Queue(
-            self, f"{stage}-9c-iap-queue",
+            self, f"{config.stage}-9c-iap-queue",
             dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
         )
 
         # RDS
         self.rds_security_group = _ec2.SecurityGroup(
-            self, f"{stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True
+            self, f"{config.stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True
         )
         self.rds_security_group.add_ingress_rule(
             peer=_ec2.Peer.ipv4("0.0.0.0/0"),
@@ -62,7 +64,7 @@ class SharedStack(Stack):
         )
         self.credentials = _rds.Credentials.from_username("iap")
         self.rds = _rds.DatabaseInstance(
-            self, f"{stage}-9c-iap-rds",
+            self, f"{config.stage}-9c-iap-rds",
             engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
             vpc=self.vpc,
             vpc_subnets=_ec2.SubnetSelection(subnet_type=_ec2.SubnetType.PRIVATE_ISOLATED),

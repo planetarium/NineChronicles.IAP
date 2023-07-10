@@ -1,59 +1,52 @@
 #!/usr/bin/env python3
 import os
-from dataclasses import dataclass
-from typing import Optional
 
 import aws_cdk as cdk
+from dotenv import dotenv_values
 
+from common import logger, Config
 from common.shared_stack import SharedStack
 from iap.iap_cdk_stack import APIStack
 from worker.worker_cdk_stack import WorkerStack
 
+stage = os.environ.get("STAGE", "development")
 
-@dataclass
-class Env:
-    stage: str
-    account_id: str
-    region: str
-    profile_name: Optional[str] = None
-    headless: str = "http://localhost"
+if os.path.exists(f".env.{stage}"):
+    env_values = dotenv_values(f".env.{stage}")
+else:
+    env_values = os.environ
 
+if stage != env_values["STAGE"]:
+    logger.error(f"Provided stage {stage} is not identical with STAGE in env: {env_values['STAGE']}")
+    exit(1)
 
-env = Env(
-    stage=os.environ.get("STAGE", "development"),
-    account_id=os.environ.get("ACCOUNT_ID", "838612679705"),  # AWS Dev Account
-    region=os.environ.get("REGION", "ap-northeast-2"),
-    profile_name=os.environ.get("PROFILE", "default"),
-    headless=os.environ.get("HEADLESS", "http://localhost"),
-)
+config = Config(**{k.lower(): v for k, v in env_values.items()})
 
 app = cdk.App()
 shared = SharedStack(
-    app, f"{env.stage}-9c-iap-SharedStack",
+    app, f"{config.stage}-9c-iap-SharedStack",
     env=cdk.Environment(
-        account=env.account_id, region=env.region,
+        account=config.account_id, region=config.region,
     ),
-    stage=env.stage,
+    config=config,
 )
 
 APIStack(
-    app, f"{env.stage}-9c-iap-APIStack",
+    app, f"{config.stage}-9c-iap-APIStack",
     env=cdk.Environment(
-        account=env.account_id, region=env.region,
+        account=config.account_id, region=config.region,
     ),
-    stage=env.stage,
-    shared_stack=shared, headless=env.headless,
+    config=config,
+    shared_stack=shared,
 )
 
 WorkerStack(
-    app, f"{env.stage}-9c-iap-WorkerStack",
+    app, f"{config.stage}-9c-iap-WorkerStack",
     env=cdk.Environment(
-        account=env.account_id, region=env.region,
+        account=config.account_id, region=config.region,
     ),
-    stage=env.stage,
+    config=config,
     shared_stack=shared,
-    profile_name=env.profile_name,
-    headless=env.headless,
 )
 
 app.synth()
