@@ -1,5 +1,7 @@
 import logging
 import os
+from pydantic.dataclasses import dataclass
+from typing import Optional
 
 COMMON_LAMBDA_EXCLUDE = [
     "!common",
@@ -22,3 +24,13 @@ logger.setLevel(loglevel)
 handler = logging.StreamHandler()
 handler.setLevel(loglevel)
 logger.addHandler(handler)
+
+
+@dataclass
+class Config:
+    stage: str
+    account_id: str
+    region: str
+    headless: str = "http://localhost"
+    kms_key_id: Optional[str] = None
+    google_credential: Optional[str] = None

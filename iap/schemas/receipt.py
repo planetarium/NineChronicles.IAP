@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional, Union, Dict
 from uuid import UUID
 
@@ -64,6 +65,21 @@ class ReceiptDetailSchema(BaseSchema):
     status: ReceiptStatus
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
+
+    class Config:
+        orm_mode = True
+
+
+class RefundedReceiptSchema(BaseSchema):
+    store: Store
+    uuid: UUID
+    order_id: str
+    status: ReceiptStatus
+    tx_id: Optional[str] = None
+    tx_status: Optional[TxStatus] = None
+    agent_addr: Optional[str] = None
+    purchased_at: datetime
+    updated_at: datetime
 
     class Config:
         orm_mode = True

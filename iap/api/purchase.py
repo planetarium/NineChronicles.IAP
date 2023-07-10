@@ -36,7 +36,7 @@ def validate_apple() -> Tuple[bool, str]:
 
 
 def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
-    client = get_google_client(settings.GOOGLE_CREDENTIALS)
+    client = get_google_client(settings.GOOGLE_CREDENTIAL)
     resp = GooglePurchaseSchema(
         **(client.purchases().products()
            .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
@@ -49,7 +49,7 @@ def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSche
 
 
 def consume_google(sku: str, token: str):
-    client = get_google_client(settings.GOOGLE_CREDENTIALS)
+    client = get_google_client(settings.GOOGLE_CREDENTIAL)
     try:
         resp = client.purchases().products().consume(
             packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token

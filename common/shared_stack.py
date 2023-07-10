@@ -1,6 +1,8 @@
+import os
 from dataclasses import dataclass
 from typing import Dict
 
+import boto3
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
@@ -8,6 +10,9 @@ from aws_cdk import (
     aws_sqs as _sqs,
 )
 from constructs import Construct
+
+from common import logger, Config
+from common.utils import fetch_parameter
 
 
 @dataclass
@@ -30,25 +35,25 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
 
 class SharedStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
-        stage = kwargs.pop("stage", "development")
-        resource_data = RESOURCE_DICT.get(stage, None)
+        config: Config = kwargs.pop("config")
+        resource_data = RESOURCE_DICT.get(config.stage, None)
         if resource_data is None:
-            raise KeyError(f"{stage} is not valid stage. Please select one of {list(RESOURCE_DICT.keys())}")
+            raise KeyError(f"{config.stage} is not valid stage. Please select one of {list(RESOURCE_DICT.keys())}")
         super().__init__(scope, construct_id, **kwargs)
 
         # VPC
-        self.vpc = _ec2.Vpc.from_lookup(self, f"{stage}-9c-iap-vpc", vpc_id=resource_data.vpc_id)
+        self.vpc = _ec2.Vpc.from_lookup(self, f"{config.stage}-9c-iap-vpc", vpc_id=resource_data.vpc_id)
 
         # SQS
-        self.dlq = _sqs.Queue(self, f"{stage}-9c-iap-dlq")
+        self.dlq = _sqs.Queue(self, f"{config.stage}-9c-iap-dlq")
         self.q = _sqs.Queue(
-            self, f"{stage}-9c-iap-queue",
+            self, f"{config.stage}-9c-iap-queue",
             dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
         )
 
         # RDS
         self.rds_security_group = _ec2.SecurityGroup(
-            self, f"{stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True
+            self, f"{config.stage}-9c-iap-rds-sg", vpc=self.vpc, allow_all_outbound=True
         )
         self.rds_security_group.add_ingress_rule(
             peer=_ec2.Peer.ipv4("0.0.0.0/0"),
@@ -62,7 +67,7 @@ class SharedStack(Stack):
         )
         self.credentials = _rds.Credentials.from_username("iap")
         self.rds = _rds.DatabaseInstance(
-            self, f"{stage}-9c-iap-rds",
+            self, f"{config.stage}-9c-iap-rds",
             engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
             vpc=self.vpc,
             vpc_subnets=_ec2.SubnetSelection(subnet_type=_ec2.SubnetType.PRIVATE_ISOLATED),
@@ -71,3 +76,34 @@ class SharedStack(Stack):
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
             security_groups=[self.rds_security_group]
         )
+
+        # SecureStrings in Parameter Store
+        PARAMETER_LIST = (
+            ("KMS_KEY_ID", True),
+            ("GOOGLE_CREDENTIAL", True),
+        )
+        ssm = boto3.client("ssm", region_name=config.region,
+                           aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+                           aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
+                           )
+
+        for param, secure in PARAMETER_LIST:
+            try:
+                param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                logger.debug(param_value["Value"])
+                logger.info(f"{param} has already been set.")
+            except ssm.exceptions.ParameterNotFound:
+                try:
+                    ssm.put_parameter(
+                        Name=f"{config.stage}_9c_IAP_{param}",
+                        Value=getattr(config, param.lower()),
+                        Type="SecureString" if secure else "String",
+                        Overwrite=False
+                    )
+                    logger.info(f"{config.stage}_9c_IAP_{param} has been set")
+                    param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                except Exception as e:
+                    logger.error(e)
+
+            else:
+                setattr(self, f"{param.lower()}_arn", param_value["ARN"])

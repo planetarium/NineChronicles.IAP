@@ -17,6 +17,7 @@ gql = { extras = ["requests"], version = "^3.4.1" }
 eth-utils = "^2.1.0"
 pycryptodome = "^3.18.0"
 eth-account = "^0.8.0"
+pydantic="^1.10.11"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API
@@ -37,6 +38,7 @@ alembic = "^1.10.4"
 aws-cdk-lib = "^2.80.0"
 constructs = "^10.2.31"
 fastapi-debug-toolbar = "^0.4.0"
+python-dotenv = "^1.0.0"
 
 [build-system]
 requires = ["poetry-core"]

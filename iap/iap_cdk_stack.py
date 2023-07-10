@@ -8,15 +8,13 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-from common import COMMON_LAMBDA_EXCLUDE
+from common import COMMON_LAMBDA_EXCLUDE, Config
 from iap import IAP_LAMBDA_EXCLUDE
 
 
 class APIStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
-        envs = kwargs.get("env")
-        stage = kwargs.pop("stage", "development")
-        headless = kwargs.pop("headless", "http://localhost")
+        config: Config = kwargs.pop("config")
         shared_stack = kwargs.pop("shared_stack", None)
         if shared_stack is None:
             raise ValueError("Shared stack not found. Please provide shared stack.")
@@ -24,7 +22,7 @@ class APIStack(Stack):
 
         # Lambda Layer
         layer = _lambda.LayerVersion(
-            self, f"{stage}-9c-iap-api-lambda-layer",
+            self, f"{config.stage}-9c-iap-api-lambda-layer",
             code=_lambda.AssetCode("iap/layer/"),
             description="Lambda layer for 9c IAP API Service",
             compatible_runtimes=[
@@ -35,11 +33,20 @@ class APIStack(Stack):
 
         # Lambda Role
         role = _iam.Role(
-            self, f"{stage}-9c-iap-api-role",
+            self, f"{config.stage}-9c-iap-api-role",
             assumed_by=_iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 _iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaVPCAccessExecutionRole"),
             ],
+        )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[
+                    shared_stack.google_credential_arn,
+                    shared_stack.kms_key_id_arn,
+                ]
+            )
         )
         role.add_to_policy(
             _iam.PolicyStatement(
@@ -56,8 +63,8 @@ class APIStack(Stack):
 
         # Environment Variables
         env = {
-            "REGION_NAME": envs.region,
-            "ENV": stage,
+            "REGION_NAME": config.region,
+            "ENV": config.stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
                       f"{shared_stack.credentials.username}:[DB_PASSWORD]"
@@ -67,9 +74,8 @@ class APIStack(Stack):
             "DB_ECHO": "False",
             "SQS_URL": shared_stack.q.queue_url,
             "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
-            "GOOGLE_VALIDATION_URL": "",
             "APPLE_VALIDATION_URL": "",
-            "HEADLESS": headless,
+            "HEADLESS": config.headless,
         }
 
         # Lambda Function
@@ -78,9 +84,9 @@ class APIStack(Stack):
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 
         function = _lambda.Function(
-            self, f"{stage}-9c-iap-api-function",
+            self, f"{config.stage}-9c-iap-api-function",
             runtime=_lambda.Runtime.PYTHON_3_10,
-            function_name=f"{stage}-9c_iap_api",
+            function_name=f"{config.stage}-9c_iap_api",
             description="HTTP API/Backoffice service of NineChronicles.IAP",
             code=_lambda.AssetCode(".", exclude=exclude_list),
             handler="iap.main.handler",
@@ -93,13 +99,13 @@ class APIStack(Stack):
         )
 
         # ACM & Custom Domain
-        if stage != "development":
+        if config.stage != "development":
             certificate = _acm.Certificate.from_certificate_arn(
                 self, "9c-acm",
                 certificate_arn="arn:aws:acm:us-east-2:319679068466:certificate/2481ac9e-2037-4331-9234-4b3f86d50ad3"
             )
             custom_domain = _apig.DomainNameOptions(
-                domain_name=f"{'dev-' if stage == 'developmenet' else ''}iap.nine-chronicles.com",
+                domain_name=f"{'dev-' if config.stage == 'developmenet' else ''}iap.nine-chronicles.com",
                 certificate=certificate,
                 security_policy=_apig.SecurityPolicy.TLS_1_2,
                 endpoint_type=_apig.EndpointType.EDGE,
@@ -110,17 +116,18 @@ class APIStack(Stack):
 
         # API Gateway
         apig = _apig.LambdaRestApi(
-            self, f"{stage}-9c_iap-api-apig",
+            self, f"{config.stage}-9c_iap-api-apig",
             handler=function,
-            deploy_options=_apig.StageOptions(stage_name=stage),
+            deploy_options=_apig.StageOptions(stage_name=config.stage),
             domain_name=custom_domain,
         )
 
         # Route53
-        if stage != "development":
+        if config.stage != "development":
             from aws_cdk import (aws_route53 as _r53, aws_route53_targets as _targets)
+
             hosted_zone = _r53.PublicHostedZone.from_lookup(self, "9c-hosted-zone", domain_name="nine-chronicles.com")
             record = _r53.ARecord(
-                self, f"{stage}-9c-iap-record", zone=hosted_zone,
+                self, f"{config.stage}-9c-iap-record", zone=hosted_zone,
                 target=_r53.RecordTarget.from_alias(_targets.ApiGateway(apig))
             )
