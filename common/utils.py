@@ -2,7 +2,7 @@ import hmac
 import json
 import os
 from hashlib import sha1
-from typing import Union, Optional, Dict, Tuple, List
+from typing import Union, Optional, Dict
 
 import boto3
 import eth_utils
@@ -14,6 +14,15 @@ from common import logger
 from common.enums import Store
 from common.models.product import Product, Price
 from common.schemas.product import GoogleIAPProductSchema
+
+
+def fetch_parameter(region: str, parameter_name: str, secure: bool):
+    ssm = boto3.client("ssm", region_name=region)
+    resp = ssm.get_parameter(
+        Name=parameter_name,
+        WithDecryption=secure,
+    )
+    return resp["Parameter"]
 
 
 def fetch_secrets(region: str, secret_arn: str) -> Dict:

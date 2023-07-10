@@ -1,6 +1,8 @@
+import os
 from dataclasses import dataclass
 from typing import Dict
 
+import boto3
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
@@ -10,6 +12,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from common import logger, Config
+from common.utils import fetch_parameter
 
 
 @dataclass
@@ -73,3 +76,34 @@ class SharedStack(Stack):
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
             security_groups=[self.rds_security_group]
         )
+
+        # SecureStrings in Parameter Store
+        PARAMETER_LIST = (
+            ("KMS_KEY_ID", True),
+            ("GOOGLE_CREDENTIAL", True),
+        )
+        ssm = boto3.client("ssm", region_name=config.region,
+                           aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+                           aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
+                           )
+
+        for param, secure in PARAMETER_LIST:
+            try:
+                param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                logger.debug(param_value["Value"])
+                logger.info(f"{param} has already been set.")
+            except ssm.exceptions.ParameterNotFound:
+                try:
+                    ssm.put_parameter(
+                        Name=f"{config.stage}_9c_IAP_{param}",
+                        Value=getattr(config, param.lower()),
+                        Type="SecureString" if secure else "String",
+                        Overwrite=False
+                    )
+                    logger.info(f"{config.stage}_9c_IAP_{param} has been set")
+                    param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                except Exception as e:
+                    logger.error(e)
+
+            else:
+                setattr(self, f"{param.lower()}_arn", param_value["ARN"])
