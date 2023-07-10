@@ -66,7 +66,10 @@ class WorkerStack(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions=["ssm:GetParameter"],
-                resources=[f"arn:aws:ssm:ap-northeast-2:838612679705:parameter/{stage}_9c_IAP_KMS_KEY_ID"]
+                resources=[
+                    shared_stack.google_credential_arn,
+                    shared_stack.kms_key_id_arn,
+                ]
             )
         )
 

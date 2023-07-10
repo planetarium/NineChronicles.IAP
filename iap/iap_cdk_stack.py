@@ -33,11 +33,20 @@ class APIStack(Stack):
 
         # Lambda Role
         role = _iam.Role(
-            self, f"{stage}-9c-iap-api-role",
+            self, f"{config.stage}-9c-iap-api-role",
             assumed_by=_iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 _iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaVPCAccessExecutionRole"),
             ],
+        )
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[
+                    shared_stack.google_credential_arn,
+                    shared_stack.kms_key_id_arn,
+                ]
+            )
         )
         role.add_to_policy(
             _iam.PolicyStatement(
