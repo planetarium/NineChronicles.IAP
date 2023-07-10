@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - development
+      - release/*
       - main
 
 jobs:
@@ -54,6 +55,27 @@ jobs:
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
           popd
 
-      - name: Build and deploy CDK stack
+      - name: Synth stack and update DB schema
         env:
-          
+          STAGE: ${{ vars.STAGE }}
+          REGION: ${{ vars.REGION }}
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          HEADLESS: ${{ vars.HEADLESS }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
+        run: |
+          cdk synth
+          pushd common
+          alembic upgrade head -n ${{ vars.STAGE }}
+          popd
+
+      - name: Deploy stack
+        env:
+          STAGE: ${{ vars.STAGE }}
+          REGION: ${{ vars.REGION }}
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: cdk deploy --all
