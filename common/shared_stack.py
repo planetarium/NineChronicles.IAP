@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from shutil import copyfile
 from typing import Dict
 
 import boto3
@@ -12,7 +13,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from common import logger, Config
-from common.utils import fetch_parameter
+from common.utils import fetch_parameter, fetch_secrets
 
 
 @dataclass
@@ -107,3 +108,15 @@ class SharedStack(Stack):
 
             else:
                 setattr(self, f"{param.lower()}_arn", param_value["ARN"])
+
+        # alembic
+        db_password = fetch_secrets(config.region, self.rds.secret.secret_arn)["password"]
+        copyfile("alembic.ini.example", "alembic.ini")
+        with open("alembic.ini", "a") as f:
+            f.writelines([
+                f"[{config.stage}]",
+                f"postgresql://"
+                f"{self.credentials.username}:{db_password}"
+                f"@{self.rds.db_instance_endpoint_address}"
+                f"/iap"
+            ])
