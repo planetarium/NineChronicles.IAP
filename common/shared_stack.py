@@ -71,7 +71,7 @@ class SharedStack(Stack):
             self, f"{config.stage}-9c-iap-rds",
             engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
             vpc=self.vpc,
-            vpc_subnets=_ec2.SubnetSelection(subnet_type=_ec2.SubnetType.PRIVATE_ISOLATED),
+            vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
             credentials=self.credentials,
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
