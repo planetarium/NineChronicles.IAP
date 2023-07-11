@@ -19,10 +19,7 @@ if os.path.exists(f".env.{stage}"):
 else:
     env_values = os.environ
 
-print(env_values)
-
 config = Config(**{k.lower(): v for k, v in env_values.items()})
-print(config.__dict__)
 
 app = cdk.App()
 shared = SharedStack(
