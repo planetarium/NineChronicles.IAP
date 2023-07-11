@@ -7,12 +7,11 @@ on:
       - release/*
       - main
 
-env:
-  env_var: ${{ vars.ENV_CONTEXT_VAR }}
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
     steps:
       - uses: actions/checkout@v3
 
