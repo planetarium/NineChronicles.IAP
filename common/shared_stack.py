@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass
-from shutil import copyfile
 from typing import Dict
 
 import boto3
@@ -13,7 +12,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from common import logger, Config
-from common.utils import fetch_parameter, fetch_secrets
+from common.utils import fetch_parameter
 
 
 @dataclass

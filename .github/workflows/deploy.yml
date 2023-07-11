@@ -57,7 +57,7 @@ jobs:
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
           popd
 
-      - name: Synth stack and update DB schema
+      - name: Synth stack
         env:
           STAGE: ${{ vars.STAGE }}
           REGION_NAME: ${{ vars.REGION_NAME }}
@@ -70,9 +70,6 @@ jobs:
         run: |
           source $VENV
           yarn cdk synth
-          pushd common
-          alembic upgrade head -n ${{ vars.STAGE }}
-          popd
 
       - name: Deploy stack
         env:
@@ -83,3 +80,16 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           yarn cdk deploy --all
+
+      - name: Upgrade DB Schema
+        env:
+          STAGE: ${{vars.STAGE}}
+          REGION_NAME: ${{ vars.REGION_NAME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          source $VENV
+          pushd common
+          python scripts/update_alembic_ini.py
+          alembic upgrade head -n ${{vars.STAGE}}
+          popd
