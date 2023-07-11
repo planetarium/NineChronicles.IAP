@@ -48,9 +48,9 @@ class SQSMessage:
 
 def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Optional[str]]:
     stage = os.environ.get("STAGE", "development")
-    region = os.environ.get("REGION_NAME", "us-east-2")
-    logging.debug(f"STAGE: {stage} || REGION: {region}")
-    account = Account(fetch_kms_key_id(stage, region))
+    region_name = os.environ.get("REGION_NAME", "us-east-2")
+    logging.debug(f"STAGE: {stage} || REGION: {region_name}")
+    account = Account(fetch_kms_key_id(stage, region_name))
     gql = GQL()
     nonce = gql.get_next_nonce(account.address)
 

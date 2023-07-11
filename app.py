@@ -25,7 +25,7 @@ app = cdk.App()
 shared = SharedStack(
     app, f"{config.stage}-9c-iap-SharedStack",
     env=cdk.Environment(
-        account=config.account_id, region=config.region,
+        account=config.account_id, region=config.region_name,
     ),
     config=config,
 )
@@ -33,7 +33,7 @@ shared = SharedStack(
 APIStack(
     app, f"{config.stage}-9c-iap-APIStack",
     env=cdk.Environment(
-        account=config.account_id, region=config.region,
+        account=config.account_id, region=config.region_name,
     ),
     config=config,
     shared_stack=shared,
@@ -42,7 +42,7 @@ APIStack(
 WorkerStack(
     app, f"{config.stage}-9c-iap-WorkerStack",
     env=cdk.Environment(
-        account=config.account_id, region=config.region,
+        account=config.account_id, region=config.region_name,
     ),
     config=config,
     shared_stack=shared,

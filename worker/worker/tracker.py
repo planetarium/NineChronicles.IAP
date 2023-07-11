@@ -13,7 +13,7 @@ from common.utils import fetch_secrets
 from common._graphql import GQL
 
 DB_URI = os.environ.get("DB_URI")
-db_password = fetch_secrets(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))["password"]
+db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)

@@ -60,7 +60,7 @@ jobs:
       - name: Synth stack and update DB schema
         env:
           STAGE: ${{ vars.STAGE }}
-          REGION: ${{ vars.REGION }}
+          REGION_NAME: ${{ vars.REGION_NAME }}
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -77,7 +77,7 @@ jobs:
       - name: Deploy stack
         env:
           STAGE: ${{ vars.STAGE }}
-          REGION: ${{ vars.REGION }}
+          REGION_NAME: ${{ vars.REGION_NAME }}
           ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

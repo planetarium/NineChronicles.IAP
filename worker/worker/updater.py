@@ -8,7 +8,7 @@ from common import logger
 from common.utils import fetch_secrets, update_google_price
 
 DB_URI = os.environ.get("DB_URI")
-secrets = fetch_secrets(os.environ.get("REGION"), os.environ.get("SECRET_ARN"))
+secrets = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))
 DB_URI = DB_URI.replace("[DB_PASSWORD]", secrets["password"])
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
