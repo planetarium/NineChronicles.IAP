@@ -13,12 +13,11 @@ stage = os.environ.get("STAGE", "development")
 
 if os.path.exists(f".env.{stage}"):
     env_values = dotenv_values(f".env.{stage}")
+    if stage != env_values["STAGE"]:
+        logger.error(f"Provided stage {stage} is not identical with STAGE in env: {env_values['STAGE']}")
+        exit(1)
 else:
     env_values = os.environ
-
-if stage != env_values["STAGE"]:
-    logger.error(f"Provided stage {stage} is not identical with STAGE in env: {env_values['STAGE']}")
-    exit(1)
 
 config = Config(**{k.lower(): v for k, v in env_values.items()})
 
