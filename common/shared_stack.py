@@ -25,10 +25,10 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
     "development": ResourceDict(
         vpc_id="vpc-0cf2339a10213911d",  # Test VPC in AWS Dev Account - apne2 region
     ),
-    "staging": ResourceDict(
+    "internal": ResourceDict(
         vpc_id="vpc-08ee9f2dbd1c97ac6",  # Internal VPC
     ),
-    "production": ResourceDict(
+    "mainnet": ResourceDict(
         vpc_id="vpc-01a0ef2aa2c41bb26",  # Main VPC
     ),
 }
