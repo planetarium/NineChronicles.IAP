@@ -88,10 +88,12 @@ class SharedStack(Stack):
                            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
                            )
 
+        param_value_dict = {}
         for param, secure in PARAMETER_LIST:
+            param_value_dict[param] = None
             try:
-                param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
-                logger.debug(param_value["Value"])
+                param_value_dict[param] = fetch_parameter(config.region_name, f"{config.stage}_9c_IAP_{param}", secure)
+                logger.debug(param_value_dict[param]["Value"])
                 logger.info(f"{param} has already been set.")
             except ssm.exceptions.ParameterNotFound:
                 try:
@@ -102,21 +104,12 @@ class SharedStack(Stack):
                         Overwrite=False
                     )
                     logger.info(f"{config.stage}_9c_IAP_{param} has been set")
-                    param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                    param_value_dict[param] = fetch_parameter(
+                        config.region_name, f"{config.stage}_9c_IAP_{param}", secure
+                    )
                 except Exception as e:
                     logger.error(e)
+                    raise e
 
-            else:
-                setattr(self, f"{param.lower()}_arn", param_value["ARN"])
-
-        # alembic
-        db_password = fetch_secrets(config.region, self.rds.secret.secret_arn)["password"]
-        copyfile("alembic.ini.example", "alembic.ini")
-        with open("alembic.ini", "a") as f:
-            f.writelines([
-                f"[{config.stage}]",
-                f"postgresql://"
-                f"{self.credentials.username}:{db_password}"
-                f"@{self.rds.db_instance_endpoint_address}"
-                f"/iap"
-            ])
+            for k, v in param_value_dict.items():
+                setattr(self, f"{k.lower()}_arn", v["ARN"])
