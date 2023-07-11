@@ -20,6 +20,7 @@ else:
     env_values = os.environ
 
 config = Config(**{k.lower(): v for k, v in env_values.items()})
+print(config.__dict__)
 
 app = cdk.App()
 shared = SharedStack(
