@@ -6,7 +6,6 @@ on:
       - development
       - release/*
       - main
-      - feature/github-actions  # for test
 
 
 jobs:
