@@ -18,9 +18,8 @@ if os.path.exists(os.path.join("iap", "settings", f"{stage}.py")):
     envs = {k: v for k, v in env_module.__dict__.items() if k.upper() == k}
     config = Config(environ=envs)
 else:
-    config = Config()
-    secrets = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))
-    db_password = secrets["password"]
+    config = Config(environ=os.environ)
+    db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
     google_credential = fetch_parameter(
         os.environ.get("REGION_NAME"),
         f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
