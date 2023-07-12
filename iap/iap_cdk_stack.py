@@ -73,7 +73,7 @@ class APIStack(Stack):
             "LOGGING_LEVEL": "INFO",
             "DB_ECHO": "False",
             "SQS_URL": shared_stack.q.queue_url,
-            "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
+            "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "APPLE_VALIDATION_URL": "",
             "HEADLESS": config.headless,
         }
