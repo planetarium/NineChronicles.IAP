@@ -28,10 +28,11 @@ logger.addHandler(handler)
 
 @dataclass
 class Config:
+    # NOTE: non-default fields must come first
     stage: str
     account_id: str
     region_name: str
+    google_package_name: str
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
-    google_package_name: str
     google_credential: Optional[str] = None
