@@ -30,7 +30,7 @@ logger.addHandler(handler)
 class Config:
     stage: str
     account_id: str
-    region: str
+    region_name: str
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
     google_credential: Optional[str] = None

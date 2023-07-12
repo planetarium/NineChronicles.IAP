@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass
-from shutil import copyfile
 from typing import Dict
 
 import boto3
@@ -13,7 +12,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from common import logger, Config
-from common.utils import fetch_parameter, fetch_secrets
+from common.utils import fetch_parameter
 
 
 @dataclass
@@ -25,10 +24,10 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
     "development": ResourceDict(
         vpc_id="vpc-0cf2339a10213911d",  # Test VPC in AWS Dev Account - apne2 region
     ),
-    "staging": ResourceDict(
+    "internal": ResourceDict(
         vpc_id="vpc-08ee9f2dbd1c97ac6",  # Internal VPC
     ),
-    "production": ResourceDict(
+    "mainnet": ResourceDict(
         vpc_id="vpc-01a0ef2aa2c41bb26",  # Main VPC
     ),
 }
@@ -71,7 +70,7 @@ class SharedStack(Stack):
             self, f"{config.stage}-9c-iap-rds",
             engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
             vpc=self.vpc,
-            vpc_subnets=_ec2.SubnetSelection(subnet_type=_ec2.SubnetType.PRIVATE_ISOLATED),
+            vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
             credentials=self.credentials,
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
@@ -83,15 +82,17 @@ class SharedStack(Stack):
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
         )
-        ssm = boto3.client("ssm", region_name=config.region,
+        ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
                            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
                            )
 
+        param_value_dict = {}
         for param, secure in PARAMETER_LIST:
+            param_value_dict[param] = None
             try:
-                param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
-                logger.debug(param_value["Value"])
+                param_value_dict[param] = fetch_parameter(config.region_name, f"{config.stage}_9c_IAP_{param}", secure)
+                logger.debug(param_value_dict[param]["Value"])
                 logger.info(f"{param} has already been set.")
             except ssm.exceptions.ParameterNotFound:
                 try:
@@ -102,21 +103,12 @@ class SharedStack(Stack):
                         Overwrite=False
                     )
                     logger.info(f"{config.stage}_9c_IAP_{param} has been set")
-                    param_value = fetch_parameter(config.region, f"{config.stage}_9c_IAP_{param}", secure)
+                    param_value_dict[param] = fetch_parameter(
+                        config.region_name, f"{config.stage}_9c_IAP_{param}", secure
+                    )
                 except Exception as e:
                     logger.error(e)
+                    raise e
 
-            else:
-                setattr(self, f"{param.lower()}_arn", param_value["ARN"])
-
-        # alembic
-        db_password = fetch_secrets(config.region, self.rds.secret.secret_arn)["password"]
-        copyfile("alembic.ini.example", "alembic.ini")
-        with open("alembic.ini", "a") as f:
-            f.writelines([
-                f"[{config.stage}]",
-                f"postgresql://"
-                f"{self.credentials.username}:{db_password}"
-                f"@{self.rds.db_instance_endpoint_address}"
-                f"/iap"
-            ])
+            for k, v in param_value_dict.items():
+                setattr(self, f"{k.lower()}_arn", v["ARN"])

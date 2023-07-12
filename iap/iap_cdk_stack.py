@@ -63,7 +63,7 @@ class APIStack(Stack):
 
         # Environment Variables
         env = {
-            "REGION_NAME": config.region,
+            "REGION_NAME": config.region_name,
             "ENV": config.stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
@@ -102,10 +102,10 @@ class APIStack(Stack):
         if config.stage != "development":
             certificate = _acm.Certificate.from_certificate_arn(
                 self, "9c-acm",
-                certificate_arn="arn:aws:acm:us-east-2:319679068466:certificate/2481ac9e-2037-4331-9234-4b3f86d50ad3"
+                certificate_arn="arn:aws:acm:us-east-1:319679068466:certificate/774ba332-0886-481b-b823-d0c4ab160d37"
             )
             custom_domain = _apig.DomainNameOptions(
-                domain_name=f"{'dev-' if config.stage == 'developmenet' else ''}iap.nine-chronicles.com",
+                domain_name=f"{'internal-' if config.stage == 'internal' else ''}iap.nine-chronicles.com",
                 certificate=certificate,
                 security_policy=_apig.SecurityPolicy.TLS_1_2,
                 endpoint_type=_apig.EndpointType.EDGE,
@@ -123,11 +123,12 @@ class APIStack(Stack):
         )
 
         # Route53
-        if config.stage != "development":
-            from aws_cdk import (aws_route53 as _r53, aws_route53_targets as _targets)
-
-            hosted_zone = _r53.PublicHostedZone.from_lookup(self, "9c-hosted-zone", domain_name="nine-chronicles.com")
-            record = _r53.ARecord(
-                self, f"{config.stage}-9c-iap-record", zone=hosted_zone,
-                target=_r53.RecordTarget.from_alias(_targets.ApiGateway(apig))
-            )
+        # # TODO: Set custom domain
+        # if config.stage != "development":
+        #     from aws_cdk import (aws_route53 as _r53, aws_route53_targets as _targets)
+        #
+        #     hosted_zone = _r53.PublicHostedZone.from_lookup(self, "9c-hosted-zone", domain_name="nine-chronicles.com")
+        #     record = _r53.ARecord(
+        #         self, f"{config.stage}-9c-iap-record", zone=hosted_zone,
+        #         target=_r53.RecordTarget.from_alias(_targets.ApiGateway(apig))
+        #     )

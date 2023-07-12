@@ -39,9 +39,9 @@ def get_iap_garage(sess) -> List[Optional[Dict]]:
     :return:
     """
     stage = os.environ.get("STAGE", "development")
-    region = os.environ.get("REGION", "us-east-2")
+    region_name = os.environ.get("REGION_NAME", "us-east-2")
     client = GQL()
-    account = Account(fetch_kms_key_id(stage, region))
+    account = Account(fetch_kms_key_id(stage, region_name))
 
     fungible_id_list = sess.scalars(select(distinct(FungibleItemProduct.fungible_item_id))).fetchall()
 

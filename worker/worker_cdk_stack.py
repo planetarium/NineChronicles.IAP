@@ -51,7 +51,7 @@ class WorkerStack(Stack):
             )
         )
         # KMS
-        ssm = boto3.client("ssm", region_name=config.region,
+        ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
                            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
                            )
@@ -60,7 +60,7 @@ class WorkerStack(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions=["kms:GetPublicKey", "kms:Sign"],
-                resources=[f"arn:aws:kms:{config.region}:{config.account_id}:key/{kms_key_id}"]
+                resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
             )
         )
         role.add_to_policy(
@@ -77,7 +77,7 @@ class WorkerStack(Stack):
         # ssm = boto3.client("ssm", region_name="us-east-1")
         # Get env.variables from SSM by stage
         env = {
-            "REGION_NAME": config.region,
+            "REGION_NAME": config.region_name,
             "ENV": config.stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
