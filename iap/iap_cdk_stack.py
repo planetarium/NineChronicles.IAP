@@ -102,10 +102,10 @@ class APIStack(Stack):
         if config.stage != "development":
             certificate = _acm.Certificate.from_certificate_arn(
                 self, "9c-acm",
-                certificate_arn="arn:aws:acm:us-east-2:319679068466:certificate/2481ac9e-2037-4331-9234-4b3f86d50ad3"
+                certificate_arn="arn:aws:acm:us-east-1:319679068466:certificate/774ba332-0886-481b-b823-d0c4ab160d37"
             )
             custom_domain = _apig.DomainNameOptions(
-                domain_name=f"{'dev-' if config.stage == 'developmenet' else ''}iap.nine-chronicles.com",
+                domain_name=f"{'internal-' if config.stage == 'internal' else ''}iap.nine-chronicles.com",
                 certificate=certificate,
                 security_policy=_apig.SecurityPolicy.TLS_1_2,
                 endpoint_type=_apig.EndpointType.EDGE,
