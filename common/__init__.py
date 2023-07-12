@@ -33,4 +33,5 @@ class Config:
     region_name: str
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
+    google_package_name: str
     google_credential: Optional[str] = None

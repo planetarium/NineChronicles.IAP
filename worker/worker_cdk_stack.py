@@ -84,7 +84,7 @@ class WorkerStack(Stack):
                       f"{shared_stack.credentials.username}:[DB_PASSWORD]"
                       f"@{shared_stack.rds.db_instance_endpoint_address}"
                       f"/iap",
-            "GOOGLE_PACKAGE_NAME": "com.Planetarium.NineChronicles",
+            "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "HEADLESS": config.headless,
         }
 

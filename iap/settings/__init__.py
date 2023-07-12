@@ -25,7 +25,7 @@ else:
         os.environ.get("REGION_NAME"),
         f"{env}_9c_IAP_GOOGLE_CREDENTIAL",
         True
-    )
+    )["Value"]
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
