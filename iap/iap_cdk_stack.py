@@ -79,7 +79,7 @@ class APIStack(Stack):
         }
 
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".gitignore", ]
+        exclude_list = [".", "*", ".idea", ".gitignore", ".github",]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 
