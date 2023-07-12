@@ -76,6 +76,7 @@ jobs:
           HEADLESS: ${{ vars.HEADLESS }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
+          GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
         run: |
           source $VENV
           yarn cdk synth

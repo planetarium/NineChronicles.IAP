@@ -104,7 +104,7 @@ def get_google_client(credential_data: str):
 
 
 def update_google_price(sess, credential_data: str, package_name: str):
-    store = Store.GOOGLE if os.environ.get("ENV") == "mainnet" else Store.GOOGLE_TEST
+    store = Store.GOOGLE if os.environ.get("STAGE") == "mainnet" else Store.GOOGLE_TEST
     client = get_google_client(credential_data)
     all_product_dict = {x.google_sku: x for x in
                         (sess.query(Product).options(joinedload(Product.price_list))

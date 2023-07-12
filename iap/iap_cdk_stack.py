@@ -64,7 +64,7 @@ class APIStack(Stack):
         # Environment Variables
         env = {
             "REGION_NAME": config.region_name,
-            "ENV": config.stage,
+            "STAGE": config.stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
                       f"{shared_stack.credentials.username}:[DB_PASSWORD]"
@@ -79,7 +79,7 @@ class APIStack(Stack):
         }
 
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".gitignore", ]
+        exclude_list = [".", "*", ".idea", ".gitignore", ".github",]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 
