@@ -16,13 +16,13 @@ from . import api, settings
 
 __VERSION__ = "0.1.0"
 
-env = os.environ.get("ENV", "local")
+stage = os.environ.get("STAGE", "local")
 
 app = FastAPI(
     title="Nine Chronicles In-app Purchase Validation Service",
     description="",
     version=__VERSION__,
-    root_path=f"/{env}" if env != "local" else "",
+    root_path=f"/{stage}" if stage != "local" else "",
     debug=settings.DEBUG,
 )
 

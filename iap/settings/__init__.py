@@ -5,16 +5,16 @@ from starlette.config import Config
 
 from common.utils import fetch_secrets, fetch_parameter
 
-env = os.environ.get("ENV", "local")
+stage = os.environ.get("STAGE", "local")
 db_password = None
 google_credential = None
 
-if not env:
+if not stage:
     logging.error("Config file not found")
     raise FileNotFoundError(f"No config file for environment")
 
-if os.path.exists(os.path.join("iap", "settings", f"{env}.py")):
-    env_module = __import__(f"iap.settings.{env}", fromlist=["iap.settings"])
+if os.path.exists(os.path.join("iap", "settings", f"{stage}.py")):
+    env_module = __import__(f"iap.settings.{stage}", fromlist=["iap.settings"])
     envs = {k: v for k, v in env_module.__dict__.items() if k.upper() == k}
     config = Config(environ=envs)
 else:
@@ -23,7 +23,7 @@ else:
     db_password = secrets["password"]
     google_credential = fetch_parameter(
         os.environ.get("REGION_NAME"),
-        f"{env}_9c_IAP_GOOGLE_CREDENTIAL",
+        f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
         True
     )["Value"]
 

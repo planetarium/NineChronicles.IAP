@@ -78,7 +78,7 @@ class WorkerStack(Stack):
         # Get env.variables from SSM by stage
         env = {
             "REGION_NAME": config.region_name,
-            "ENV": config.stage,
+            "STAGE": config.stage,
             "SECRET_ARN": shared_stack.rds.secret.secret_arn,
             "DB_URI": f"postgresql://"
                       f"{shared_stack.credentials.username}:[DB_PASSWORD]"
