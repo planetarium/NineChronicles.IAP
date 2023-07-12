@@ -68,13 +68,14 @@ class SharedStack(Stack):
         self.credentials = _rds.Credentials.from_username("iap")
         self.rds = _rds.DatabaseInstance(
             self, f"{config.stage}-9c-iap-rds",
+            instance_identifier=f"{config.stage}-9c-iap-rds",
             engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
             vpc=self.vpc,
             vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
             credentials=self.credentials,
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
-            security_groups=[self.rds_security_group]
+            security_groups=[self.rds_security_group],
         )
 
         # SecureStrings in Parameter Store
