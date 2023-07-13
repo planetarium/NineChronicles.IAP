@@ -96,11 +96,11 @@ class SharedStack(Stack):
                 logger.debug(prev_param["Value"])
                 if prev_param["Value"] != getattr(config, param.lower()):
                     logger.info(f"The value of {param} has been changed. Update to new value...")
-                    raise ssm.exceptions.ParameterNotFound("Update to new value")
+                    raise ValueError("Update to new value")
                 else:
                     param_value_dict[param] = prev_param
                     logger.info(f"{param} has already been set.")
-            except ssm.exceptions.ParameterNotFound:
+            except (ssm.exceptions.ParameterNotFound, ValueError):
                 try:
                     ssm.put_parameter(
                         Name=f"{config.stage}_9c_IAP_{param}",
