@@ -11,7 +11,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-from common import logger, Config
+from common import Config, logger
 from common.utils import fetch_parameter
 
 
@@ -92,16 +92,21 @@ class SharedStack(Stack):
         for param, secure in PARAMETER_LIST:
             param_value_dict[param] = None
             try:
-                param_value_dict[param] = fetch_parameter(config.region_name, f"{config.stage}_9c_IAP_{param}", secure)
-                logger.debug(param_value_dict[param]["Value"])
-                logger.info(f"{param} has already been set.")
+                prev_param = fetch_parameter(config.region_name, f"{config.stage}_9c_IAP_{param}", secure)
+                logger.debug(prev_param["Value"])
+                if prev_param["Value"] != getattr(config, param.lower()):
+                    logger.info(f"The value of {param} has been changed. Update to new value...")
+                    raise ssm.exceptions.ParameterNotFound("Update to new value")
+                else:
+                    param_value_dict[param] = prev_param
+                    logger.info(f"{param} has already been set.")
             except ssm.exceptions.ParameterNotFound:
                 try:
                     ssm.put_parameter(
                         Name=f"{config.stage}_9c_IAP_{param}",
                         Value=getattr(config, param.lower()),
                         Type="SecureString" if secure else "String",
-                        Overwrite=False
+                        Overwrite=True
                     )
                     logger.info(f"{config.stage}_9c_IAP_{param} has been set")
                     param_value_dict[param] = fetch_parameter(
