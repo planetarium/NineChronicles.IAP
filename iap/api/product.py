@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, contains_eager
 
 from common.models.product import Product, Price
+from common.utils import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
 from iap.utils import get_purchase_count
@@ -17,6 +18,7 @@ router = APIRouter(
 
 @router.get("", response_model=List[ProductSchema])
 def product_list(agent_addr: str, sess=Depends(session)):
+    agent_addr = format_addr(agent_addr)
     all_product_list = sess.execute(
         select(Product).filter_by(active=True)
         .join(Product.price_list).where(Price.active.is_(True))

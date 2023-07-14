@@ -10,6 +10,7 @@ from common.enums import (
     ReceiptStatus, Store, TxStatus,
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
+from common.utils import format_addr
 
 
 class GooglePurchaseSchema(BaseSchema):
@@ -44,6 +45,7 @@ class ReceiptSchema:
     # Apple
 
     def __post_init__(self):
+        # Parse purchase data to JSON
         if type(self.data) == str:
             self.data = json.loads(self.data)
 
@@ -56,6 +58,10 @@ class ReceiptSchema:
         elif self.store == Store.TEST:
             # No further action
             pass
+
+        # Reformat address to starts with `0x`
+        self.agentAddress = format_addr(self.agentAddress)
+        self.avatarAddress = format_addr(self.avatarAddress)
 
 
 class ReceiptDetailSchema(BaseSchema):
