@@ -40,6 +40,15 @@ def fetch_kms_key_id(stage: str, region: str) -> Optional[str]:
         return None
 
 
+def format_addr(addr: str) -> str:
+    """
+    Check and reformat input address if not starts with `0x`.
+    """
+    if not addr.startswith("0x"):
+        return f"0x{addr}"
+    return addr
+
+
 def checksum_encode(addr: bytes) -> str:  # Takes a 20-byte binary address as input
     """
     Convert input address to checksum encoded address without prefix "0x"

@@ -5,7 +5,7 @@ from common.enums import Store
 from common.models.receipt import Receipt
 from iap import settings
 from iap.dependencies import session
-from iap.schemas.receipt import ReceiptSchema, ReceiptValidateResultSchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema
 
 router = APIRouter(
     prefix="/validate",
@@ -13,9 +13,9 @@ router = APIRouter(
 )
 
 
-def validate_apple(receipt: Receipt) -> ReceiptValidateResultSchema:
+def validate_apple(receipt: Receipt) -> ReceiptDetailSchema:
     resp = requests.post(settings.APPLE_VALIDATION_URL, json={"receipt-data": receipt.receipt_data})
-    result = ReceiptValidateResultSchema()
+    result = ReceiptDetailSchema()
     if resp.status_code != 200:
         result.store = receipt.store
         result.id = receipt.receipt_id
@@ -24,15 +24,15 @@ def validate_apple(receipt: Receipt) -> ReceiptValidateResultSchema:
     return result
 
 
-def validate_google(receipt: Receipt) -> ReceiptValidateResultSchema:
+def validate_google(receipt: Receipt) -> ReceiptDetailSchema:
     # TODO: Set mobile app, IAP developer API credentials
     #  Create test item
     #  Buy test item
     #  Validate
-    return ReceiptValidateResultSchema(store=receipt.store, valid=True, id=receipt.receipt_id)
+    return ReceiptDetailSchema(store=receipt.store, valid=True, id=receipt.receipt_id)
 
 
-@router.post("", response_model=ReceiptValidateResultSchema)
+@router.post("", response_model=ReceiptDetailSchema)
 def validate_recipe(receipt: ReceiptSchema, sess=Depends(session)):
     """
     Validate In-app purchase receipt
@@ -52,7 +52,7 @@ def validate_recipe(receipt: ReceiptSchema, sess=Depends(session)):
             resp.status_code = 200
 
     if resp.status_code != 200:
-        return ReceiptValidateResultSchema(
+        return ReceiptDetailSchema(
             store=receipt.store,
             id=receipt.id,
             valid=False,
