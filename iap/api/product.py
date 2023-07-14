@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, contains_eager
 
 from common.models.product import Product, Price
+from common.utils import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
 from iap.utils import get_purchase_count
@@ -17,6 +18,7 @@ router = APIRouter(
 
 @router.get("", response_model=List[ProductSchema])
 def product_list(agent_addr: str, sess=Depends(session)):
+    agent_addr = format_addr(agent_addr)
     all_product_list = sess.execute(
         select(Product).filter_by(active=True)
         .join(Product.price_list).where(Price.active.is_(True))
@@ -44,9 +46,12 @@ def product_list(agent_addr: str, sess=Depends(session)):
                 break
 
         # Check purchase history
+        schema = schema_dict[product.id]
         if product.daily_limit:
-            product.buyable = get_purchase_count(sess, agent_addr, product.id, hour_limit=24) < product.daily_limit
+            schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24)
+            schema.buyable = schema.purchase_count < product.daily_limit
         elif product.weekly_limit:
-            product.buyable = get_purchase_count(sess, agent_addr, product.id, hour_limit=24 * 7) < product.weekly_limit
+            schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24 * 7)
+            schema.buyable = schema.purchase_count < product.weekly_limit
 
     return list(schema_dict.values())

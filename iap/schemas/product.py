@@ -36,6 +36,7 @@ class ProductSchema(BaseSchema):
     product_type: ProductType
     daily_limit: Optional[int] = None
     weekly_limit: Optional[int] = None
+    purchase_count: int = 0
     display_order: int
     active: bool
     buyable: bool = True

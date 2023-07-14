@@ -118,6 +118,10 @@ class ReceiptStatus(IntEnum):
         Receipt has been refunded by buyer.  
         If a receipt is refunded by buyer, it can cause halting Mead.
 
+    - **93: `PURCHASE_LIMIT_EXCEED`**
+
+        Purchase limit reached for the daily/weekly limit existing product.
+
     - **99: `UNKNOWN`**
 
         An unhandled error case. This is reserve to catch all other errors.  
@@ -130,6 +134,7 @@ class ReceiptStatus(IntEnum):
     REFUNDED_BY_ADMIN = 20
     INVALID = 91
     REFUNDED_BY_BUYER = 92
+    PURCHASE_LIMIT_EXCEED = 93
     UNKNOWN = 99
 
 
