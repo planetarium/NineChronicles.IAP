@@ -18,6 +18,7 @@ from iap import settings
 from iap.dependencies import session
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema
+from iap.utils import get_purchase_count
 from iap.validator.common import get_order_data
 
 router = APIRouter(
@@ -163,6 +164,14 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
+
+    if (product.daily_limit and
+            get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24) >= product.daily_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
+    elif (product.weekly_limit and
+          get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24 * 7) >= product.weekly_limit):
+        raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
 
     # TODO: check balance and inventory
 
