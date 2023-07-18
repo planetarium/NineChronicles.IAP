@@ -10,6 +10,7 @@ from common.enums import (
     ReceiptStatus, Store, TxStatus,
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
+from iap.schemas.product import SimpleProductSchema
 
 
 class GooglePurchaseSchema(BaseSchema):
@@ -56,6 +57,23 @@ class ReceiptSchema:
         elif self.store == Store.TEST:
             # No further action
             pass
+
+
+class FullReceiptSchema(BaseSchema):
+    store: Store
+    uuid: UUID
+    order_id: str
+    product: SimpleProductSchema
+    agent_addr: str
+    avatar_addr: str
+    status: ReceiptStatus
+    tx_id: Optional[str] = None
+    tx_status: Optional[TxStatus] = None
+    purchased_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
 
 
 class ReceiptDetailSchema(BaseSchema):
