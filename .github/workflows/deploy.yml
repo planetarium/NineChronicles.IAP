@@ -61,8 +61,11 @@ jobs:
           popd
 
       - name: Build frontend
+        env:
+          STAGE: ${{ vars.STAGE }}
         run: |
           pushd iap/frontend
+          sed -i "s/export const STAGE=\"local\";/export const STAGE=\"$STAGE\";/" src/const.js
           yarn build
           popd
 

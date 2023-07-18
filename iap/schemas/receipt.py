@@ -11,6 +11,7 @@ from common.enums import (
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
 from common.utils import format_addr
+from iap.schemas.product import SimpleProductSchema
 
 
 class GooglePurchaseSchema(BaseSchema):
@@ -62,6 +63,23 @@ class ReceiptSchema:
         # Reformat address to starts with `0x`
         self.agentAddress = format_addr(self.agentAddress)
         self.avatarAddress = format_addr(self.avatarAddress)
+
+
+class FullReceiptSchema(BaseSchema):
+    store: Store
+    uuid: UUID
+    order_id: str
+    product: SimpleProductSchema
+    agent_addr: str
+    avatar_addr: str
+    status: ReceiptStatus
+    tx_id: Optional[str] = None
+    tx_status: Optional[TxStatus] = None
+    purchased_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
 
 
 class ReceiptDetailSchema(BaseSchema):

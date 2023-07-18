@@ -5,6 +5,21 @@ from pydantic import BaseModel as BaseSchema
 from common.enums import ProductType, Currency
 
 
+class SimpleProductSchema(BaseSchema):
+    name: str
+    google_sku: str
+    # apple_sku: str
+    product_type: ProductType
+    daily_limit: Optional[int] = None
+    weekly_limit: Optional[int] = None
+    display_order: int
+    active: bool
+    buyable: bool = True
+
+    class Config:
+        orm_mode = True
+
+
 class PriceSchema(BaseSchema):
     currency: str
     price: float
@@ -30,20 +45,7 @@ class FungibleItemSchema(BaseSchema):
         orm_mode = True
 
 
-class ProductSchema(BaseSchema):
-    google_sku: str
-    # apple_sku: str
-    product_type: ProductType
-    daily_limit: Optional[int] = None
-    weekly_limit: Optional[int] = None
-    purchase_count: int = 0
-    display_order: int
-    active: bool
-    buyable: bool = True
-
+class ProductSchema(SimpleProductSchema):
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
     price_list: List[PriceSchema]
-
-    class Config:
-        orm_mode = True

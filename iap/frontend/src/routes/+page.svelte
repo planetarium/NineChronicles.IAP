@@ -1,7 +1,5 @@
 <script>
-  import {Button} from "flowbite-svelte";
+  import Navigation from "../components/Navigation.svelte";
 </script>
 
-<h1>Nine Chronicles IAP Management</h1>
-
-<Button href="/box">Box</Button>
+<Navigation current="home"/>

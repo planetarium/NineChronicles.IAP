@@ -3,13 +3,14 @@ from typing import Optional, List, Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, Date, desc
+from sqlalchemy.orm import joinedload
 
 from common.enums import Store, ReceiptStatus
 from common.models.receipt import Receipt
 from common.utils import update_google_price
 from iap import settings
 from iap.dependencies import session
-from iap.schemas.receipt import RefundedReceiptSchema
+from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 
 router = APIRouter(
     prefix="/admin",
@@ -58,4 +59,13 @@ def fetch_refunded(
         select(Receipt).where(Receipt.status == ReceiptStatus.REFUNDED_BY_BUYER)
         .where(Receipt.updated_at.cast(Date) >= start)
         .order_by(desc(Receipt.updated_at)).limit(limit)
+    ).fetchall()
+
+
+@router.get("/receipt", response_model=List[FullReceiptSchema])
+def receipt_list(page: int = 0, pp: int = 50, sess=Depends(session)):
+    return sess.scalars(
+        select(Receipt).options(joinedload(Receipt.product))
+        .order_by(desc(Receipt.purchased_at))
+        .offset(pp * page).limit(pp)
     ).fetchall()
