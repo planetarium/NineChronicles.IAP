@@ -9,14 +9,14 @@
     TableHead,
     TableHeadCell,
   } from 'flowbite-svelte';
-  import {RECEIPT_STATUS_MAP, STORE_MAP, TxStatus} from "../../const.js";
+  import {RECEIPT_STATUS_MAP, STAGE, STORE_MAP, TxStatus} from "../../const.js";
   import {DateTime} from "luxon";
   import Navigation from "../../components/Navigation.svelte";
 
   let receiptList = [];
 
   const fetchReceiptList = async () => {
-    const resp = await fetch("/api/admin/receipt");
+    const resp = await fetch(`${STAGE === "local" ? "" : `/${STAGE}`}/api/admin/receipt`);
     receiptList = await resp.json();
     return receiptList;
   }
