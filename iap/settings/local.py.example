@@ -1,0 +1,16 @@
+# App Settings
+DEBUG = True
+LOGGING_LEVEL = "DEBUG"
+
+# Database
+DB_URI = "postgresql://[ID]:[PW]@[HOST]/[DB_NAME]"
+DB_ECHO = True
+
+# Receipt Validation
+GOOGLE_PACKAGE_NAME = ""
+GOOGLE_CREDENTIAL = ""
+APPLE_VALIDATION_URL = ""
+
+# AWS
+REGION_NAME = ""
+SQS_URL = ""

@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "ninechronicles-iap"
+version = "0.1.0"
+description = "NineChronicles In-app Purchase Service"
+authors = ["hyeon <hyeon+iap@planetariumhq.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+# Main, Common
+python = "^3.10"
+psycopg2-binary = "^2.9.6"
+sqlalchemy = "^2.0.15"
+boto3 = "^1.26.137"
+requests = "^2.30.0"
+google-api-python-client = "^2.90.0"
+gql = { extras = ["requests"], version = "^3.4.1" }
+eth-utils = "^2.1.0"
+pycryptodome = "^3.18.0"
+eth-account = "^0.8.0"
+pydantic="^1.10.11"
+
+[tool.poetry.group.iap.dependencies]
+# IAP API
+fastapi = "^0.95.1"
+uvicorn = "^0.22.0"
+mangum = "^0.17.0"
+
+[tool.poetry.group.worker.dependencies]
+# IAP Worker
+pyasn1 = "^0.5.0"
+hexbytes = "^0.3.0"
+
+[tool.poetry.group.dev.dependencies]
+# Only for development
+ipython = "^8.13.1"
+pytest = "^7.3.1"
+alembic = "^1.10.4"
+aws-cdk-lib = "^2.80.0"
+constructs = "^10.2.31"
+fastapi-debug-toolbar = "^0.4.0"
+python-dotenv = "^1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
