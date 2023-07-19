@@ -51,7 +51,11 @@ export const RECEIPT_STATUS_MAP = {
   },
   92: {
     Name: "REFUND_BY_BUYER",
-    Desc: ""
+    Desc: "",
+  },
+  93: {
+    Name: "PURCHASE_LIMIT_EXCEED",
+    Desc: "",
   },
   99: {
     Name: "UNKNOWN",
