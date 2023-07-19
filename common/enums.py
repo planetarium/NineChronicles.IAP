@@ -1,6 +1,10 @@
 from enum import Enum, IntEnum
 
 
+# WARNING: Please match all maps with iap/frontend/src/const.js
+#  Mismatch can lead frontend error
+
+
 class Currency(Enum):
     """
     # Currency
