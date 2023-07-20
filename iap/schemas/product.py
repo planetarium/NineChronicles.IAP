@@ -46,6 +46,8 @@ class FungibleItemSchema(BaseSchema):
 
 
 class ProductSchema(SimpleProductSchema):
+    purchase_count: int = 0
+
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
     price_list: List[PriceSchema]
