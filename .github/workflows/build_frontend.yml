@@ -1,0 +1,50 @@
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.JS
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Cache node_modules
+        id: cache-node
+        uses: actions/cache@v3
+        with:
+          path: iap/frontend/node_modules
+          key: poetry-${{ runner.os }}-${{ hashFiles('iap/frontend/yarn.lock') }}
+
+      - name: Install dependencies
+        env:
+          STAGE: ${{ vars.STAGE }}
+        run: |
+          pushd iap/frontend
+          yarn install
+          sed -i "s/export const STAGE=\"local\";/export const STAGE=\"$STAGE\";/" src/const.js
+          yarn build
+          popd
+
+      - name: Export artifact
+        id: frontend-artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend
+          path: |
+            iap/frontend/build
+          retention-days: 2
+
+      - name: Slack noti after failure
+        if: ${{ failure() }}
+        uses: ./.github/workflows/slack_message.yml
+        with:
+          environment: ${{ inputs.environment }}

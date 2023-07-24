@@ -1,239 +1,16 @@
-name: NineChronicles.IAP
+name: Deploy NineChronicles.IAP
 
 on:
-  push:
-    branches:
-      - development
-      - release/*
-      - main
-      - feature/github-actions
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
-    env:
-      POSTGRES_USER: github_actions
-      POSTGRES_PASSWORD: f8bf4c09239
-      POSTGRES_DB: iap
-    services:
-      postgres:
-        image: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.4.2
-          virtualenvs-in-project: true
-
-      - name: Cache Poetry
-        id: cache-poetry
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
-
-      - name: Install dependencies
-        run: |
-          poetry install
-
-      - name: Check alembic schema
-        run: |
-          pushd common
-          cp alembic.ini.example alembic.ini
-          sed -i "s/sqlalchemy.url = postgresql:\/\/\[ID\]:\[PW\]@\[HOST\]\/\[DATABASE\]/sqlalchemy.url = postgresql:\/\/$POSTGRES_USER:$POSTGRES_PASSWORD@localhost\/$POSTGRES_DB/" alembic.ini
-          alembic upgrade head
-          popd
-
-  frontend:
-    runs-on: ubuntu-latest
-    needs: [ "test" ]
-    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.JS
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Cache node_modules
-        id: cache-node
-        uses: actions/cache@v3
-        with:
-          path: iap/frontend/node_modules
-          key: poetry-${{ runner.os }}-${{ hashFiles('iap/frontend/yarn.lock') }}
-
-      - name: Install dependencies
-        env:
-          STAGE: ${{ vars.STAGE }}
-        run: |
-          pushd iap/frontend
-          yarn install
-          sed -i "s/export const STAGE=\"local\";/export const STAGE=\"$STAGE\";/" src/const.js
-          yarn build
-          popd
-
-      - name: Export artifact
-        id: frontend-artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: frontend
-          path: |
-            iap/frontend/build
-          retention-days: 2
-
-  iap_layer:
-    runs-on: ubuntu-latest
-    needs: [ "frontend" ]
-    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Setup Node.JS
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.4.2
-          virtualenvs-in-project: true
-
-      - name: Cache Poetry
-        id: cache-poetry
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
-
-      - name: Cache node_modules
-        id: cache-node
-        uses: actions/cache@v3
-        with:
-          path: iap/frontend/node_modules
-          key: poetry-${{ runner.os }}-${{ hashFiles('iap/frontend/yarn.lock') }}
-
-      - name: Install dependencies
-        run: |
-          poetry install
-          pushd iap/frontend
-          yarn install
-          popd
-          yarn add aws-cdk
-
-      - name: Create API Lambda layer
-        run: |
-          pushd iap
-          poetry export --with=iap --without-hashes -o requirements.txt
-          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
-          popd
-
-      - name: Export artifact
-        id: iap-layer-artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: iap_layer
-          path: |
-            iap/layer
-          retention-days: 2
-
-  worker_layer:
-    runs-on: ubuntu-latest
-    needs: [ "frontend" ]
-    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Setup Node.JS
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.4.2
-          virtualenvs-in-project: true
-
-      - name: Cache Poetry
-        id: cache-poetry
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
-
-      - name: Cache node_modules
-        id: cache-node
-        uses: actions/cache@v3
-        with:
-          path: iap/frontend/node_modules
-          key: poetry-${{ runner.os }}-${{ hashFiles('iap/frontend/yarn.lock') }}
-
-      - name: Install dependencies
-        run: |
-          poetry install
-          pushd iap/frontend
-          yarn install
-          popd
-          yarn add aws-cdk
-
-      - name: Create Worker Lambda layer
-        run: |
-          pushd worker
-          poetry export --with=worker --without-hashes -o requirements.txt
-          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
-          popd
-
-      - name: Export artifact
-        id: worker-layer-artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: worker_layer
-          path: |
-            worker/layer
-          retention-days: 2
-
-  approval:
-    runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [ "frontend", "iap_layer", "worker_layer" ]
-    environment: approval
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Echo
-        run: |
-          echo "Manual Approval"
-
   deployment:
     runs-on: ubuntu-latest
-    needs: ${{ github.ref == 'refs/heads/main' && ['approval'] || ['frontend', 'iap_layer', 'worker_layer'] }}
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v3
 
@@ -275,8 +52,23 @@ jobs:
           popd
           yarn add aws-cdk
 
-      - name: Download artifacts
+      - name: Download frontend artifact
         uses: actions/download-artifact@v3
+        with:
+          name: frontend
+          path: iap/frontend/build
+
+      - name: Download iap_layer artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: iap_layer
+          path: iap/layer
+
+      - name: Download worker_layer artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: worker_layer
+          path: worker/layer
 
       - name: Synth stack
         env:
@@ -313,134 +105,10 @@ jobs:
           ARRAY=(`grep -e "https://.*/$STAGE/" output.txt | tr "\"", "\n"`)
           echo "SERVICE_HOST=${ARRAY[-1]}" >> $GITHUB_OUTPUT
 
-  slack_after_success:
-    runs-on: ubuntu-latest
-    needs: [ "deployment" ]
-    if: ${{ success() }}
-    steps:
-      - name: Slack message after success
-        if: ${{ success() }}
-        uses: slackapi/slack-github-action@v1.24.0
-        env:
-          STAGE: ${{ vars.STAGE }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+      - name: Slack noti
+        uses: ./.github/workflows/slack_message.yml
         with:
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "[NineChronicles.IAP] Deployment Success :smile:",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Stage:*\n${{ vars.STAGE }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ github.ref_name }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": " "
-                  },
-                  "accessory": {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "Go and check",
-                      "emoji": true
-                    },
-                    "style": "primary",
-                    "url": "${{ steps.deployment.outputs.SERVICE_HOST }}",
-                    "action_id": "see-api-doc"
-                  }
-                }
-              ]
-            }
-
-  slack_after_failure:
-    runs-on: ubuntu-latest
-    needs: [ "deployment" ]
-    if: ${{ failure() }}
-    steps:
-      - name: Slack message after failure
-        uses: slackapi/slack-github-action@v1.24.0
-        env:
-          STAGE: ${{ vars.STAGE }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        with:
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "[NineChronicles.IAP] Deployment Fail :sob:",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Stage:*\n${{ vars.STAGE }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ github.ref_name }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": " "
-                  },
-                  "accessory": {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "Checkout github actions",
-                      "emoji": true
-                    },
-                    "style": "danger",
-                    "url": "https://github.com/planetarium/NineChronicles.IAP/actions/runs/${{ github.run_id }}",
-                    "action_id": "see-github-actions"
-                  }
-                }
-              ]
-            }
+          environment: ${{ inputs.environment }}
 
 #      - name: Upgrade DB Schema
 #        env:

@@ -1,0 +1,60 @@
+name: Works on NineChronicles.IAP
+
+on:
+  push:
+    branches:
+      - development
+      - release/*
+      - main
+      - feature/github-actions
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
+
+  build_frontend:
+    uses: ./.github/workflows/build_frontend.yml
+    with:
+      environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
+
+  iap_layer:
+    needs: [ "test", "build_frontend" ]
+    uses: ./.github/workflows/build_layer.yml
+    with:
+      target: iap
+
+  worker_layer:
+    needs: [ "test", "build_frontend" ]
+    uses: ./.github/workflows/build_layer.yml
+    with:
+      target: worker
+
+  deploy_without_approval:
+    # This is for development / internal deployment
+    if: ${{ github.ref != 'refs/heads/main' }}
+    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development' }}
+
+  approval:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
+    environment: approval
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Echo
+        run: |
+          echo "Manual Approval"
+
+  deploy_with_approval:
+    # This is for mainnet deployment. It needs user approval
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: approval
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: mainnet
