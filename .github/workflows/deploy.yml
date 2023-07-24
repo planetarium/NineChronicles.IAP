@@ -1,11 +1,25 @@
 name: Deploy NineChronicles.IAP
 
+# environment secrets cannot be inherited from caller workflow to reusable workflow.
+#  I think this is HORRIBLE design
+#  https://github.com/actions/runner/issues/1490
 on:
   workflow_call:
     inputs:
       environment:
         required: true
         type: string
+    secrets:
+      ACCOUNT_ID:
+        required: true
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      KMS_KEY_ID:
+        required: true
+      GOOGLE_CREDENTIAL:
+        required: true
 
 jobs:
   deployment:

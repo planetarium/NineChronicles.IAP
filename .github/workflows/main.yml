@@ -39,6 +39,12 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       environment: ${{ startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development' }}
+    secrets:
+      ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+      GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
 
   approval:
     runs-on: ubuntu-latest
@@ -60,3 +66,9 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       environment: mainnet
+    secrets:
+      ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+      GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}

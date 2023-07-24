@@ -11,6 +11,8 @@ jobs:
     environment: ${{ inputs.environment }}
     if: ${{ success() }}
     steps:
+      - uses: actions/checkout@v3
+
       - name: Slack message after success
         if: ${{ success() }}
         uses: slackapi/slack-github-action@v1.24.0
@@ -76,6 +78,8 @@ jobs:
     environment: ${{ inputs.environment }}
     if: ${{ failure() }}
     steps:
+      - uses: actions/checkout@v3
+
       - name: Slack message after failure
         uses: slackapi/slack-github-action@v1.24.0
         env:
