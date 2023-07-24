@@ -20,6 +20,8 @@ on:
         required: true
       GOOGLE_CREDENTIAL:
         required: true
+      SLACK_WEBHOOK_URL:
+        required: true
 
 jobs:
   deployment:
@@ -126,17 +128,22 @@ jobs:
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
         run: |
-          echo "TIME=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_OUTPUT
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt
           cat output.txt
           ARRAY=(`grep -e "https://.*/$STAGE/" output.txt | tr "\"", "\n"`)
           echo "SERVICE_HOST=${ARRAY[-1]}" >> $GITHUB_OUTPUT
+          
+    
 
-      - name: Slack noti
-        uses: ./.github/workflows/slack_message.yml
-        with:
-          environment: ${{ inputs.environment }}
+
+  slack_notification:
+      uses: ./.github/workflows/slack_message.yml
+      needs: deployment
+      with:
+        environment: ${{ inputs.environment }}
+      secrets:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 #      - name: Upgrade DB Schema
 #        env:

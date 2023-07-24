@@ -4,6 +4,9 @@ on:
       environment:
         required: true
         type: string
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
 
 jobs:
   slack_after_success:
@@ -12,6 +15,11 @@ jobs:
     if: ${{ success() }}
     steps:
       - uses: actions/checkout@v3
+
+      - name: Get Timestamp
+        id: get_timestamp
+        run: |
+          echo "TIME=$(date +"%Y-%m-%d %H:%M:%S %Z")" >> $GITHUB_OUTPUT
 
       - name: Slack message after success
         if: ${{ success() }}
@@ -49,7 +57,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
+                    "text": "*Deployment Timestamp:*\n${{ steps.get_timestamp.outputs.TIME }}"
                   }
                 },
                 {
@@ -79,6 +87,11 @@ jobs:
     if: ${{ failure() }}
     steps:
       - uses: actions/checkout@v3
+
+      - name: Get Timestamp
+        id: get_timestamp
+        run: |
+          echo "TIME=$(date +"%Y-%m-%d %H:%M:%S %Z")" >> $GITHUB_OUTPUT
 
       - name: Slack message after failure
         uses: slackapi/slack-github-action@v1.24.0
@@ -115,7 +128,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
+                    "text": "*Deployment Timestamp:*\n${{ steps.get_timestamp.outputs.TIME }}"
                   }
                 },
                 {

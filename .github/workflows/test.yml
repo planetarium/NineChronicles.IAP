@@ -4,6 +4,9 @@ on:
       environment:
         required: true
         type: string
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
 
 jobs:
   test:
@@ -61,8 +64,11 @@ jobs:
           alembic upgrade head
           popd
 
-      - name: Slack noti after failure
-        if: ${{ failure() }}
-        uses: ./.github/workflows/slack_message.yml
-        with:
-          environment: ${{ inputs.environment }}
+  slack_notification:
+    uses: ./.github/workflows/slack_message.yml
+    needs: test
+    if: ${{ failure() }}
+    with:
+      environment: ${{ inputs.environment }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
