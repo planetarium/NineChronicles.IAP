@@ -23,22 +23,22 @@ jobs:
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-#  iap_layer:
-#    needs: [ "test", "build_frontend" ]
-#    uses: ./.github/workflows/build_layer.yml
-#    with:
-#      target: iap
-#
-#  worker_layer:
-#    needs: [ "test", "build_frontend" ]
-#    uses: ./.github/workflows/build_layer.yml
-#    with:
-#      target: worker
+  #  iap_layer:
+  #    needs: [ "test", "build_frontend" ]
+  #    uses: ./.github/workflows/build_layer.yml
+  #    with:
+  #      target: iap
+  #
+  #  worker_layer:
+  #    needs: [ "test", "build_frontend" ]
+  #    uses: ./.github/workflows/build_layer.yml
+  #    with:
+  #      target: worker
 
   deploy_without_approval:
     # This is for development / internal deployment
     if: ${{ github.ref != 'refs/heads/main' }}
-#    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
+    #    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
     needs: [ "test", "build_frontend" ]
     uses: ./.github/workflows/deploy.yml
     with:
@@ -54,7 +54,7 @@ jobs:
   approval:
     runs-on: ubuntu-latest
     if: ${{ github.ref == 'refs/heads/main' }}
-#    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
+    #    needs: [ "test", "build_frontend", "iap_layer", "worker_layer" ]
     needs: [ "test", "build_frontend" ]
     environment: approval
     steps:
