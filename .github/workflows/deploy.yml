@@ -27,6 +27,8 @@ jobs:
   deployment:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    outputs:
+      url: ${{ steps.deployment.outputs.SERVICE_HOST }}
     steps:
       - uses: actions/checkout@v3
 
@@ -132,16 +134,15 @@ jobs:
           yarn cdk deploy --all --require-approval never -O output.txt
           cat output.txt
           ARRAY=(`grep -e "https://.*/$STAGE/" output.txt | tr "\"", "\n"`)
-          echo "SERVICE_HOST=${ARRAY[-1]}" >> $GITHUB_OUTPUT
-          
-    
-
+          echo "SERVICE_HOST=${ARRAY[-1]}"
+          echo "SERVICE_HOST=${ARRAY[-1]}" >> "$GITHUB_OUTPUT"
 
   slack_notification:
       uses: ./.github/workflows/slack_message.yml
       needs: deployment
       with:
         environment: ${{ inputs.environment }}
+        url: ${{ needs.deployment.outputs.url }}
       secrets:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 

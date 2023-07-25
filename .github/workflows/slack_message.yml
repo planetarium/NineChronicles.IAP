@@ -4,6 +4,9 @@ on:
       environment:
         required: true
         type: string
+      url:
+        required: false
+        type: string
     secrets:
       SLACK_WEBHOOK_URL:
         required: true
@@ -74,7 +77,7 @@ jobs:
                       "emoji": true
                     },
                     "style": "primary",
-                    "url": "${{ steps.deployment.outputs.SERVICE_HOST }}",
+                    "url": "${{ inputs.url }}",
                     "action_id": "see-api-doc"
                   }
                 }
