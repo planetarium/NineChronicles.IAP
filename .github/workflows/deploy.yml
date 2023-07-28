@@ -1,30 +1,48 @@
-name: NineChronicles.IAP
+name: Deploy NineChronicles.IAP
 
+# environment secrets cannot be inherited from caller workflow to reusable workflow.
+#  I think this is HORRIBLE design
+#  https://github.com/actions/runner/issues/1490
 on:
-  push:
-    branches:
-      - development
-      - release/*
-      - main
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+    secrets:
+      ACCOUNT_ID:
+        required: true
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      KMS_KEY_ID:
+        required: true
+      GOOGLE_CREDENTIAL:
+        required: true
+      SLACK_WEBHOOK_URL:
+        required: true
 
 jobs:
-  build_and_deploy:
+  deployment:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
+    environment: ${{ inputs.environment }}
+    outputs:
+      url: ${{ steps.deployment.outputs.SERVICE_HOST }}
     steps:
       - uses: actions/checkout@v3
 
       - name: Setup Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Setup Node.js
+      - name: Setup Node.JS
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Install poetry
+      - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
           version: 1.4.2
@@ -37,6 +55,13 @@ jobs:
           path: .venv
           key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
+      - name: Cache node_modules
+        id: cache-node
+        uses: actions/cache@v3
+        with:
+          path: iap/frontend/node_modules
+          key: poetry-${{ runner.os }}-${{ hashFiles('iap/frontend/yarn.lock') }}
+
       - name: Install dependencies
         run: |
           poetry install
@@ -45,27 +70,36 @@ jobs:
           popd
           yarn add aws-cdk
 
-      - name: Create API Lambda layer
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend
+          path: iap/frontend/build
+#
+#      - name: Download iap_layer artifact
+#        uses: actions/download-artifact@v3
+#        with:
+#          name: iap_layer
+#          path: iap/layer
+#
+#      - name: Download worker_layer artifact
+#        uses: actions/download-artifact@v3
+#        with:
+#          name: worker_layer
+#          path: worker/layer
+
+      - name: Build IAP Layer
         run: |
           pushd iap
           poetry export --with=iap --without-hashes -o requirements.txt
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
           popd
 
-      - name: Create Worker Lambda layer
+      - name: Build Worker Layer
         run: |
           pushd worker
           poetry export --with=worker --without-hashes -o requirements.txt
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
-          popd
-
-      - name: Build frontend
-        env:
-          STAGE: ${{ vars.STAGE }}
-        run: |
-          pushd iap/frontend
-          sed -i "s/export const STAGE=\"local\";/export const STAGE=\"$STAGE\";/" src/const.js
-          yarn build
           popd
 
       - name: Synth stack
@@ -96,132 +130,21 @@ jobs:
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
         run: |
-          echo "TIME=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_OUTPUT
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt
           cat output.txt
           ARRAY=(`grep -e "https://.*/$STAGE/" output.txt | tr "\"", "\n"`)
-          echo "SERVICE_HOST=${ARRAY[-1]}" >> $GITHUB_OUTPUT
+          echo "SERVICE_HOST=${ARRAY[-1]}"
+          echo "SERVICE_HOST=${ARRAY[-1]}" >> "$GITHUB_OUTPUT"
 
-      - name: Slack message after success
-        if: ${{ success() }}
-        uses: slackapi/slack-github-action@v1.24.0
-        env:
-          STAGE: ${{ vars.STAGE }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        with:
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "[NineChronicles.IAP] Deployment Success :smile:",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Stage:*\n${{ vars.STAGE }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ github.ref_name }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": " "
-                  },
-                  "accessory": {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "Go and check",
-                      "emoji": true
-                    },
-                    "style": "primary",
-                    "url": "${{ steps.deployment.outputs.SERVICE_HOST }}",
-                    "action_id": "see-api-doc"
-                  }
-                }
-              ]
-            }
-
-      - name: Slack message after failure
-        if: ${{ failure() }}
-        uses: slackapi/slack-github-action@v1.24.0
-        env:
-          STAGE: ${{ vars.STAGE }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        with:
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "[NineChronicles.IAP] Deployment Fail :sob:",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Stage:*\n${{ vars.STAGE }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch:*\n${{ github.ref_name }}"
-                    }
-                  ]
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Deployment Timestamp:*\n${{ steps.deployment.outputs.TIME }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": " "
-                  },
-                  "accessory": {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "Checkout github actions",
-                      "emoji": true
-                    },
-                    "style": "danger",
-                    "url": "https://github.com/planetarium/NineChronicles.IAP/actions/runs/${{ github.run_id }}",
-                    "action_id": "see-github-actions"
-                  }
-                }
-              ]
-            }
+  slack_notification:
+      uses: ./.github/workflows/slack_message.yml
+      needs: deployment
+      with:
+        environment: ${{ inputs.environment }}
+        url: ${{ needs.deployment.outputs.url }}
+      secrets:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 #      - name: Upgrade DB Schema
 #        env:

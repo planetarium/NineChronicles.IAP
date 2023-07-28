@@ -1,0 +1,61 @@
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Setup Node.JS
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.4.2
+          virtualenvs-in-project: true
+
+      - name: Cache Poetry
+        id: cache-poetry
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry install
+          yarn add aws-cdk
+
+      - name: Create API Lambda layer
+        run: |
+          pushd ${{ inputs.target }}
+          poetry export --with=${{ inputs.target }} --without-hashes -o requirements.txt
+          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
+          popd
+
+      - name: Export artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.target }}_layer
+          path: |
+            ${{ inputs.target }}/layer
+          retention-days: 2
+
+      - name: Slack noti after failure
+        if: ${{ failure() }}
+        uses: ./.github/workflows/slack_message.yml
+        with:
+          environment: ${{ inputs.environment }}
