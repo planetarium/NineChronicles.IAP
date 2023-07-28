@@ -55,9 +55,15 @@ def get_iap_garage(sess) -> List[Optional[Dict]]:
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.stateQuery.select(
-                client.ds.stateQuery.garage.args(
-                    address=account.address,
-                    fugibleItemIds=fungible_id_list
+                client.ds.StateQuery.garages.args(
+                    agentAddr=account.address,
+                    fungibleItemIds=fungible_id_list,
+                ).select(
+                    client.ds.GaragesType.agentAddr,
+                    client.ds.GaragesType.fungibleItemGarages.select(
+                        client.ds.FungibleItemGarageWithAddressType.fungibleItemId,
+                        client.ds.FungibleItemGarageWithAddressType.count,
+                    )
                 )
             )
         )
@@ -68,4 +74,4 @@ def get_iap_garage(sess) -> List[Optional[Dict]]:
         logger.error(msg)
         raise Exception(msg)
 
-    return resp["stateQuery"]["garage"]["fungibleItemList"]
+    return resp["stateQuery"]["garages"]["fungibleItemGarages"]

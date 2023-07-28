@@ -8,7 +8,7 @@ from common.models.product import Product, Price
 from common.utils import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
-from iap.utils import get_purchase_count
+from iap.utils import get_purchase_count, get_iap_garage
 
 router = APIRouter(
     prefix="/product",
@@ -28,22 +28,21 @@ def product_list(agent_addr: str, sess=Depends(session)):
         .order_by(Product.display_order)
     ).unique().scalars().all()
 
-    # TODO: Change query to dict and compare balance and requirement
-    # garage = get_iap_garage(sess)
-    # FIXME: This is sample data
-    garage = {
-        "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe": 100,
-        "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a": 1000,
-    }
+    garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
+              for x in get_iap_garage(sess)}
 
     schema_dict = {x.id: ProductSchema.from_orm(x) for x in all_product_list}
 
     for product in all_product_list:
+        product_buyable = True
         # Check fungible item stock in garage
         for item in product.fungible_item_list:
             if garage[item.fungible_item_id] < item.amount:
                 schema_dict[product.id].buyable = False
+                product_buyable = False
                 break
+        if not product_buyable:
+            continue
 
         # Check purchase history
         schema = schema_dict[product.id]

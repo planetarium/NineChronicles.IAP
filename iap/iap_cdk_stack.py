@@ -1,4 +1,7 @@
+import os
+
 import aws_cdk as cdk_core
+import boto3
 from aws_cdk import (
     RemovalPolicy, Stack,
     aws_apigateway as _apig,
@@ -58,6 +61,18 @@ class APIStack(Stack):
             _iam.PolicyStatement(
                 actions=["sqs:sendmessage"],
                 resources=[shared_stack.q.queue_arn]
+            )
+        )
+        ssm = boto3.client("ssm", region_name=config.region_name,
+                           aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+                           aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+                           )
+        resp = ssm.get_parameter(Name=f"{config.stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)
+        kms_key_id = resp["Parameter"]["Value"]
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["kms:GetPublicKey"],
+                resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
             )
         )
 
