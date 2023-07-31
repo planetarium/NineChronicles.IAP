@@ -13,7 +13,7 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils import fetch_secrets, fetch_kms_key_id
+from common.utils.aws import fetch_secrets, fetch_kms_key_id
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]

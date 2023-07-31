@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, contains_eager
 
 from common.models.product import Product, Price
-from common.utils import format_addr, get_iap_garage
+from common.utils.address import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
-from iap.utils import get_purchase_count
+from iap.utils import get_iap_garage, get_purchase_count
 
 router = APIRouter(
     prefix="/product",
@@ -28,8 +28,11 @@ def product_list(agent_addr: str, sess=Depends(session)):
         .order_by(Product.display_order)
     ).unique().scalars().all()
 
-    garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
-              for x in get_iap_garage(sess)}
+    iap_garage = {x.fungible_id: x.amount for x in get_iap_garage(sess)}
+    garage = {}
+    for product in all_product_list:
+        for fungible_item in product.fungible_item_list:
+            garage[fungible_item.fungible_item_id] = iap_garage.get(fungible_item.fungible_item_id, 0)
 
     schema_dict = {x.id: ProductSchema.from_orm(x) for x in all_product_list}
 

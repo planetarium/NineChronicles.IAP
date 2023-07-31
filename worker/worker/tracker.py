@@ -7,10 +7,11 @@ from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
+from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.receipt import Receipt
-from common.utils import fetch_secrets
-from common._graphql import GQL
+from common.utils.aws import fetch_secrets
+from common.utils.garage import update_iap_garage
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -58,7 +59,7 @@ def track_tx(event, context):
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
         sess.add(receipt)
-
+    update_iap_garage(sess)
     sess.commit()
 
     logging.info(f"{len(receipt_list)} transactions are found to track status")
