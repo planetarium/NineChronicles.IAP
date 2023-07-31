@@ -81,8 +81,9 @@ def noti(event, context):
     title = [{
         "type": "header",
         "text": {
-            "type": "mrkdwn",
-            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+            "type": "plain_text",
+            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report",
+            "emoji": True
         }
     }]
     if representative == "danger":
