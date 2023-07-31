@@ -37,6 +37,11 @@ def update_price(store: Store, sess=Depends(session)):
     return f"{updated_price_count} prices in {updated_product_count} products are updated."
 
 
+@router.get("/update-garage")
+def update_garage(sess=Depends(session)):
+    return update_iap_garage(sess)
+
+
 @router.get("/refunded", response_model=List[RefundedReceiptSchema])
 def fetch_refunded(
         start: Annotated[
