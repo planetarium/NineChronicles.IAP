@@ -106,7 +106,8 @@ class WorkerStack(Stack):
             environment=env,
             events=[
                 _evt_src.SqsEventSource(shared_stack.q)
-            ]
+            ],
+            memory_size=256,
         )
 
         # Tracker Lambda Function
@@ -140,8 +141,9 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(60),
+            timeout=cdk_core.Duration.seconds(120),
             environment=env,
+            memory_size=192,
         )
 
         # Every hour
