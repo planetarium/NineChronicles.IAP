@@ -167,6 +167,7 @@ class WorkerStack(Stack):
             vpc=shared_stack.vpc,
             timeout=cdk_core.Duration.seconds(10),
             environment=env,
+            memory_size=192,
         )
 
         # EveryDay 03:00 UTC == 12:00 KST
