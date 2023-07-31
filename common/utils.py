@@ -2,17 +2,21 @@ import hmac
 import json
 import os
 from hashlib import sha1
-from typing import Union, Optional, Dict
+from typing import Union, Optional, Dict, List
 
 import boto3
 import eth_utils
 import googleapiclient.discovery
 from google.oauth2 import service_account
+from gql.dsl import dsl_gql, DSLQuery
+from sqlalchemy import select, distinct
 from sqlalchemy.orm import joinedload
 
 from common import logger
+from common._crypto import Account
+from common._graphql import GQL
 from common.enums import Store
-from common.models.product import Product, Price
+from common.models.product import Product, Price, FungibleItemProduct
 from common.schemas.product import GoogleIAPProductSchema
 
 
@@ -174,3 +178,40 @@ def update_google_price(sess, credential_data: str, package_name: str):
         raise e
     finally:
         sess.rollback()
+
+
+def get_iap_garage(sess) -> List[Optional[Dict]]:
+    """
+    Get NCG balance and fungible item count of IAP address.
+    :return:
+    """
+    stage = os.environ.get("STAGE", "development")
+    region_name = os.environ.get("REGION_NAME", "us-east-2")
+    client = GQL()
+    account = Account(fetch_kms_key_id(stage, region_name))
+
+    fungible_id_list = sess.scalars(select(distinct(FungibleItemProduct.fungible_item_id))).fetchall()
+
+    query = dsl_gql(
+        DSLQuery(
+            client.ds.StandaloneQuery.stateQuery.select(
+                client.ds.StateQuery.garages.args(
+                    agentAddr=account.address,
+                    fungibleItemIds=fungible_id_list,
+                ).select(
+                    client.ds.GaragesType.agentAddr,
+                    client.ds.GaragesType.fungibleItemGarages.select(
+                        client.ds.FungibleItemGarageWithAddressType.fungibleItemId,
+                        client.ds.FungibleItemGarageWithAddressType.count,
+                    )
+                )
+            )
+        )
+    )
+    resp = client.execute(query)
+    if "errors" in resp:
+        msg = f"GQL failed to get IAP garage: {resp['errors']}"
+        logger.error(msg)
+        raise Exception(msg)
+
+    return resp["stateQuery"]["garages"]["fungibleItemGarages"]
