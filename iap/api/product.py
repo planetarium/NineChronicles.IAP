@@ -8,7 +8,8 @@ from common.models.product import Product, Price
 from common.utils.address import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
-from iap.utils import get_iap_garage, get_purchase_count
+from iap.utils import get_purchase_count
+from common.utils.garage import get_iap_garage
 
 router = APIRouter(
     prefix="/product",
