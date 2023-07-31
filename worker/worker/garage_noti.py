@@ -103,5 +103,5 @@ def noti(event, context):
             }
         ]
     }
-    resp = requests.post(os.environ.get("SLACK_WEBHOOK_URL"), json=payload)
+    resp = requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
     logger.debug(f"{resp.status_code} :: {resp.text}")

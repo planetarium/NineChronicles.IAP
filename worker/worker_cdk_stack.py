@@ -155,6 +155,7 @@ class WorkerStack(Stack):
         hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
 
         # IAP garage daily report
+        env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
         garage_report = _lambda.Function(
             self, f"{config.stage}-9c-iap-garage-report",
             runtime=_lambda.Runtime.PYTHON_3_10,
