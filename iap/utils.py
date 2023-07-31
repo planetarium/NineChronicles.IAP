@@ -10,7 +10,7 @@ from common.enums import ReceiptStatus
 from common.models.garage import GarageItemStatus
 from common.models.product import FungibleItemProduct
 from common.models.receipt import Receipt
-from common.utils import fetch_kms_key_id
+from common.utils.aws import fetch_kms_key_id
 
 
 def get_purchase_count(sess, agent_addr: str, product_id: int, hour_limit: int) -> int:

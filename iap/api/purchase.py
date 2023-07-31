@@ -13,7 +13,7 @@ from sqlalchemy.orm import joinedload
 from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils import get_google_client
+from common.utils.google import get_google_client
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger

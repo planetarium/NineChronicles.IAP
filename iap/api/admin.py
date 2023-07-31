@@ -7,7 +7,8 @@ from sqlalchemy.orm import joinedload
 
 from common.enums import Store, ReceiptStatus
 from common.models.receipt import Receipt
-from common.utils import update_google_price
+from common.utils.garage import update_iap_garage
+from common.utils.google import update_google_price
 from iap import settings
 from iap.dependencies import session
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema

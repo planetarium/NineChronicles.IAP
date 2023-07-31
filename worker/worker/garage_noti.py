@@ -4,7 +4,8 @@ import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from common.utils import fetch_secrets, get_iap_garage
+from common.utils.aws import fetch_secrets
+from iap.utils import get_iap_garage
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]

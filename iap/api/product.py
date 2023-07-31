@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, contains_eager
 
 from common.models.product import Product, Price
-from common.utils import format_addr, get_iap_garage
+from common.utils.address import format_addr
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
-from iap.utils import get_purchase_count
+from iap.utils import get_iap_garage, get_purchase_count
 
 router = APIRouter(
     prefix="/product",
