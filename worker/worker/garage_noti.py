@@ -53,8 +53,8 @@ def noti(event, context):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"{ITEM_DICT[item_id]['name']} : {count:15,d}\t"
-                        f"(`{count // ITEM_DICT[item_id]['limit']}` to exhaust)"
+                "text": f"{ITEM_DICT[item_id]['name']} : {count:15,d} 개 남음\t"
+                        f"(매진까지 `{count // ITEM_DICT[item_id]['limit']}` 구매)"
             }
         }
 
@@ -75,25 +75,29 @@ def noti(event, context):
                             else "good")
                       )
 
-    title = f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+    title = [{
+        "type": "header",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+        }
+    }]
     if representative == "danger":
-        title += f"\nHey <@U02S8TASTGW> <@U03PRBN1CMB>, you need to check this."
+        title.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"\n<@U02S8TASTGW> <@U03PRBN1CMB> 재고 확인 및 충전이 필요합니다."
+            }
+        })
 
-    payload = {
-        "blocks": [
-            {
-                "type": "header",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": title
+        payload = {
+            "blocks": title,
+            "attachments": [
+                {
+                    "color": COLOR_PROFILE[representative]["color"],
+                    "blocks": blocks
                 }
-            }
-        ],
-        "attachments": [
-            {
-                "color": COLOR_PROFILE[representative]["color"],
-                "blocks": blocks
-            }
-        ]
-    }
-    requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+            ]
+        }
+        requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
