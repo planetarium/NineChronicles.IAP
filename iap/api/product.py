@@ -34,9 +34,6 @@ def product_list(agent_addr: str, sess=Depends(session)):
         for fungible_item in product.fungible_item_list:
             garage[fungible_item.fungible_item_id] = iap_garage.get(fungible_item.fungible_item_id, 0)
 
-    # garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
-    #           for x in get_iap_garage(sess)}
-
     schema_dict = {x.id: ProductSchema.from_orm(x) for x in all_product_list}
 
     for product in all_product_list:

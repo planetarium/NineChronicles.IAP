@@ -46,7 +46,6 @@ def get_iap_garage(sess) -> List[GarageItemStatus]:
     """
     stage = os.environ.get("STAGE", "development")
     region_name = os.environ.get("REGION_NAME", "us-east-2")
-    # client = GQL()
     account = Account(fetch_kms_key_id(stage, region_name))
 
     fungible_id_list = sess.scalars(select(distinct(FungibleItemProduct.fungible_item_id))).fetchall()
@@ -56,27 +55,3 @@ def get_iap_garage(sess) -> List[GarageItemStatus]:
             GarageItemStatus.fungible_id.in_(fungible_id_list)
         )
     )
-
-    # query = dsl_gql(
-    #     DSLQuery(
-    #         client.ds.StandaloneQuery.stateQuery.select(
-    #             client.ds.StateQuery.garages.args(
-    #                 agentAddr=account.address,
-    #                 fungibleItemIds=fungible_id_list,
-    #             ).select(
-    #                 client.ds.GaragesType.agentAddr,
-    #                 client.ds.GaragesType.fungibleItemGarages.select(
-    #                     client.ds.FungibleItemGarageWithAddressType.fungibleItemId,
-    #                     client.ds.FungibleItemGarageWithAddressType.count,
-    #                 )
-    #             )
-    #         )
-    #     )
-    # )
-    # resp = client.execute(query)
-    # if "errors" in resp:
-    #     msg = f"GQL failed to get IAP garage: {resp['errors']}"
-    #     logger.error(msg)
-    #     raise Exception(msg)
-    #
-    # return resp["stateQuery"]["garages"]["fungibleItemGarages"]
