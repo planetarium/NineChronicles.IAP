@@ -60,6 +60,7 @@ def track_tx(event, context):
         receipt.tx_status = tx_status
         sess.add(receipt)
     update_iap_garage(sess)
+    sess.commit()
 
     logging.info(f"{len(receipt_list)} transactions are found to track status")
     for status, tx_list in result.items():
