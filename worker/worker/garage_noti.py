@@ -4,8 +4,9 @@ import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from common import logger
 from common.utils.aws import fetch_secrets
-from common.utils.garage import get_iap_garage
+from common.utils.garage import get_iap_garage, update_iap_garage
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -43,7 +44,8 @@ engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 def noti(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
-    garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
+    update_iap_garage(sess)
+    garage = {x.fungible_id: x.amount if x.amount is not None else 0
               for x in get_iap_garage(sess)}
 
     state_dict = {}
@@ -79,8 +81,9 @@ def noti(event, context):
     title = [{
         "type": "header",
         "text": {
-            "type": "mrkdwn",
-            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+            "type": "plain_text",
+            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report",
+            "emoji": True
         }
     }]
     if representative == "danger":
@@ -92,13 +95,14 @@ def noti(event, context):
             }
         })
 
-        payload = {
-            "blocks": title,
-            "attachments": [
-                {
-                    "color": COLOR_PROFILE[representative]["color"],
-                    "blocks": blocks
-                }
-            ]
-        }
-        requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    payload = {
+        "blocks": title,
+        "attachments": [
+            {
+                "color": COLOR_PROFILE[representative]["color"],
+                "blocks": blocks
+            }
+        ]
+    }
+    resp = requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    logger.debug(f"{resp.status_code} :: {resp.text}")

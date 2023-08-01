@@ -38,6 +38,7 @@ jobs:
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
 
   deploy_without_approval:
     # This is for development / internal deployment
@@ -53,6 +54,7 @@ jobs:
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
 
   approval:
     runs-on: ubuntu-latest
@@ -80,3 +82,4 @@ jobs:
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}

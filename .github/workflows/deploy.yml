@@ -22,6 +22,8 @@ on:
         required: true
       SLACK_WEBHOOK_URL:
         required: true
+      IAP_GARAGE_WEBHOOK_URL:
+        required: true
 
 jobs:
   deployment:
@@ -101,6 +103,7 @@ jobs:
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
+          IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
         run: |
           source $VENV
           yarn cdk synth
@@ -117,6 +120,7 @@ jobs:
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
+          IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
         run: |
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt
