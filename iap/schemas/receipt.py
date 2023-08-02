@@ -10,7 +10,7 @@ from common.enums import (
     ReceiptStatus, Store, TxStatus,
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
-from common.utils import format_addr
+from common.utils.address import format_addr
 from iap.schemas.product import SimpleProductSchema
 
 

@@ -5,7 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from common import logger
-from common.utils import fetch_secrets, update_google_price, fetch_parameter
+from common.utils.aws import fetch_secrets, fetch_parameter
+from common.utils.google import update_google_price
 
 stage = os.environ.get("STAGE", "development")
 DB_URI = os.environ.get("DB_URI")

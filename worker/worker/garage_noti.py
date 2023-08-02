@@ -5,8 +5,10 @@ from sqlalchemy import create_engine
 from sqlalchemy import select
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from common import logger
 from common.models.product import FungibleItemProduct
-from common.utils import fetch_secrets, get_iap_garage
+from common.utils.aws import fetch_secrets
+from common.utils.garage import get_iap_garage, update_iap_garage
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -39,7 +41,8 @@ def noti(event, context):
     item_dict = {p.fungible_item_id: {"name": p.name, "limit": 0} for p in product_list}
     for p in product_list:
         item_dict[p.fungible_item_id]["limit"] = max(p.amount, item_dict[p.fungible_item_id]["limit"])
-    garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
+    update_iap_garage(sess)
+    garage = {x.fungible_id: x.amount if x.amount is not None else 0
               for x in get_iap_garage(sess)}
 
     state_dict = {}
@@ -75,8 +78,9 @@ def noti(event, context):
     title = [{
         "type": "header",
         "text": {
-            "type": "mrkdwn",
-            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+            "type": "plain_text",
+            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report",
+            "emoji": True
         }
     }]
     if representative == "danger":
@@ -88,13 +92,14 @@ def noti(event, context):
             }
         })
 
-        payload = {
-            "blocks": title,
-            "attachments": [
-                {
-                    "color": COLOR_PROFILE[representative]["color"],
-                    "blocks": blocks
-                }
-            ]
-        }
-        requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    payload = {
+        "blocks": title,
+        "attachments": [
+            {
+                "color": COLOR_PROFILE[representative]["color"],
+                "blocks": blocks
+            }
+        ]
+    }
+    resp = requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    logger.debug(f"{resp.status_code} :: {resp.text}")
