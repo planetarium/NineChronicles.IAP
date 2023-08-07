@@ -2,10 +2,13 @@ import os
 
 import requests
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from common import logger
+from common.models.product import FungibleItemProduct
 from common.utils.aws import fetch_secrets
-from iap.utils import get_iap_garage
+from common.utils.garage import get_iap_garage, update_iap_garage
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -13,16 +16,7 @@ DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 
 ITEM_WARNING_MULTIPLIER = 1000
 ITEM_DANGER_MULTIPLIER = 100
-ITEM_DICT = {
-    "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe": {
-        "name": "AP Potion",
-        "limit": 40
-    },
-    "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a": {
-        "name": "Hourglass",
-        "limit": 40_000
-    },
-}
+
 COLOR_PROFILE = {
     "danger": {
         "emoji": ":red_circle:",
@@ -43,7 +37,12 @@ engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 def noti(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
-    garage = {x["fungibleItemId"]: x["count"] if x["count"] is not None else 0
+    product_list = sess.scalars(select(FungibleItemProduct)).fetchall()
+    item_dict = {p.fungible_item_id: {"name": p.name, "limit": 0} for p in product_list}
+    for p in product_list:
+        item_dict[p.fungible_item_id]["limit"] = max(p.amount, item_dict[p.fungible_item_id]["limit"])
+    update_iap_garage(sess)
+    garage = {x.fungible_id: x.amount if x.amount is not None else 0
               for x in get_iap_garage(sess)}
 
     state_dict = {}
@@ -54,15 +53,15 @@ def noti(event, context):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"{ITEM_DICT[item_id]['name']} : {count:15,d} 개 남음\t"
-                        f"(매진까지 `{count // ITEM_DICT[item_id]['limit']}` 구매)"
+                "text": f"{item_dict[item_id]['name']} : {count:15,d} 개 남음\t"
+                        f"(매진까지 `{count // item_dict[item_id]['limit']}` 구매)"
             }
         }
 
-        if count <= ITEM_DICT[item_id]["limit"] * ITEM_DANGER_MULTIPLIER:
+        if count <= item_dict[item_id]["limit"] * ITEM_DANGER_MULTIPLIER:
             state_dict[item_id] = "danger"
             block["text"]["text"] = f"{COLOR_PROFILE['danger']['emoji']} " + block["text"]["text"]
-        elif count <= ITEM_DICT[item_id]["limit"] * ITEM_WARNING_MULTIPLIER:
+        elif count <= item_dict[item_id]["limit"] * ITEM_WARNING_MULTIPLIER:
             state_dict[item_id] = "warning"
             block["text"]["text"] = f"{COLOR_PROFILE['warning']['emoji']} " + block["text"]["text"]
         else:
@@ -79,8 +78,9 @@ def noti(event, context):
     title = [{
         "type": "header",
         "text": {
-            "type": "mrkdwn",
-            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report"
+            "type": "plain_text",
+            "text": f"{COLOR_PROFILE[representative]['emoji']} [NineChronicles.IAP] Daily IAP Garage Report",
+            "emoji": True
         }
     }]
     if representative == "danger":
@@ -92,13 +92,14 @@ def noti(event, context):
             }
         })
 
-        payload = {
-            "blocks": title,
-            "attachments": [
-                {
-                    "color": COLOR_PROFILE[representative]["color"],
-                    "blocks": blocks
-                }
-            ]
-        }
-        requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    payload = {
+        "blocks": title,
+        "attachments": [
+            {
+                "color": COLOR_PROFILE[representative]["color"],
+                "blocks": blocks
+            }
+        ]
+    }
+    resp = requests.post(os.environ.get("IAP_GARAGE_WEBHOOK_URL"), json=payload)
+    logger.debug(f"{resp.status_code} :: {resp.text}")

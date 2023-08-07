@@ -1,4 +1,4 @@
-name: Deploy NineChronicles.IAP
+name: Synth NineChronicles.IAP CDK Stack
 
 # environment secrets cannot be inherited from caller workflow to reusable workflow.
 #  I think this is HORRIBLE design
@@ -26,7 +26,7 @@ on:
         required: true
 
 jobs:
-  deployment:
+  synth:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     outputs:
@@ -72,12 +72,6 @@ jobs:
           popd
           yarn add aws-cdk
 
-      - name: Download frontend artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: frontend
-          path: iap/frontend/build
-
       - name: Build IAP Layer
         run: |
           pushd iap
@@ -108,46 +102,11 @@ jobs:
           source $VENV
           yarn cdk synth
 
-      - name: Deploy stack
-        id: deployment
-        env:
-          STAGE: ${{ vars.STAGE }}
-          REGION_NAME: ${{ vars.REGION_NAME }}
-          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          HEADLESS: ${{ vars.HEADLESS }}
-          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
-          GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
-          GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
-          IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
-        run: |
-          source $VENV
-          yarn cdk deploy --all --require-approval never -O output.txt
-          cat output.txt
-          ARRAY=(`grep -e "https://.*/$STAGE/" output.txt | tr "\"", "\n"`)
-          echo "SERVICE_HOST=${ARRAY[-1]}"
-          echo "SERVICE_HOST=${ARRAY[-1]}" >> "$GITHUB_OUTPUT"
-
   slack_notification:
-      uses: ./.github/workflows/slack_message.yml
-      needs: deployment
-      if: ${{ always() }}
-      with:
-        environment: ${{ inputs.environment }}
-        url: ${{ needs.deployment.outputs.url }}
-      secrets:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-#      - name: Upgrade DB Schema
-#        env:
-#          STAGE: ${{vars.STAGE}}
-#          REGION_NAME: ${{ vars.REGION_NAME }}
-#          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#        run: |
-#          source $VENV
-#          pushd common
-#          python scripts/update_alembic_ini.py
-#          alembic upgrade head -n ${{vars.STAGE}}
-#          popd
+    uses: ./.github/workflows/slack_message.yml
+    needs: synth
+    if: ${{ failure() }}
+    with:
+      environment: ${{ inputs.environment }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

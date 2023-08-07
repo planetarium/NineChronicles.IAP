@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import select, distinct
@@ -52,3 +53,21 @@ def update_iap_garage(sess):
         sess.add(GarageItemStatus(address=account.address, fungible_id=fungible_id, amount=amount))
     logger.info(f"{len(data)} garages are added")
     return data
+
+
+def get_iap_garage(sess) -> List[GarageItemStatus]:
+    """
+    Get NCG balance and fungible item count of IAP address.
+    :return:
+    """
+    stage = os.environ.get("STAGE", "development")
+    region_name = os.environ.get("REGION_NAME", "us-east-2")
+    account = Account(fetch_kms_key_id(stage, region_name))
+
+    fungible_id_list = sess.scalars(select(distinct(FungibleItemProduct.fungible_item_id))).fetchall()
+    return sess.scalars(
+        select(GarageItemStatus).where(
+            GarageItemStatus.address == account.address,
+            GarageItemStatus.fungible_id.in_(fungible_id_list)
+        )
+    )
