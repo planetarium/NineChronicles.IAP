@@ -12,7 +12,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from common import Config, logger
-from common.utils import fetch_parameter
+from common.utils.aws import fetch_parameter
 
 
 @dataclass

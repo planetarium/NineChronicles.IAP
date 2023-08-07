@@ -106,7 +106,8 @@ class WorkerStack(Stack):
             environment=env,
             events=[
                 _evt_src.SqsEventSource(shared_stack.q)
-            ]
+            ],
+            memory_size=256,
         )
 
         # Tracker Lambda Function
@@ -140,8 +141,9 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(60),
+            timeout=cdk_core.Duration.seconds(120),
             environment=env,
+            memory_size=192,
         )
 
         # Every hour
@@ -151,3 +153,27 @@ class WorkerStack(Stack):
         )
 
         hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
+
+        # IAP garage daily report
+        env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
+        garage_report = _lambda.Function(
+            self, f"{config.stage}-9c-iap-garage-report",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            description="Daily report of 9c IAP Garage item count",
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="garage_noti.noti",
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(10),
+            environment=env,
+            memory_size=192,
+        )
+
+        # EveryDay 03:00 UTC == 12:00 KST
+        everyday_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-everyday-event",
+            schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
+        )
+
+        everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))

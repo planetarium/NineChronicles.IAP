@@ -3,7 +3,7 @@ import os
 
 from starlette.config import Config
 
-from common.utils import fetch_secrets, fetch_parameter
+from common.utils.aws import fetch_secrets, fetch_parameter
 
 stage = os.environ.get("STAGE", "local")
 db_password = None

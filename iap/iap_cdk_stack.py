@@ -111,6 +111,7 @@ class APIStack(Stack):
             security_groups=[shared_stack.rds_security_group],
             timeout=cdk_core.Duration.seconds(10),
             environment=env,
+            memory_size=256,
         )
 
         # ACM & Custom Domain

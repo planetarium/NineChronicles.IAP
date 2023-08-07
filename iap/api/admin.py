@@ -7,7 +7,8 @@ from sqlalchemy.orm import joinedload
 
 from common.enums import Store, ReceiptStatus
 from common.models.receipt import Receipt
-from common.utils import update_google_price
+from common.utils.garage import update_iap_garage
+from common.utils.google import update_google_price
 from iap import settings
 from iap.dependencies import session
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
@@ -34,6 +35,11 @@ def update_price(store: Store, sess=Depends(session)):
         raise ValueError(f"{store.name} is unsupported store.")
 
     return f"{updated_price_count} prices in {updated_product_count} products are updated."
+
+
+@router.get("/update-garage")
+def update_garage(sess=Depends(session)):
+    return update_iap_garage(sess)
 
 
 @router.get("/refunded", response_model=List[RefundedReceiptSchema])
