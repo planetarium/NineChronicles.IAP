@@ -147,12 +147,13 @@ class WorkerStack(Stack):
         )
 
         # Every hour
-        hourly_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-price-updater-event",
-            schedule=_events.Schedule.cron(minute="0")  # Every hour
-        )
+        if config.stage != "internal":
+            hourly_event_rule = _events.Rule(
+                self, f"{config.stage}-9c-iap-price-updater-event",
+                schedule=_events.Schedule.cron(minute="0")  # Every hour
+            )
 
-        hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
+            hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
 
         # IAP garage daily report
         env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
@@ -171,9 +172,10 @@ class WorkerStack(Stack):
         )
 
         # EveryDay 03:00 UTC == 12:00 KST
-        everyday_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-everyday-event",
-            schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
-        )
+        if config.stage != "internal":
+            everyday_event_rule = _events.Rule(
+                self, f"{config.stage}-9c-iap-everyday-event",
+                schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
+            )
 
-        everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
+            everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
