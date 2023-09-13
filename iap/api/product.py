@@ -1,15 +1,15 @@
+from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.orm import joinedload, contains_eager
 
-from common.models.product import Product, Price
+from common.models.product import Product, Category, Price, FungibleAssetProduct, FungibleItemProduct
 from common.utils.address import format_addr
-from iap.dependencies import session
-from iap.schemas.product import ProductSchema
-from iap.utils import get_purchase_count
 from common.utils.garage import get_iap_garage
+from iap.dependencies import session
+from iap.schemas.product import CategorySchema, ProductSchema
+from iap.utils import get_purchase_count
 
 router = APIRouter(
     prefix="/product",
@@ -17,44 +17,62 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[ProductSchema])
+@router.get("", response_model=List[CategorySchema])
 def product_list(agent_addr: str, sess=Depends(session)):
     agent_addr = format_addr(agent_addr)
-    all_product_list = sess.execute(
-        select(Product).filter_by(active=True)
-        .join(Product.price_list).where(Price.active.is_(True))
-        .options(contains_eager(Product.price_list))
-        .options(joinedload(Product.fav_list))
-        .options(joinedload(Product.fungible_item_list))
-        .order_by(Product.display_order)
-    ).unique().scalars().all()
+    # FIXME: Optimize query
+    all_category_list = (
+        sess.query(Category).options(joinedload(Category.product_list))
+        .join(Product.fav_list)
+        .join(Product.fungible_item_list)
+        .filter(Category.active.is_(True)).filter(Product.active.is_(True))
+        .order_by(Category.order, Product.order)
+    ).all()
 
     iap_garage = {x.fungible_id: x.amount for x in get_iap_garage(sess)}
     garage = {}
-    for product in all_product_list:
-        for fungible_item in product.fungible_item_list:
-            garage[fungible_item.fungible_item_id] = iap_garage.get(fungible_item.fungible_item_id, 0)
-
-    schema_dict = {x.id: ProductSchema.from_orm(x) for x in all_product_list}
-
-    for product in all_product_list:
-        product_buyable = True
-        # Check fungible item stock in garage
-        for item in product.fungible_item_list:
-            if garage[item.fungible_item_id] < item.amount:
-                schema_dict[product.id].buyable = False
-                product_buyable = False
-                break
-        if not product_buyable:
+    for category in all_category_list:
+        if ((category.open_timestamp and category.open_timestamp > datetime.now()) or
+                (category.close_timestamp and category.close_timestamp <= datetime.now())):
             continue
 
-        # Check purchase history
-        schema = schema_dict[product.id]
-        if product.daily_limit:
-            schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24)
-            schema.buyable = schema.purchase_count < product.daily_limit
-        elif product.weekly_limit:
-            schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24 * 7)
-            schema.buyable = schema.purchase_count < product.weekly_limit
+        for product in category.product_list:
+            if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
+                    (product.close_timestamp and product.close_timestamp <= datetime.now())):
+                continue
 
-    return list(schema_dict.values())
+            for fungible_item in product.fungible_item_list:
+                garage[fungible_item.fungible_item_id] = iap_garage.get(fungible_item.fungible_item_id, 0)
+
+    category_schema_list = []
+    for category in all_category_list:
+        cat_schema = CategorySchema.model_validate(category)
+        schema_dict = {}
+        for product in category.product_list:
+            schema_dict[product.id] = ProductSchema.model_validate(product)
+            # FIXME: Pinpoint get product buyability
+            product_buyable = True
+            # Check fungible item stock in garage
+            for item in product.fungible_item_list:
+                if garage[item.fungible_item_id] < item.amount:
+                    schema_dict[product.id].buyable = False
+                    product_buyable = False
+                    break
+            if not product_buyable:
+                continue
+
+            # Check purchase history
+            schema = schema_dict[product.id]
+            if product.daily_limit:
+                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24)
+                schema.buyable = schema.purchase_count < product.daily_limit
+            elif product.weekly_limit:
+                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24 * 7)
+                schema.buyable = schema.purchase_count < product.weekly_limit
+            elif product.account_limit:
+                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id)
+                schema.buyable = schema.purchase_count < product.account_limit
+        cat_schema.product_list = list(schema_dict.values())
+        category_schema_list.append(cat_schema)
+
+    return category_schema_list

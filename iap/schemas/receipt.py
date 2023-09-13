@@ -79,7 +79,7 @@ class FullReceiptSchema(BaseSchema):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ReceiptDetailSchema(BaseSchema):
@@ -91,7 +91,7 @@ class ReceiptDetailSchema(BaseSchema):
     tx_status: Optional[TxStatus] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class RefundedReceiptSchema(BaseSchema):
@@ -106,4 +106,4 @@ class RefundedReceiptSchema(BaseSchema):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
