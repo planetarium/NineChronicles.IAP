@@ -179,3 +179,44 @@ class WorkerStack(Stack):
         )
 
         everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
+
+        # Golden dust by NCG handler
+        gd_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-goldendust-handler-function",
+            function_name=f"{config.stage}-9c-iap-goldendust-handler",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            description="Request handler for Golden dust by NCG for PC users",
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="golden_dust_by_ncg.handle_request",
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(120),
+            environment=env,
+            memory_size=256,
+        )
+
+        # Every ten minute
+        ten_minute_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-gd-handler-event",
+            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
+        )
+        ten_minute_event_rule.add_target(_event_targets.LambdaFunction(gd_handler))
+
+        # Golden dust unload Tx. tracker
+        gd_tracker = _lambda.Function(
+            self, f"{config.stage}-9c-iap-goldendust-tracker-function",
+            function_name=f"{config.stage}-9c-iap-goldendust-tracker",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            description=f"Tx. status tracker for golden dust unload for PC users",
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler = "golden_dust_by_ncg.track_tx",
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(50),
+            environment=env,
+            memory_size=256,
+        )
+
+        minute_event_rule.add_target(_event_targets.LambdaFunction(gd_tracker))
