@@ -146,14 +146,15 @@ class WorkerStack(Stack):
             memory_size=192,
         )
 
+        # NOTE: Price is directly fetched between client and google play.
+        #  To not need to update price in IAP service.
         # Every hour
-        if config.stage != "internal":
-            hourly_event_rule = _events.Rule(
-                self, f"{config.stage}-9c-iap-price-updater-event",
-                schedule=_events.Schedule.cron(minute="0")  # Every hour
-            )
-
-            hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
+        # hourly_event_rule = _events.Rule(
+        #     self, f"{config.stage}-9c-iap-price-updater-event",
+        #     schedule=_events.Schedule.cron(minute="0")  # Every hour
+        # )
+        #
+        # hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
 
         # IAP garage daily report
         env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
