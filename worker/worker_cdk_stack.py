@@ -182,6 +182,7 @@ class WorkerStack(Stack):
             everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
 
         # Golden dust by NCG handler
+        env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
         env["FORM_SHEET"] = config.form_sheet
         gd_handler = _lambda.Function(
             self, f"{config.stage}-9c-iap-goldendust-handler-function",
