@@ -225,7 +225,7 @@ def get_tx_result(agent_addr: str, tx_hash: str) -> TxData:
     return result
 
 
-def run():
+def handle_request(event, context):
     account = Account(fetch_kms_key_id(os.environ.get("stage"), os.environ.get("region_name")))
     sheet = Spreadsheet(os.environ.get("GOOGLE_CREDENTIAL"), os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
     gql = GQL()
@@ -296,7 +296,7 @@ def run():
         unsigned_tx = gql.create_action("unload_from_garage", pubkey=account.pubkey, nonce=nonce,
                                         fav_data=[], avatar_addr=req.avatar_addr,
                                         item_data=[{"fungibleId": GOLDEN_DUST_FUNGIBLE_ID,
-                                                    "count": req.request_dust_set*GOLDEN_DUST_SET}]
+                                                    "count": req.request_dust_set * GOLDEN_DUST_SET}]
                                         )
         signature = account.sign_tx(unsigned_tx)
         signed_tx = gql.sign(unsigned_tx, signature)
@@ -352,4 +352,6 @@ def track_tx(event, context):
 
 
 if __name__ == "__main__":
-    run()
+    # handle_request(None, None)
+    # track_tx(None, None)
+    pass
