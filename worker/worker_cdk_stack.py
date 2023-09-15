@@ -202,7 +202,7 @@ class WorkerStack(Stack):
         # Every ten minute
         ten_minute_event_rule = _events.Rule(
             self, f"{config.stage}-9c-iap-gd-handler-event",
-            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
+            schedule=_events.Schedule.cron(minute="*")  # Every ten minute
         )
         ten_minute_event_rule.add_target(_event_targets.LambdaFunction(gd_handler))
 
