@@ -21,7 +21,7 @@ GOLDEN_DUST_SET = 20
 GOLDEN_DUST_FUNGIBLE_ID = "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"
 
 FORM_SHEET = os.environ.get("FORM_SHEET")
-WORK_SHEET = f"Worker_History_{os.environ.get('stage')}"
+WORK_SHEET = f"Worker_History_{os.environ.get('STAGE')}"
 
 NCG_COL = "E"
 TOKEN_COL = "H"
@@ -226,7 +226,7 @@ def get_tx_result(agent_addr: str, tx_hash: str) -> TxData:
 
 
 def handle_request(event, context):
-    account = Account(fetch_kms_key_id(os.environ.get("stage"), os.environ.get("region_name")))
+    account = Account(fetch_kms_key_id(os.environ.get("STAGE"), os.environ.get("REGION_NAME")))
     sheet = Spreadsheet(os.environ.get("GOOGLE_CREDENTIAL"), os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
     gql = GQL()
     # Get prev. data
