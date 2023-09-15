@@ -12,8 +12,14 @@ from gql.dsl import dsl_gql, DSLQuery
 
 from common._crypto import Account
 from common._graphql import GQL
-from common.utils.aws import fetch_kms_key_id
+from common.utils.aws import fetch_kms_key_id, fetch_parameter
 from common.utils.google import Spreadsheet
+
+GOOGLE_CREDENTIAL = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_GOOGLE_CREDENTIAL",
+    True
+)["Value"]
 
 AUTHORIZED_RECIPIENT = "0x368440201eB5823a103f4Fb0eF94840365bE838E"
 NCG_TRANSFER_UNIT = 35
@@ -227,7 +233,7 @@ def get_tx_result(agent_addr: str, tx_hash: str) -> TxData:
 
 def handle_request(event, context):
     account = Account(fetch_kms_key_id(os.environ.get("STAGE"), os.environ.get("REGION_NAME")))
-    sheet = Spreadsheet(os.environ.get("GOOGLE_CREDENTIAL"), os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
     gql = GQL()
     # Get prev. data
     prev_tokens = set()
@@ -314,7 +320,7 @@ def handle_request(event, context):
 
 
 def track_tx(event, context):
-    sheet = Spreadsheet(os.environ.get("GOOGLE_CREDENTIAL"), os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
     tx_data = sheet.get_values(f"{WORK_SHEET}!{TX_HASH_COL}2:{COMMENT_COL}").get("values", [])
     client = GQL()
     for i, tx in enumerate(tx_data):
