@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -7,6 +8,7 @@ from enum import Enum
 from typing import Union, List, Optional
 
 import requests
+from gql.dsl import dsl_gql, DSLQuery
 
 from common._crypto import Account
 from common._graphql import GQL
@@ -309,6 +311,44 @@ def run():
 
     # Write result
     sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
+
+
+def track_tx(event, context):
+    sheet = Spreadsheet(os.environ.get("GOOGLE_CREDENTIAL"), os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    tx_data = sheet.get_values(f"{WORK_SHEET}!{TX_HASH_COL}2:{COMMENT_COL}").get("values", [])
+    client = GQL()
+    for i, tx in enumerate(tx_data):
+        if tx[1] != "Staging":
+            print(f"{i + 1} / {len(tx_data)} : Invalid tx. status: {tx[1]}")
+            continue
+        query = dsl_gql(
+            DSLQuery(
+                client.ds.StandaloneQuery.transaction.select(
+                    client.ds.TransactionHeadlessQuery.transactionResult.args(
+                        txId=tx[0]
+                    ).select(
+                        client.ds.TxResultType.txStatus,
+                        client.ds.TxResultType.blockIndex,
+                        client.ds.TxResultType.blockHash,
+                        client.ds.TxResultType.exceptionName,
+                    )
+                )
+            )
+        )
+        resp = client.execute(query)
+        logging.debug(resp)
+
+        if "errors" in resp:
+            logging.error(f"GQL Failed to get tx result: {resp['errors']}")
+            continue
+
+        data = resp["transaction"]["transactionResult"]
+        tx[1] = TxStatus[data["txStatus"]].value
+        tx[2] = data["blockIndex"]
+        if data.get("exceptionName"):
+            tx[-1] = data["exceptionName"]
+        sheet.set_values(f"{WORK_SHEET}!{TX_HASH_COL}{i + 2}:{COMMENT_COL}", [tx])
+        print(f"{i + 1} / {len(tx_data)} updated.")
 
 
 if __name__ == "__main__":
