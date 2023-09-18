@@ -242,7 +242,7 @@ def handle_request(event, context):
     prev_treated = set()
     prev_data = work_sheet.get_values(f"{WORK_SHEET}!C2:{TX_STATUS_COL}").get("values", [])
     for prev in prev_data:
-        prev_tokens.add(prev[5])
+        prev_tokens.add(prev[6])
         if TxStatus(prev[9]) in (TxStatus.STAGING, TxStatus.SUCCESS):
             prev_treated.add(prev[0])
 
