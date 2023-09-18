@@ -153,7 +153,7 @@ def handle_avatar(data: dict, result: TxData) -> TxData:
         result.comment.append("No avatar data found in agent")
         return result
 
-    result.avatar_list = [x["address"] for x in agent_data["avatarStates"]]
+    result.avatar_list = [x["address"].lower() for x in agent_data["avatarStates"]]
     return result
 
 
@@ -272,7 +272,7 @@ def handle_request(event, context):
             # Validate
             if req.agent_addr != tx_data.signer:
                 req.comment.append(f"{req.agent_addr} is not matched with Tx. Signer {tx_data.signer}")
-            if req.avatar_addr not in tx_data.avatar_list:
+            if req.avatar_addr.lower() not in tx_data.avatar_list:
                 req.comment.append(f"{req.avatar_addr} is not an avatar of agent {req.agent_addr}")
             if tx_data.amount is None:
                 req.comment.append("No transferred NCG")
