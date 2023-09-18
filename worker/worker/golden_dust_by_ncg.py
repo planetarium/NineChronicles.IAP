@@ -280,6 +280,8 @@ def handle_request(event, context):
                 req.comment.append(f"{tx_data.amount} is not valid amount")
             elif tx_data.amount % NCG_TRANSFER_UNIT != 0:
                 req.comment.append(f"{tx_data.amount} is not divided by {NCG_TRANSFER_UNIT}")
+            if tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
+                req.comment.append(f"Requested {req.request_dust_set} is not match to sent NCG {tx_data.amount} for {tx_data.amount // NCG_TRANSFER_UNIT} set")
 
             if req.comment:
                 req.status = WorkStatus.INVALID
