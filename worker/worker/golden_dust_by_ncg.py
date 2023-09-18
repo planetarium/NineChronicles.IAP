@@ -189,7 +189,7 @@ def handle_tx_detail(data: Optional[dict], result: TxData) -> TxData:
 
 
 def handle_tx_result(data: dict, result: TxData) -> TxData:
-    result.request_tx_status = TxStatus[data["txStatus"]]
+    result.tx_status = TxStatus[data["txStatus"]]
     if data.get("exceptionName") is not None:
         result.comment.append(data["exceptionName"])
 
