@@ -27,7 +27,7 @@ GOLDEN_DUST_SET = 20
 GOLDEN_DUST_FUNGIBLE_ID = "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"
 
 FORM_SHEET = os.environ.get("FORM_SHEET")
-WORK_SHEET = f"Worker_History_{os.environ.get('STAGE')}"
+WORK_SHEET = f"Worksheet_{os.environ.get('STAGE')}"
 
 NCG_COL = "E"
 TOKEN_COL = "H"
@@ -130,7 +130,7 @@ class WorkData:
         return cls(
             agent_addr=req[0], avatar_addr=req[1],
             request_tx_hash=req[3], request_dust_set=req[5],
-            email=req[6], token=req[9],
+            email=req[6], token=req[11],
         )
 
     @property
@@ -233,19 +233,20 @@ def get_tx_result(agent_addr: str, tx_hash: str) -> TxData:
 
 def handle_request(event, context):
     account = Account(fetch_kms_key_id(os.environ.get("STAGE"), os.environ.get("REGION_NAME")))
-    sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    form_sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    work_sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_WORK_SHEET_ID"))
     gql = GQL()
     # Get prev. data
     prev_tokens = set()
     prev_succeeded = set()
-    prev_data = sheet.get_values(f"{WORK_SHEET}!C2:{TX_STATUS_COL}").get("values", [])
+    prev_data = work_sheet.get_values(f"{WORK_SHEET}!C2:{TX_STATUS_COL}").get("values", [])
     for prev in prev_data:
         prev_tokens.add(prev[5])
         if TxStatus(prev[8]) == TxStatus.SUCCESS:
             prev_succeeded.add(prev[0])
 
     # Get form data and filter new
-    form_data = [x for x in sheet.get_values(f"{FORM_SHEET}!A2:J").get("values", []) if x[-1] not in prev_tokens]
+    form_data = [x for x in form_sheet.get_values(f"{FORM_SHEET}!A2:L").get("values", []) if x[-1] not in prev_tokens]
     request_data = [WorkData.from_request(x) for x in form_data]
 
     print(f"{len(request_data)} requests to treat.")
@@ -316,11 +317,11 @@ def handle_request(event, context):
             req.comment.append(msg)
 
     # Write result
-    sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
+    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
 
 
 def track_tx(event, context):
-    sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_REQUEST_SHEET_ID"))
+    sheet = Spreadsheet(GOOGLE_CREDENTIAL, os.environ.get("GOLDEN_DUST_WORK_SHEET_ID"))
     tx_data = sheet.get_values(f"{WORK_SHEET}!{TX_HASH_COL}2:{COMMENT_COL}").get("values", [])
     client = GQL()
     for i, tx in enumerate(tx_data):
