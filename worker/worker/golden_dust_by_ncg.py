@@ -30,11 +30,11 @@ FORM_SHEET = os.environ.get("FORM_SHEET")
 WORK_SHEET = f"Worksheet_{os.environ.get('STAGE')}"
 
 NCG_COL = "E"
-TOKEN_COL = "H"
-TX_HASH_COL = "J"
-TX_STATUS_COL = "K"
-BLOCK_INDEX_COL = "L"
-COMMENT_COL = "N"
+TOKEN_COL = "I"
+TX_HASH_COL = "K"
+TX_STATUS_COL = "L"
+BLOCK_INDEX_COL = "M"
+COMMENT_COL = "O"
 
 TX_QUERY = """{{
   stateQuery {{
@@ -112,6 +112,7 @@ class WorkData:
     request_dust_set: Union[str, int]
     email: str
     token: str
+    request_duplicated: str = ""
     request_tx_status: Union[str, TxStatus] = "Not Found"
     sent_ncg: Optional[float] = None
     status: WorkStatus = WorkStatus.REQ
@@ -137,7 +138,7 @@ class WorkData:
     def values(self):
         return [
             self.agent_addr, self.avatar_addr, self.request_tx_hash, self.request_tx_status.value,
-            self.sent_ncg, self.request_dust_set,
+            self.request_duplicated, self.sent_ncg, self.request_dust_set,
             self.email, self.token, self.status.value, self.tx_hash, self.tx_status.value, self.block_index or "",
             (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment)
         ]
@@ -280,8 +281,9 @@ def handle_request(event, context):
                 req.comment.append(f"{tx_data.amount} is not valid amount")
             elif tx_data.amount % NCG_TRANSFER_UNIT != 0:
                 req.comment.append(f"{tx_data.amount} is not divided by {NCG_TRANSFER_UNIT}")
-            if tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
-                req.comment.append(f"Requested {req.request_dust_set} is not match to sent NCG {tx_data.amount} for {tx_data.amount // NCG_TRANSFER_UNIT} set")
+            if tx_data.amount and tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
+                req.comment.append(
+                    f"Requested {req.request_dust_set} is not match to sent NCG {tx_data.amount} for {tx_data.amount // NCG_TRANSFER_UNIT} set")
 
             if req.comment:
                 req.status = WorkStatus.INVALID
@@ -290,6 +292,7 @@ def handle_request(event, context):
                 if req.request_tx_hash in valid_request:
                     req.status = WorkStatus.INVALID
                     req.comment.append(f"Tx {req.request_tx_hash} is duplicated")
+                    req.request_duplicated = "Duplicated"
                 else:
                     valid_request.add(req.request_tx_hash)
 
