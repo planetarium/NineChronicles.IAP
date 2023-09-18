@@ -239,12 +239,12 @@ def handle_request(event, context):
     gql = GQL()
     # Get prev. data
     prev_tokens = set()
-    prev_succeeded = set()
+    prev_treated = set()
     prev_data = work_sheet.get_values(f"{WORK_SHEET}!C2:{TX_STATUS_COL}").get("values", [])
     for prev in prev_data:
         prev_tokens.add(prev[5])
-        if TxStatus(prev[8]) == TxStatus.SUCCESS:
-            prev_succeeded.add(prev[0])
+        if TxStatus(prev[9]) in (TxStatus.STAGING, TxStatus.SUCCESS):
+            prev_treated.add(prev[0])
 
     # Get form data and filter new
     form_data = [x for x in form_sheet.get_values(f"{FORM_SHEET}!A2:L").get("values", []) if x[-1] not in prev_tokens]
@@ -257,13 +257,13 @@ def handle_request(event, context):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {}
         for req in request_data:
-            if req.request_tx_hash in prev_succeeded:
-                req.comment.append(f"Tx {req.request_tx_hash} is already successfully treated.")
+            if req.request_tx_hash in prev_treated:
+                req.comment.append(f"Tx {req.request_tx_hash} is already treated.")
                 req.status = WorkStatus.INVALID
             else:
                 futures[executor.submit(get_tx_result, req.agent_addr, req.request_tx_hash)] = req
 
-        for future in concurrent.futures.as_completed(futures):
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
             req = futures[future]
             tx_data = future.result()
             req.sent_ncg = tx_data.amount
@@ -295,14 +295,13 @@ def handle_request(event, context):
                     req.request_duplicated = "Duplicated"
                 else:
                     valid_request.add(req.request_tx_hash)
-
-            if req.status != WorkStatus.VALID:
-                continue
+            print(f"{i+1} / {len(futures)} checked")
 
     # Send Golden Dust
     nonce = gql.get_next_nonce(account.address)
-    for req in request_data:
+    for i, req in enumerate(request_data):
         if req.status != WorkStatus.VALID:
+            print(f"{i+1} / {len(request_data)} is invalid. Skip.")
             continue
 
         unsigned_tx = gql.create_action("unload_from_garage", pubkey=account.pubkey, nonce=nonce,
@@ -321,8 +320,11 @@ def handle_request(event, context):
             req.tx_status = TxStatus.NOT_CREATED
             req.comment.append(msg)
 
+        print(f"{i+1} / {len(request_data)} treated")
+
     # Write result
     work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
+    print("Work result recorded to worksheet.")
 
 
 def track_tx(event, context):
