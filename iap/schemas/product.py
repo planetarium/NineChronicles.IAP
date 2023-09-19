@@ -2,7 +2,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel as BaseSchema
 
-from common.enums import Currency
+from common.enums import Currency, ProductRarity, ProductAssetUISize
 
 
 class SimpleProductSchema(BaseSchema):
@@ -48,6 +48,11 @@ class FungibleItemSchema(BaseSchema):
 
 class ProductSchema(SimpleProductSchema):
     purchase_count: int = 0
+    rarity: ProductRarity
+    size: ProductAssetUISize
+    discount: int = 0
+    l10n_key: str
+    path: str
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
@@ -58,6 +63,7 @@ class CategorySchema(BaseSchema):
     name: str
     order: int
     active: bool
+    l10n_key: str
     product_list: List[ProductSchema]
 
     class Config:
