@@ -91,6 +91,7 @@ class APIStack(Stack):
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "APPLE_VALIDATION_URL": "",
             "HEADLESS": config.headless,
+            "CDN_HOST": config.cdn_host,
         }
 
         # Lambda Function
