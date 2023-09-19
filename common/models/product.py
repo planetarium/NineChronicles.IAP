@@ -31,6 +31,8 @@ class Category(AutoIdMixin, TimeStampMixin, Base):
                             doc="Open timestamp of this product. If null, it's already opened.")
     close_timestamp = Column(DateTime, nullable=True,
                              doc="Close timestamp of this product. If null, it'll be opened forever.")
+    # FIXME: Update to nullable=False
+    l10n_key = Column(Text, doc="L10N Key")
 
     product_list: Mapped[List["Product"]] = relationship("Product", secondary=category_product_table)
 
@@ -70,6 +72,8 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     size = Column(ENUM(ProductAssetUISize, create_type=False), doc="UI size ratio of this product in client")
     # FIXME: Update to nullable=False
     path = Column(Text, doc="Full asset path")
+    # FIXME: Update to nullable=False
+    l10n_key = Column(Text, doc="L10N Key")
 
     fav_list: Mapped[List["FungibleAssetProduct"]] = relationship(back_populates="product")
     fungible_item_list: Mapped[List["FungibleItemProduct"]] = relationship(back_populates="product")
