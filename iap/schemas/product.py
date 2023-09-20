@@ -1,6 +1,6 @@
 from typing import Optional, List
 
-from pydantic import BaseModel as BaseSchema
+from pydantic import BaseModel as BaseSchema, model_validator
 
 from common.enums import Currency, ProductRarity, ProductAssetUISize
 
@@ -53,10 +53,23 @@ class ProductSchema(SimpleProductSchema):
     discount: int = 0
     l10n_key: str
     path: str
+    bg_path: Optional[str] = None
+    popup_path_key: Optional[str] = None
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
+
     # price_list: List[PriceSchema]
+
+    @model_validator(mode="after")
+    def default_values(self):
+        if self.bg_path is None:
+            self.bg_path = f"shop/images/product/bg_{self.rarity.value}_{self.size.value}.png"
+
+        if self.popup_path_key is None:
+            self.popup_path_key = f"{self.l10n_key}_PATH"
+        # Needs to return self
+        return self
 
 
 class CategorySchema(BaseSchema):
@@ -64,6 +77,7 @@ class CategorySchema(BaseSchema):
     order: int
     active: bool
     l10n_key: str
+    path: str
     product_list: List[ProductSchema]
 
     class Config:
