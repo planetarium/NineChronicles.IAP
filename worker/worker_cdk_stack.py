@@ -149,12 +149,13 @@ class WorkerStack(Stack):
         # NOTE: Price is directly fetched between client and google play.
         #  To not need to update price in IAP service.
         # Every hour
-        # hourly_event_rule = _events.Rule(
-        #     self, f"{config.stage}-9c-iap-price-updater-event",
-        #     schedule=_events.Schedule.cron(minute="0")  # Every hour
-        # )
-        #
-        # hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
+        if config.stage != "internal":
+            hourly_event_rule = _events.Rule(
+                self, f"{config.stage}-9c-iap-price-updater-event",
+                schedule=_events.Schedule.cron(minute="0")  # Every hour
+            )
+
+            hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
 
         # IAP garage daily report
         env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
@@ -173,12 +174,12 @@ class WorkerStack(Stack):
         )
 
         # EveryDay 03:00 UTC == 12:00 KST
-        everyday_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-everyday-event",
-            schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
-        )
-
-        everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
+        if config.stage != "internal":
+            everyday_event_rule = _events.Rule(
+                self, f"{config.stage}-9c-iap-everyday-event",
+                schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
+            )
+            everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
 
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
@@ -213,7 +214,7 @@ class WorkerStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_10,
             description=f"Tx. status tracker for golden dust unload for PC users",
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-            handler = "golden_dust_by_ncg.track_tx",
+            handler="golden_dust_by_ncg.track_tx",
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,

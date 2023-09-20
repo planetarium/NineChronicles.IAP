@@ -238,3 +238,66 @@ class GooglePurchaseType(IntEnum):
 class GoogleAckState(IntEnum):
     YET_BE_ACKNOWLEDGED = 0
     ACKNOWLEDGED = 1
+
+
+class ProductAssetUISize(Enum):
+    """
+    # ProductAssetUISize
+
+    Size of product in client UI.
+    Format of {width}x{height}.
+
+    - **1x1**: Width 1 * Height 1
+    - **1*2**: Width 1 * Height 2
+    - **1*3**: Width 1 * Height 3
+    - **1*4**: Width 1 * Height 4
+    - **2x1**: Width 2 * Height 1
+    - **2x2**: Width 2 * Height 2
+    - **2x3**: Width 2 * Height 3
+    - **2x4**: Width 2 * Height 4
+    - **3x1**: Width 3 * Height 1
+    - **3x2**: Width 3 * Height 2
+    - **3x3**: Width 3 * Height 3
+    - **3x4**: Width 3 * Height 4
+    - **4x1**: Width 4 * Height 1
+    - **4x2**: Width 4 * Height 2
+    - **4x3**: Width 4 * Height 3
+    - **4x4**: Width 4 * Height 4
+    """
+    ONE_BY_ONE = "1x1"
+    ONE_BY_TWO = "1x2"
+    ONE_BY_THREE = "1x3"
+    ONE_BY_FOUR = "1x4"
+    TWO_BY_ONE = "2x1"
+    TWO_BY_TWO = "2x2"
+    TWO_BY_THREE = "2x3"
+    TWO_BY_FOUR = "2x4"
+    THREE_BY_ONE = "3x1"
+    THREE_BY_TWO = "3x2"
+    THREE_BY_THREE = "3x3"
+    THREE_BY_FOUR = "3x4"
+    FOUR_BY_ONE = "4x1"
+    FOUR_BY_TWO = "4x2"
+    FOUR_BY_THREE = "4x3"
+    FOUR_BY_FOUR = "4x4"
+
+
+class ProductRarity(Enum):
+    """
+    # ProductRarity
+
+    Rarity of this product.
+    Rarity is used to show bg color in client.
+    You can find this in Lib9c ([Lib9c/Model/EnumType/Grade.cs](https://github.com/planetarium/lib9c/blob/main/Lib9c/Model/EnumType/Grade.cs))
+
+    - **Normal**: Normal. BG color: gray
+    - **Rare**: Rare. BG color: green
+    - **Epic**: Epic. BG color: blue
+    - **Unique**: Unique. BG color: yellow
+    - **Legendary**: Legendary. BG color: purple
+    """
+    NORMAL = "Normal"
+    RARE = "Rare"
+    EPIC = "Epic"
+    UNIQUE = "Unique"
+    LEGENDARY = "Legendary"
