@@ -35,6 +35,8 @@ TX_HASH_COL = "K"
 TX_STATUS_COL = "L"
 BLOCK_INDEX_COL = "M"
 COMMENT_COL = "O"
+NONCE_COL = "P"
+PLAIN_VALUE_COL = "Q"
 
 TX_QUERY = """{{
   stateQuery {{
@@ -121,6 +123,8 @@ class WorkData:
     block_index: int = 0
     timestamp: datetime = None
     comment: List[str] = field(default_factory=list)
+    nonce: Optional[int] = None
+    plain_text: Optional[str] = ""
 
     def __post_init__(self):
         self.request_tx_status = TxStatus(self.request_tx_status)
@@ -140,7 +144,8 @@ class WorkData:
             self.agent_addr, self.avatar_addr, self.request_tx_hash, self.request_tx_status.value,
             self.request_duplicated, self.sent_ncg, self.request_dust_set,
             self.email, self.token, self.status.value, self.tx_hash, self.tx_status.value, self.block_index or "",
-            (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment)
+            (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment),
+            self.nonce or "", self.plain_text,
         ]
 
 
@@ -312,6 +317,8 @@ def handle_request(event, context):
         signature = account.sign_tx(unsigned_tx)
         signed_tx = gql.sign(unsigned_tx, signature)
         success, msg, tx_id = gql.stage(signed_tx)
+        req.nonce = nonce
+        req.plain_text = unsigned_tx.hex()
         if success:
             nonce += 1
             req.tx_status = TxStatus.STAGING
@@ -323,7 +330,7 @@ def handle_request(event, context):
         print(f"{i+1} / {len(request_data)} treated")
 
     # Write result
-    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
+    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{PLAIN_VALUE_COL}", [req.values for req in request_data])
     print("Work result recorded to worksheet.")
 
 
