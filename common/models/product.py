@@ -31,8 +31,14 @@ class Category(AutoIdMixin, TimeStampMixin, Base):
                             doc="Open timestamp of this product. If null, it's already opened.")
     close_timestamp = Column(DateTime, nullable=True,
                              doc="Close timestamp of this product. If null, it'll be opened forever.")
+    # FIXME: Update to nullable=False
+    l10n_key = Column(Text, doc="L10N Key")
 
     product_list: Mapped[List["Product"]] = relationship("Product", secondary=category_product_table)
+
+    @property
+    def path(self):
+        return f"shop/images/category/Icon_Shop_{self.l10n_key.split('_')[-1]}.png"
 
 
 class Product(AutoIdMixin, TimeStampMixin, Base):
@@ -70,6 +76,11 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     size = Column(ENUM(ProductAssetUISize, create_type=False), doc="UI size ratio of this product in client")
     # FIXME: Update to nullable=False
     path = Column(Text, doc="Full asset path")
+    # FIXME: Update to nullable=False
+    bg_path = Column(Text, doc="Product bg image in list")
+    popup_path_key = Column(Text, nullable=True, doc="Product detail popup path key with L10N")
+    # FIXME: Update to nullable=False
+    l10n_key = Column(Text, doc="L10N Key")
 
     fav_list: Mapped[List["FungibleAssetProduct"]] = relationship(back_populates="product")
     fungible_item_list: Mapped[List["FungibleItemProduct"]] = relationship(back_populates="product")

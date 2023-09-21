@@ -33,6 +33,7 @@ class Config:
     account_id: str
     region_name: str
     google_package_name: str
+    cdn_host: str
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
     google_credential: Optional[str] = None
