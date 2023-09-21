@@ -24,6 +24,10 @@ on:
         required: true
       IAP_GARAGE_WEBHOOK_URL:
         required: true
+      GOLDEN_DUST_REQUEST_SHEET_ID:
+        required: true
+      GOLDEN_DUST_WORK_SHEET_ID:
+        required: true
 
 jobs:
   synth:
@@ -98,6 +102,9 @@ jobs:
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
           IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+          GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
+          GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
+          FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
         run: |
           source $VENV

@@ -1,8 +1,10 @@
 import json
 import os
+from typing import List
 
 import googleapiclient.discovery
 from google.oauth2 import service_account
+from googleapiclient.discovery import build
 from sqlalchemy.orm import joinedload
 
 from common import logger
@@ -79,3 +81,34 @@ def get_google_client(credential_data: str):
     scopes = ["https://www.googleapis.com/auth/androidpublisher"]
     credential = service_account.Credentials.from_service_account_info(json.loads(credential_data), scopes=scopes)
     return googleapiclient.discovery.build("androidpublisher", "v3", credentials=credential)
+
+
+class Spreadsheet:
+    def __init__(self, credential_data: str, sheet_id: str):
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+        self.sheet_id = sheet_id
+        self._token_file = "credential.pickle"
+        self.creds = service_account.Credentials.from_service_account_info(json.loads(credential_data), scopes=SCOPES)
+        self.service = build("sheets", "v4", credentials=self.creds)
+
+    def get_values(self, range_):
+        result = self.service.spreadsheets().values().get(spreadsheetId=self.sheet_id, range=range_).execute()
+        return result
+
+    def get_batch_values(self, range_: List[str]):
+        result = self.service.spreadsheets().values().batchGet(spreadsheetId=self.sheet_id, ranges=range_).execute()
+        return result
+
+    def set_values(self, range_, value_):
+        body = {
+            "value_input_option": "USER_ENTERED",
+            "data": [
+                {
+                    "range": range_,
+                    "majorDimension": "ROWS",
+                    "values": value_
+                }
+            ]
+        }
+        result = self.service.spreadsheets().values().batchUpdate(spreadsheetId=self.sheet_id, body=body).execute()
+        return result

@@ -29,6 +29,7 @@ mangum = "^0.17.0"
 # IAP Worker
 pyasn1 = "^0.5.0"
 hexbytes = "^0.3.1"
+google-auth-oauthlib = "^1.1.0"
 
 [tool.poetry.group.dev.dependencies]
 # Only for development
