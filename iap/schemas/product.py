@@ -64,7 +64,7 @@ class ProductSchema(SimpleProductSchema):
     @model_validator(mode="after")
     def default_values(self):
         if self.bg_path is None:
-            self.bg_path = f"shop/images/product/bg_{self.rarity.value}_{self.size.value}.png"
+            self.bg_path = f"shop/images/product/list/bg_{self.rarity.value}_{self.size.value}.png"
 
         if self.popup_path_key is None:
             self.popup_path_key = f"{self.l10n_key}_PATH"
