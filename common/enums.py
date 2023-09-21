@@ -248,9 +248,9 @@ class ProductAssetUISize(Enum):
     Format of {width}x{height}.
 
     - **1x1**: Width 1 * Height 1
-    - **1*2**: Width 1 * Height 2
-    - **1*3**: Width 1 * Height 3
-    - **1*4**: Width 1 * Height 4
+    - **1x2**: Width 1 * Height 2
+    - **1x3**: Width 1 * Height 3
+    - **1x4**: Width 1 * Height 4
     - **2x1**: Width 2 * Height 1
     - **2x2**: Width 2 * Height 2
     - **2x3**: Width 2 * Height 3
