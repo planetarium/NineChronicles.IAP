@@ -275,7 +275,7 @@ def handle_request(event, context):
             req.comment.extend(tx_data.comment)
 
             # Validate
-            if req.agent_addr != tx_data.signer:
+            if req.agent_addr.lower() != tx_data.signer.lower():
                 req.comment.append(f"{req.agent_addr} is not matched with Tx. Signer {tx_data.signer}")
                 req.status = WorkStatus.INVALID_CAN_REFUND
 
