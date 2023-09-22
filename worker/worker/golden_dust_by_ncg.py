@@ -82,9 +82,8 @@ class WorkStatus(Enum):
     ACK = "Acknowledged"
     VALID = "Valid"
     INVALID = "Invalid"
-    TX_STAGE = "Tx. Staged"
-    TX_SUCCESS = "Tx. Succeeded"
-    TX_FAIL = "Tx. Failed"
+    INVALID_CAN_REFUND = "Invalid - Can Refund"
+    INVALID_CANNOT_REFUND = "Invalid - Cannot Refund"
 
 
 class TxStatus(Enum):
@@ -264,7 +263,7 @@ def handle_request(event, context):
         for req in request_data:
             if req.request_tx_hash in prev_treated:
                 req.comment.append(f"Tx {req.request_tx_hash} is already treated.")
-                req.status = WorkStatus.INVALID
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             else:
                 futures[executor.submit(get_tx_result, req.agent_addr, req.request_tx_hash)] = req
 
@@ -278,35 +277,47 @@ def handle_request(event, context):
             # Validate
             if req.agent_addr != tx_data.signer:
                 req.comment.append(f"{req.agent_addr} is not matched with Tx. Signer {tx_data.signer}")
+                req.status = WorkStatus.INVALID_CAN_REFUND
+
             if req.avatar_addr.lower() not in tx_data.avatar_list:
                 req.comment.append(f"{req.avatar_addr} is not an avatar of agent {req.agent_addr}")
+                req.status = WorkStatus.INVALID_CAN_REFUND
+
             if tx_data.amount is None:
                 req.comment.append("No transferred NCG")
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             elif tx_data.amount <= 0:
                 req.comment.append(f"{tx_data.amount} is not valid amount")
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             elif tx_data.amount % NCG_TRANSFER_UNIT != 0:
                 req.comment.append(f"{tx_data.amount} is not divided by {NCG_TRANSFER_UNIT}")
-            if tx_data.amount and tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
+                req.status = WorkStatus.INVALID_CAN_REFUND
+            elif tx_data.amount and tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
                 req.comment.append(
                     f"Requested {req.request_dust_set} is not match to sent NCG {tx_data.amount} for {tx_data.amount // NCG_TRANSFER_UNIT} set")
+                req.status = WorkStatus.INVALID_CAN_REFUND
 
-            if req.comment:
-                req.status = WorkStatus.INVALID
-            else:
+            if not req.comment:
                 req.status = WorkStatus.VALID
                 if req.request_tx_hash in valid_request:
-                    req.status = WorkStatus.INVALID
+                    req.status = WorkStatus.INVALID_CANNOT_REFUND
                     req.comment.append(f"Tx {req.request_tx_hash} is duplicated")
                     req.request_duplicated = "Duplicated"
                 else:
                     valid_request.add(req.request_tx_hash)
-            print(f"{i+1} / {len(futures)} checked")
+            elif req.status not in (
+                    WorkStatus.INVALID, WorkStatus.INVALID_CANNOT_REFUND, WorkStatus.INVALID_CAN_REFUND
+            ):
+                # This should be re-checked
+                req.status = WorkStatus.INVALID
+
+            print(f"{i + 1} / {len(futures)} checked")
 
     # Send Golden Dust
     nonce = gql.get_next_nonce(account.address)
     for i, req in enumerate(request_data):
         if req.status != WorkStatus.VALID:
-            print(f"{i+1} / {len(request_data)} is invalid. Skip.")
+            print(f"{i + 1} / {len(request_data)} is invalid. Skip.")
             continue
 
         unsigned_tx = gql.create_action("unload_from_garage", pubkey=account.pubkey, nonce=nonce,
@@ -327,7 +338,7 @@ def handle_request(event, context):
             req.tx_status = TxStatus.NOT_CREATED
             req.comment.append(msg)
 
-        print(f"{i+1} / {len(request_data)} treated")
+        print(f"{i + 1} / {len(request_data)} treated with nonce {nonce}")
 
     # Write result
     work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{PLAIN_VALUE_COL}", [req.values for req in request_data])
