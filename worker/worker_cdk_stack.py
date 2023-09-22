@@ -198,6 +198,7 @@ class WorkerStack(Stack):
             timeout=cdk_core.Duration.seconds(120),
             environment=env,
             memory_size=256,
+            reserved_concurrent_executions=1,
         )
 
         # Every ten minute
