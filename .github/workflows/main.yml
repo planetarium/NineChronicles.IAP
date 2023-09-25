@@ -44,7 +44,7 @@ jobs:
 
   deploy_without_approval:
     # This is for development / internal deployment
-    if: ${{ github.ref != 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/development' || startsWith(github.ref, 'refs/heads/release') }}
     needs: [ "test", "build_frontend", "synth" ]
     uses: ./.github/workflows/deploy.yml
     with:

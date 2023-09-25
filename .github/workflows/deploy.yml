@@ -4,6 +4,12 @@ name: Deploy NineChronicles.IAP
 #  I think this is HORRIBLE design
 #  https://github.com/actions/runner/issues/1490
 on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        required: true
+        description: Target branch name to deploy
+        type: string
   workflow_call:
     inputs:
       environment:
@@ -36,7 +42,9 @@ jobs:
     outputs:
       url: ${{ steps.deployment.outputs.SERVICE_HOST }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -111,6 +119,7 @@ jobs:
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
+          CDN_HOST: ${{ vars.CDN_HOST }}
         run: |
           source $VENV
           yarn cdk synth
@@ -131,6 +140,7 @@ jobs:
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
+          CDN_HOST: ${{ vars.CDN_HOST }}
         run: |
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt
