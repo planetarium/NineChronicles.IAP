@@ -352,8 +352,8 @@ def track_tx(event, context):
     tx_data = sheet.get_values(f"{WORK_SHEET}!{TX_HASH_COL}2:{COMMENT_COL}").get("values", [])
     client = GQL()
     for i, tx in enumerate(tx_data):
-        if tx[1] != "Staging":
-            print(f"{i + 1} / {len(tx_data)} : Invalid tx. status: {tx[1]}")
+        if tx[1] not in ("Staging", "Invalid"):
+            print(f"{i + 1} / {len(tx_data)} : Tx. status: {tx[1]}. Skip.")
             continue
         query = dsl_gql(
             DSLQuery(
