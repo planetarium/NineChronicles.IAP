@@ -317,6 +317,7 @@ def handle_request(event, context):
     nonce = gql.get_next_nonce(account.address)
     for i, req in enumerate(request_data):
         if req.status != WorkStatus.VALID:
+            work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2 + i}:{PLAIN_VALUE_COL}", [req.values])
             print(f"{i + 1} / {len(request_data)} is invalid. Skip.")
             continue
 
@@ -339,9 +340,10 @@ def handle_request(event, context):
             req.comment.append(msg)
 
         print(f"{i + 1} / {len(request_data)} treated with nonce {nonce}")
+        work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2 + i}:{PLAIN_VALUE_COL}", [req.values])
 
     # Write result
-    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{PLAIN_VALUE_COL}", [req.values for req in request_data])
+    # work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{PLAIN_VALUE_COL}", [req.values for req in request_data])
     print("Work result recorded to worksheet.")
 
 
