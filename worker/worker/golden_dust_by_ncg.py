@@ -339,7 +339,7 @@ def handle_request(event, context):
             req.tx_status = TxStatus.NOT_CREATED
             req.comment.append(msg)
 
-        print(f"{i + 1} / {len(request_data)} treated with nonce {nonce}")
+        print(f"{i + 1} / {len(request_data)} treated with nonce {nonce - 1}")
         work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2 + i}:{PLAIN_VALUE_COL}", [req.values])
 
     # Write result
