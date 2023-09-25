@@ -21,7 +21,7 @@ GOOGLE_CREDENTIAL = fetch_parameter(
     True
 )["Value"]
 
-AUTHORIZED_RECIPIENT = "0x368440201eB5823a103f4Fb0eF94840365bE838E"
+AUTHORIZED_RECIPIENT = "0xE8D6c4b15269754fE7b26DA243052ECD2a88db07"
 NCG_TRANSFER_UNIT = 35
 GOLDEN_DUST_SET = 20
 GOLDEN_DUST_FUNGIBLE_ID = "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"
@@ -275,7 +275,7 @@ def handle_request(event, context):
             req.comment.extend(tx_data.comment)
 
             # Validate
-            if req.agent_addr != tx_data.signer:
+            if req.agent_addr.lower() != tx_data.signer.lower():
                 req.comment.append(f"{req.agent_addr} is not matched with Tx. Signer {tx_data.signer}")
                 req.status = WorkStatus.INVALID_CAN_REFUND
 
