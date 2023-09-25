@@ -247,7 +247,7 @@ def handle_request(event, context):
     prev_data = work_sheet.get_values(f"{WORK_SHEET}!C2:{TX_STATUS_COL}").get("values", [])
     for prev in prev_data:
         prev_tokens.add(prev[6])
-        prev_treated.add(prev[0])
+        prev_treated.add(prev[0].lower())
 
     # Get form data and filter new
     form_data = [x for x in form_sheet.get_values(f"{FORM_SHEET}!A2:L").get("values", []) if x[-1] not in prev_tokens]
@@ -260,7 +260,7 @@ def handle_request(event, context):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = {}
         for req in request_data:
-            if req.request_tx_hash in prev_treated:
+            if req.request_tx_hash.lower() in prev_treated:
                 req.comment.append(f"Tx {req.request_tx_hash} is already treated.")
                 req.request_duplicated = True
                 req.status = WorkStatus.INVALID_CANNOT_REFUND
