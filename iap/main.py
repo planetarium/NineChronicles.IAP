@@ -35,6 +35,12 @@ if settings.DEBUG:
     )
 
 
+@app.middleware("http")
+def log_incoming_url(request: Request, call_next):
+    logger.info(f"[{request.method}] {request.url}")
+    return call_next(request)
+
+
 # Error handler
 @app.exception_handler(RequestValidationError)
 def handle_validation_error(request: Request, e: RequestValidationError):
