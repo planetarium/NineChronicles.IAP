@@ -144,7 +144,8 @@ class WorkData:
             self.request_duplicated, self.sent_ncg, self.request_dust_set,
             self.email, self.token, self.status.value, self.tx_hash, self.tx_status.value, self.block_index or "",
             (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment),
-            self.nonce or "", self.plain_text,
+                                                                                           self.nonce or "",
+            self.plain_text,
         ]
 
 

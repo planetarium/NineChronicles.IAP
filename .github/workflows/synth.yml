@@ -105,6 +105,7 @@ jobs:
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
+          CDN_HOST: ${{ vars.CDN_HOST }}
         run: |
           source $VENV
           yarn cdk synth

@@ -178,7 +178,6 @@ class WorkerStack(Stack):
                 self, f"{config.stage}-9c-iap-everyday-event",
                 schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
             )
-
             everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
 
         # Golden dust by NCG handler
