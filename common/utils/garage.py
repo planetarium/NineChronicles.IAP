@@ -50,7 +50,7 @@ def update_iap_garage(sess):
     logger.info(f"{len(target_garages)} garages are updated")
 
     for fungible_id, amount in data.items():
-        sess.add(GarageItemStatus(address=account.address, fungible_id=fungible_id, amount=amount))
+        sess.add(GarageItemStatus(address=account.address, fungible_id=fungible_id, amount=amount or 0))
     logger.info(f"{len(data)} garages are added")
     return data
 

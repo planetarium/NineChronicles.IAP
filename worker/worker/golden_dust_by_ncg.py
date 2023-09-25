@@ -21,7 +21,7 @@ GOOGLE_CREDENTIAL = fetch_parameter(
     True
 )["Value"]
 
-AUTHORIZED_RECIPIENT = "0x368440201eB5823a103f4Fb0eF94840365bE838E"
+AUTHORIZED_RECIPIENT = "0xE8D6c4b15269754fE7b26DA243052ECD2a88db07"
 NCG_TRANSFER_UNIT = 35
 GOLDEN_DUST_SET = 20
 GOLDEN_DUST_FUNGIBLE_ID = "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"
@@ -35,6 +35,8 @@ TX_HASH_COL = "K"
 TX_STATUS_COL = "L"
 BLOCK_INDEX_COL = "M"
 COMMENT_COL = "O"
+NONCE_COL = "P"
+PLAIN_VALUE_COL = "Q"
 
 TX_QUERY = """{{
   stateQuery {{
@@ -80,9 +82,8 @@ class WorkStatus(Enum):
     ACK = "Acknowledged"
     VALID = "Valid"
     INVALID = "Invalid"
-    TX_STAGE = "Tx. Staged"
-    TX_SUCCESS = "Tx. Succeeded"
-    TX_FAIL = "Tx. Failed"
+    INVALID_CAN_REFUND = "Invalid - Can Refund"
+    INVALID_CANNOT_REFUND = "Invalid - Cannot Refund"
 
 
 class TxStatus(Enum):
@@ -121,6 +122,8 @@ class WorkData:
     block_index: int = 0
     timestamp: datetime = None
     comment: List[str] = field(default_factory=list)
+    nonce: Optional[int] = None
+    plain_text: Optional[str] = ""
 
     def __post_init__(self):
         self.request_tx_status = TxStatus(self.request_tx_status)
@@ -140,7 +143,9 @@ class WorkData:
             self.agent_addr, self.avatar_addr, self.request_tx_hash, self.request_tx_status.value,
             self.request_duplicated, self.sent_ncg, self.request_dust_set,
             self.email, self.token, self.status.value, self.tx_hash, self.tx_status.value, self.block_index or "",
-            (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment)
+            (self.timestamp or datetime.now()).isoformat(), "\n".join(self.comment),
+                                                                                           self.nonce or "",
+            self.plain_text,
         ]
 
 
@@ -259,7 +264,7 @@ def handle_request(event, context):
         for req in request_data:
             if req.request_tx_hash in prev_treated:
                 req.comment.append(f"Tx {req.request_tx_hash} is already treated.")
-                req.status = WorkStatus.INVALID
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             else:
                 futures[executor.submit(get_tx_result, req.agent_addr, req.request_tx_hash)] = req
 
@@ -271,37 +276,49 @@ def handle_request(event, context):
             req.comment.extend(tx_data.comment)
 
             # Validate
-            if req.agent_addr != tx_data.signer:
+            if req.agent_addr.lower() != tx_data.signer.lower():
                 req.comment.append(f"{req.agent_addr} is not matched with Tx. Signer {tx_data.signer}")
+                req.status = WorkStatus.INVALID_CAN_REFUND
+
             if req.avatar_addr.lower() not in tx_data.avatar_list:
                 req.comment.append(f"{req.avatar_addr} is not an avatar of agent {req.agent_addr}")
+                req.status = WorkStatus.INVALID_CAN_REFUND
+
             if tx_data.amount is None:
                 req.comment.append("No transferred NCG")
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             elif tx_data.amount <= 0:
                 req.comment.append(f"{tx_data.amount} is not valid amount")
+                req.status = WorkStatus.INVALID_CANNOT_REFUND
             elif tx_data.amount % NCG_TRANSFER_UNIT != 0:
                 req.comment.append(f"{tx_data.amount} is not divided by {NCG_TRANSFER_UNIT}")
-            if tx_data.amount and tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
+                req.status = WorkStatus.INVALID_CAN_REFUND
+            elif tx_data.amount and tx_data.amount // NCG_TRANSFER_UNIT != req.request_dust_set:
                 req.comment.append(
                     f"Requested {req.request_dust_set} is not match to sent NCG {tx_data.amount} for {tx_data.amount // NCG_TRANSFER_UNIT} set")
+                req.status = WorkStatus.INVALID_CAN_REFUND
 
-            if req.comment:
-                req.status = WorkStatus.INVALID
-            else:
+            if not req.comment:
                 req.status = WorkStatus.VALID
                 if req.request_tx_hash in valid_request:
-                    req.status = WorkStatus.INVALID
+                    req.status = WorkStatus.INVALID_CANNOT_REFUND
                     req.comment.append(f"Tx {req.request_tx_hash} is duplicated")
                     req.request_duplicated = "Duplicated"
                 else:
                     valid_request.add(req.request_tx_hash)
-            print(f"{i+1} / {len(futures)} checked")
+            elif req.status not in (
+                    WorkStatus.INVALID, WorkStatus.INVALID_CANNOT_REFUND, WorkStatus.INVALID_CAN_REFUND
+            ):
+                # This should be re-checked
+                req.status = WorkStatus.INVALID
+
+            print(f"{i + 1} / {len(futures)} checked")
 
     # Send Golden Dust
     nonce = gql.get_next_nonce(account.address)
     for i, req in enumerate(request_data):
         if req.status != WorkStatus.VALID:
-            print(f"{i+1} / {len(request_data)} is invalid. Skip.")
+            print(f"{i + 1} / {len(request_data)} is invalid. Skip.")
             continue
 
         unsigned_tx = gql.create_action("unload_from_garage", pubkey=account.pubkey, nonce=nonce,
@@ -312,6 +329,8 @@ def handle_request(event, context):
         signature = account.sign_tx(unsigned_tx)
         signed_tx = gql.sign(unsigned_tx, signature)
         success, msg, tx_id = gql.stage(signed_tx)
+        req.nonce = nonce
+        req.plain_text = unsigned_tx.hex()
         if success:
             nonce += 1
             req.tx_status = TxStatus.STAGING
@@ -320,10 +339,10 @@ def handle_request(event, context):
             req.tx_status = TxStatus.NOT_CREATED
             req.comment.append(msg)
 
-        print(f"{i+1} / {len(request_data)} treated")
+        print(f"{i + 1} / {len(request_data)} treated with nonce {nonce}")
 
     # Write result
-    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{COMMENT_COL}", [req.values for req in request_data])
+    work_sheet.set_values(f"{WORK_SHEET}!A{len(prev_data) + 2}:{PLAIN_VALUE_COL}", [req.values for req in request_data])
     print("Work result recorded to worksheet.")
 
 
