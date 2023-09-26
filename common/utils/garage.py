@@ -45,7 +45,7 @@ def update_iap_garage(sess):
         select(GarageItemStatus).where(GarageItemStatus.address == account.address)
     ).all()
     for garage_status in target_garages:
-        garage_status.amount = data.pop(garage_status.fungible_id, 0)
+        garage_status.amount = data.pop(garage_status.fungible_id, 0) or 0
     sess.add_all(target_garages)
     logger.info(f"{len(target_garages)} garages are updated")
 
