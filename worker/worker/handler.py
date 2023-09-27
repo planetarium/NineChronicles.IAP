@@ -62,10 +62,9 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
 
     fav_data = [{
         "balanceAddr": message.body.get("agent_addr"),
-        "fungibleAssetValue": {
-            "currency": x.currency.name,
-            "majorUnit": x.amount,
-            "minorUnit": 0
+        "value": {
+            "currencyTicker": x.ticker.value,
+            "value": x.amount,
         }
     } for x in product.fav_list]
 
