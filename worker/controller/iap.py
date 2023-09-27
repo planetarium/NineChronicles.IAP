@@ -102,3 +102,7 @@ class IAPController(BaseController):
             success, msg, tx_id = self.gql.stage(signed_tx)
             history.plain_value = plain_value.hex()
             history.tx_id = tx_id
+            # Staged data should be recorded at the moment
+            self.sess.add(history)
+            self.sess.commit()
+            logger.info(f"Request {history.uuid} has been treated.")

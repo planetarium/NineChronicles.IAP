@@ -63,12 +63,8 @@ class GQL:
 
         query = dsl_gql(
             DSLQuery(
-                self.ds.StandaloneQuery.actionTxQuery.args(
-                    publicKey=pubkey.hex(),
-                    nonce=nonce,
-                    timestamp=ts,
-                ).select(
-                    self.ds.ActionTxQuery.unloadFromMyGarages.args(
+                self.ds.StandaloneQuery.actionQuery.select(
+                    self.ds.ActionQuery.unloadFromMyGarages.args(
                         recipientAvatarAddr=avatar_addr,
                         fungibleAssetValues=fav_data,
                         fungibleIdAndCounts=item_data,
@@ -77,7 +73,7 @@ class GQL:
             )
         )
         result = self.execute(query)
-        return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
+        return bytes.fromhex(result["actionQuery"]["unloadFromMyGarages"])
 
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
         ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
@@ -95,26 +91,41 @@ class GQL:
 
         query = dsl_gql(
             DSLQuery(
-                self.ds.StandaloneQuery.actionTxQuery.args(
-                    publicKey=pubkey.hex(),
-                    nonce=nonce,
-                    timestamp=ts,
-                ).select(
-                    self.ds.ActionTxQuery.transferAsset.args(
+                self.ds.StandaloneQuery.actionQuery.args.select(
+                    self.ds.ActionQuery.transferAsset.args(
                         sender=sender, recipient=recipient, currency=currency, amount=amount, memo=memo
                     )
                 )
             )
         )
         result = self.execute(query)
-        return bytes.fromhex(result["actionTxQuery"]["transferAsset"])
+        return bytes.fromhex(result["actionQuery"]["transferAsset"])
 
-    def create_action(self, action_type: str, pubkey: bytes, nonce: int, **kwargs) -> bytes:
+    def create_unsigned_tx(self, plain_value: bytes, pubkey: bytes, nonce: int) -> bytes:
+        query = dsl_gql(
+            DSLQuery(
+                self.ds.StandaloneQuery.transaction.select(
+                    self.ds.TransactionHeadlessQuery.unsignedTransaction.args(
+                        publicKey=pubkey.hex(),
+                        plainValue=plain_value.hex(),
+                        nonce=nonce,
+                    )
+                )
+            )
+        )
+        resp = self.execute(query)
+        return bytes.fromhex(resp["transaction"]["unsignedTransaction"])
+
+    def create_action(self, action_type: str, pubkey: bytes, nonce: int, tx: bool, **kwargs) -> bytes:
         fn = getattr(self, f"_{action_type}")
         if not fn:
             raise ValueError(f"Action named {action_type} does not exists.")
 
-        return fn(pubkey, nonce, **kwargs)
+        plain_value = fn(pubkey, nonce, **kwargs)
+        if tx:
+            return self.create_unsigned_tx(plain_value, pubkey, nonce)
+        else:
+            return plain_value
 
     def sign(self, unsigned_tx: bytes, signature: bytes) -> bytes:
         query = dsl_gql(

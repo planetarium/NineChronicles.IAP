@@ -16,6 +16,8 @@ from common.models.receipt import Receipt
 from common.models.sign import SignHistory
 from common.utils.aws import fetch_secrets, fetch_kms_key_id, fetch_parameter
 from common.utils.google import Spreadsheet
+from controller.golden_dust import GoldenDustController
+from controller.iap import IAPController
 from schema.sqs import SQSMessageRecord, SQSMessage
 
 DB_URI = os.environ.get("DB_URI")
@@ -72,11 +74,11 @@ def process_golden_dust(sess: Session, message: SQSMessageRecord) -> Tuple[bool,
 
 
 def collect(sess, message: SQSMessage, account: Account, gql: GQL) -> List[SignHistory]:
-    print(f"{len(message.Records)} records to collect")
+    logger.info(f"{len(message.Records)} records to collect")
     next_nonce = gql.get_next_nonce(account.address)
     prev_nonce = sess.scalar(select(SignHistory.nonce).order_by(desc(SignHistory.nonce)).limit(1))
     nonce = max(next_nonce, (prev_nonce or -1) + 1)
-    print(f"Use nonce from {nonce}")
+    logger.info(f"Use nonce from {nonce}")
     history_list = []
     for record in message.Records:
         history_list.append(SignHistory(
@@ -86,7 +88,7 @@ def collect(sess, message: SQSMessage, account: Account, gql: GQL) -> List[SignH
     sess.add_all(history_list)
     sess.commit()
     sess.refresh_all(history_list)
-    print(f"{len(history_list)} nonce used. Next nonce is {nonce}")
+    logger.info(f"{len(history_list)} nonce used. Next nonce is {nonce}")
     return history_list
 
 
@@ -112,32 +114,17 @@ def handle(event, context):
     account = Account(fetch_kms_key_id(stage, region_name))
     gql = GQL()
 
+    # golden_dust_ctrl = GoldenDustController()
+
     try:
         sess = scoped_session(sessionmaker(bind=engine))
-        # uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
-        # receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-        history_list = collect(sess, message, account, gql)
-        print(history_list)
-        # for i, record in enumerate(message.Records):
-        #     # Always 1 record in message since IAP sends one record at a time.
-        #     # TODO: Handle exceptions and send messages to DLQ
-        #
-        #     receipt = receipt_dict.get(record.body.get("uuid"))
-        #     if not receipt:
-        #         success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
-        #         logger.error(msg)
-        #     else:
-        #         receipt.tx_status = TxStatus.CREATED
-        #         success, msg, tx_id = process(sess, record)
-        #         receipt.tx_id = tx_id
-        #         receipt.tx_status = TxStatus.STAGED
-        #         sess.add(receipt)
-        #         sess.commit()
-        #     print(
-        #         f"{i + 1}/{len(message.Records)} : {'Success' if success else 'Fail'} with message: "
-        #         f"\n\tTx. ID: {tx_id}"
-        #         f"\n\t{msg}"
-        #     )
+        iap_ctrl = IAPController(sess, account, gql)
+
+        # Collect
+        iap_history_list = iap_ctrl.collect(message)
+
+        # Process
+        iap_ctrl.process(iap_history_list)
     finally:
         if sess is not None:
             sess.close()
