@@ -22,14 +22,14 @@ class GooglePurchaseSchema(BaseSchema):
     consumptionState: GoogleConsumptionState
     developerPayload: str = ""
     orderId: str
-    purchaseType: Optional[GooglePurchaseType]
-    acknowledgementState: GoogleAckState
-    purchaseToken: Optional[str]
-    productId: Optional[str]
-    quantity: int = 1
-    obfuscatedExternalAccountId: Optional[str]
-    obfuscatedExternalProfileId: Optional[str]
     regionCode: str
+    quantity: int = 1
+    acknowledgementState: GoogleAckState
+    purchaseToken: Optional[str] = None
+    purchaseType: Optional[GooglePurchaseType] = None
+    productId: Optional[str] = None
+    obfuscatedExternalAccountId: Optional[str] = None
+    obfuscatedExternalProfileId: Optional[str] = None
 
 
 @dataclass
@@ -79,7 +79,7 @@ class FullReceiptSchema(BaseSchema):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ReceiptDetailSchema(BaseSchema):
@@ -91,7 +91,7 @@ class ReceiptDetailSchema(BaseSchema):
     tx_status: Optional[TxStatus] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class RefundedReceiptSchema(BaseSchema):
@@ -106,4 +106,4 @@ class RefundedReceiptSchema(BaseSchema):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

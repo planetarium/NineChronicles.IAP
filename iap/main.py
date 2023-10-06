@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from mangum import Mangum
-from pydantic.error_wrappers import _display_error_type_and_ctx
+from pydantic.v1.error_wrappers import _display_error_type_and_ctx
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
@@ -25,15 +25,6 @@ app = FastAPI(
     root_path=f"/{stage}" if stage != "local" else "",
     debug=settings.DEBUG,
 )
-
-if settings.DEBUG:
-    from debug_toolbar.middleware import DebugToolbarMiddleware
-
-    app.add_middleware(
-        DebugToolbarMiddleware,
-        panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"]
-    )
-
 
 @app.middleware("http")
 def log_incoming_url(request: Request, call_next):
