@@ -89,7 +89,10 @@ class APIStack(Stack):
             "DB_ECHO": "False",
             "SQS_URL": shared_stack.q.queue_url,
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
-            "APPLE_VALIDATION_URL": "",
+            "APPLE_BUNDLE_ID": config.apple_bundle_id,
+            "APPLE_VALIDATION_URL": config.apple_validation_url,
+            "APPLE_KEY_ID": config.apple_key_id,
+            "APPLE_ISSUER_ID": config.apple_issuer_id,
             "HEADLESS": config.headless,
             "CDN_HOST": config.cdn_host,
         }

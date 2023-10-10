@@ -26,6 +26,11 @@ on:
         required: true
       GOOGLE_CREDENTIAL:
         required: true
+      APPLE_CREDENTIAL:
+        required: true
+      APPLE_KEY_ID:
+        required: true
+      APPLE_ISSUER_ID:
       SLACK_WEBHOOK_URL:
         required: true
       IAP_GARAGE_WEBHOOK_URL:
@@ -115,6 +120,11 @@ jobs:
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
+          APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
+          APPLE_VALIDATION_URL: ${{ vars.APPLE_VALIDATION_URL }}
+          APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
           IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
@@ -136,6 +146,11 @@ jobs:
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
+          APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
+          APPLE_VALIDATION_URL: ${{ vars.APPLE_VALIDATION_URL }}
+          APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
           IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
