@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.apple import get_jwt
 from common.utils.google import get_google_client
 from iap import settings
 from iap.dependencies import session
@@ -31,9 +32,14 @@ SQS_URL = os.environ.get("SQS_URL")
 
 
 # TODO: validate from store
-def validate_apple() -> Tuple[bool, str]:
-    resp = requests.post(settings.APPLE_VALIDATION_URL, )
-    return True, ""
+def validate_apple(tx_id: str) -> Tuple[bool, str, object]:
+    headers = {
+        "Authorization": f"Bearer {get_jwt()}"
+    }
+    resp = requests.post(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+    if resp.status_code != 200:
+        return False, f"Purchase state of this receipt is not valid: {resp.text}", None
+    return True, "", resp.text
 
 
 def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
@@ -152,7 +158,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         # TODO: Support Apple
-        success, msg = validate_apple()
+        success, msg, purchase = validate_apple(receipt_data.order.get("transactionId"))
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
     else:
