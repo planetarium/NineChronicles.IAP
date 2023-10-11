@@ -117,5 +117,5 @@ class SharedStack(Stack):
                     logger.error(e)
                     raise e
 
-            for k, v in param_value_dict.items():
-                setattr(self, f"{k.lower()}_arn", v["ARN"])
+        for k, v in param_value_dict.items():
+            setattr(self, f"{k.lower()}_arn", v["ARN"])
