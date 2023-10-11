@@ -47,6 +47,7 @@ class APIStack(Stack):
                 actions=["ssm:GetParameter"],
                 resources=[
                     shared_stack.google_credential_arn,
+                    shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
                 ]
             )
