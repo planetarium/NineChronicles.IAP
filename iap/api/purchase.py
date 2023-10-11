@@ -200,8 +200,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
           get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24 * 7) > product.weekly_limit):
         receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
         raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
-
-    # TODO: check balance and inventory
+    elif (product.account_limit and
+          get_purchase_count(sess, receipt.agent_addr, product.id) > product.account_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
     msg = {
         "agent_addr": receipt_data.agentAddress,
