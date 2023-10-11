@@ -47,6 +47,7 @@ class APIStack(Stack):
                 actions=["ssm:GetParameter"],
                 resources=[
                     shared_stack.google_credential_arn,
+                    shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
                 ]
             )
@@ -98,7 +99,7 @@ class APIStack(Stack):
         }
 
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".gitignore", ".github",]
+        exclude_list = [".", "*", ".idea", ".git", ".pytest_cache", ".gitignore", ".github",]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 
@@ -109,7 +110,7 @@ class APIStack(Stack):
             description="HTTP API/Backoffice service of NineChronicles.IAP",
             code=_lambda.AssetCode(".", exclude=exclude_list),
             handler="iap.main.handler",
-            layers=[shared_stack.layer, layer],
+            layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
             security_groups=[shared_stack.rds_security_group],
