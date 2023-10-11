@@ -37,8 +37,6 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
-      APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
-      APPLE_VALIDATION_URL: ${{ vars.APPLE_VALIDATION_URL }}
       APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
       APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
@@ -60,8 +58,6 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
-      APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
-      APPLE_VALIDATION_URL: ${{ vars.APPLE_VALIDATION_URL }}
       APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
       APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
@@ -95,8 +91,6 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
-      APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
-      APPLE_VALIDATION_URL: ${{ vars.APPLE_VALIDATION_URL }}
       APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
       APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
