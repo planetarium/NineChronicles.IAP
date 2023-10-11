@@ -82,17 +82,24 @@ jobs:
           popd
           yarn add aws-cdk
 
+      - name: Build Common Layer
+        run: |
+          pushd common
+          poetry export --without=iap --without=worker --without-hashes -o requirements.txt
+          pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
+          popd
+
       - name: Build IAP Layer
         run: |
           pushd iap
-          poetry export --with=iap --without-hashes -o requirements.txt
+          poetry export --only=iap --without-hashes -o requirements.txt
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
           popd
 
       - name: Build Worker Layer
         run: |
           pushd worker
-          poetry export --with=worker --without-hashes -o requirements.txt
+          poetry export --only=worker --without-hashes -o requirements.txt
           pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages/
           popd
 
