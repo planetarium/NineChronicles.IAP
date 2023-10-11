@@ -21,6 +21,14 @@ else:
 
 config = Config(**{k.lower(): v for k, v in env_values.items()})
 
+TAGS = {
+    "Name": f"9c-iap-{stage}",
+    "Environment": "production" if stage == "mainnet" else "development",
+    "Service": "NineChronicles.IAP",
+    "Team": "game",
+    "Owner": "hyeon",
+}
+
 app = cdk.App()
 shared = SharedStack(
     app, f"{config.stage}-9c-iap-SharedStack",
@@ -28,6 +36,7 @@ shared = SharedStack(
         account=config.account_id, region=config.region_name,
     ),
     config=config,
+    tags=TAGS,
 )
 
 APIStack(
@@ -37,6 +46,7 @@ APIStack(
     ),
     config=config,
     shared_stack=shared,
+    tags=TAGS,
 )
 
 WorkerStack(
@@ -46,6 +56,7 @@ WorkerStack(
     ),
     config=config,
     shared_stack=shared,
+    tags=TAGS,
 )
 
 app.synth()
