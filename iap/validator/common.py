@@ -20,8 +20,8 @@ def get_order_data(receipt_data: ReceiptSchema) -> Tuple[str, Union[str, int], d
         product_id = receipt_data.order.get("productId")
         purchased_at = datetime.fromtimestamp(receipt_data.order.get("purchaseTime") // 1000)  # Remove millisecond
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        order_id = ""
-        product_id = 1
+        order_id = receipt_data.data.get("transactionId")
+        product_id = receipt_data.data.get("productId")
         purchased_at = datetime.utcnow()
     else:
         raise ValueError(f"{receipt_data.store.name} is unsupported store.")
