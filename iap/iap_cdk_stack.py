@@ -110,7 +110,7 @@ class APIStack(Stack):
             description="HTTP API/Backoffice service of NineChronicles.IAP",
             code=_lambda.AssetCode(".", exclude=exclude_list),
             handler="iap.main.handler",
-            layers=[shared_stack.layer, layer],
+            layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
             security_groups=[shared_stack.rds_security_group],

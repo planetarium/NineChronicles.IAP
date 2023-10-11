@@ -4,11 +4,10 @@ from typing import Dict
 
 import boto3
 from aws_cdk import (
-    Stack, RemovalPolicy,
+    Stack,
     aws_ec2 as _ec2,
     aws_rds as _rds,
     aws_sqs as _sqs,
-    aws_lambda as _lambda,
 )
 from constructs import Construct
 
@@ -77,16 +76,6 @@ class SharedStack(Stack):
             credentials=self.credentials,
             instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
             security_groups=[self.rds_security_group],
-        )
-
-        self.layer = _lambda.LayerVersion(
-            self, f"{config.stage}-9c-iap-common-lambda-layer",
-            code=_lambda.AssetCode("common/layer/"),
-            description="Lambda layer for 9c IAP in common",
-            compatible_runtimes=[
-                _lambda.Runtime.PYTHON_3_10,
-            ],
-            removal_policy=RemovalPolicy.DESTROY,
         )
 
         # SecureStrings in Parameter Store
