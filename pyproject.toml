@@ -17,11 +17,11 @@ eth-utils = "^2.2.0"
 pycryptodome = "^3.18.0"
 eth-account = "^0.9.0"
 pydantic="^2.3.0"
-pyjwt = "^2.8.0"
-cryptography = "^41.0.4"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API
+pyjwt = "^2.8.0"
+cryptography = "^41.0.4"
 fastapi = "^0.103.1"
 uvicorn = "^0.23.2"
 mangum = "^0.17.0"
