@@ -33,18 +33,19 @@ class Config:
     stage: str
     account_id: str
     region_name: str
+    cdn_host: str
+
+    google_package_name: str
+    apple_bundle_id: str
 
     # Google
-    google_package_name: str
     google_credential: Optional[str] = None
     # Apple
-    apple_bundle_id: str
     apple_credential: Optional[str] = None
     apple_validation_url: Optional[str] = None
     apple_key_id: Optional[str] = None
     apple_issuer_id: Optional[str] = None
 
-    cdn_host: str
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
     golden_dust_request_sheet_id: Optional[str] = None
