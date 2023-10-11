@@ -1,7 +1,8 @@
 import logging
 import os
-from pydantic.dataclasses import dataclass
 from typing import Optional
+
+from pydantic.dataclasses import dataclass
 
 COMMON_LAMBDA_EXCLUDE = [
     "!common",
@@ -32,11 +33,21 @@ class Config:
     stage: str
     account_id: str
     region_name: str
-    google_package_name: str
     cdn_host: str
+
+    google_package_name: str
+    apple_bundle_id: str
+
+    # Google
+    google_credential: Optional[str] = None
+    # Apple
+    apple_credential: Optional[str] = None
+    apple_validation_url: Optional[str] = None
+    apple_key_id: Optional[str] = None
+    apple_issuer_id: Optional[str] = None
+
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
-    google_credential: Optional[str] = None
     golden_dust_request_sheet_id: Optional[str] = None
     golden_dust_work_sheet_id: Optional[str] = None
     form_sheet: Optional[str] = None

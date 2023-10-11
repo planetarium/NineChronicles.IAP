@@ -9,7 +9,7 @@ class SimpleProductSchema(BaseSchema):
     name: str
     order: int
     google_sku: str
-    # apple_sku: str
+    apple_sku: str
     # product_type: ProductType
     daily_limit: Optional[int] = None
     weekly_limit: Optional[int] = None
