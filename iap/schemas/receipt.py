@@ -79,7 +79,6 @@ class ReceiptSchema:
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
-            # TODO: Support Apple
             pass
         elif self.store == Store.TEST:
             # No further action
