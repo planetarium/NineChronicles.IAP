@@ -101,7 +101,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
 
         For `APPLE`-ish type store, the `data` must have following fields:
-            - `productId` :: int : IAP service managed product ID.
+            - `productId` :: str : Product SKU that is defined in appstore.
             - `transactionId` :: str : Apple IAP transaction ID formed like `2000000432373050`.
     """
     order_id, product_id, purchased_at = get_order_data(receipt_data)
@@ -124,7 +124,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-            .where(Product.active.is_(True), Product.id == product_id)
+            .where(Product.active.is_(True), Product.apple_sku == product_id)
         )
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(
