@@ -1,7 +1,6 @@
 IAP_LAMBDA_EXCLUDE = [
     "!iap",
     "!iap/**",
-    "iap/cdk_out",
     "iap/layer",
     "iap/docs.py",
     "iap/poetry.lock",

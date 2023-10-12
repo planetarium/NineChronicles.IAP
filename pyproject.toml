@@ -10,7 +10,6 @@ readme = "README.md"
 python = "^3.10"
 psycopg2-binary = "^2.9.7"
 sqlalchemy = "^2.0.20"
-boto3 = "^1.28.46"
 requests = "^2.31.0"
 google-api-python-client = "^2.99.0"
 gql = { extras = ["requests"], version = "^3.4.1" }
@@ -21,6 +20,8 @@ pydantic="^2.3.0"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API
+pyjwt = "^2.8.0"
+cryptography = "^41.0.4"
 fastapi = "^0.103.1"
 uvicorn = "^0.23.2"
 mangum = "^0.17.0"
@@ -33,6 +34,7 @@ google-auth-oauthlib = "^1.1.0"
 
 [tool.poetry.group.dev.dependencies]
 # Only for development
+boto3 = "^1.28.46"
 ipython = "^8.13.1"
 pytest = "^7.3.1"
 alembic = "^1.12.0"

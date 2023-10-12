@@ -82,6 +82,7 @@ class SharedStack(Stack):
         PARAMETER_LIST = (
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
+            ("APPLE_CREDENTIAL", True),
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
@@ -116,5 +117,5 @@ class SharedStack(Stack):
                     logger.error(e)
                     raise e
 
-            for k, v in param_value_dict.items():
-                setattr(self, f"{k.lower()}_arn", v["ARN"])
+        for k, v in param_value_dict.items():
+            setattr(self, f"{k.lower()}_arn", v["ARN"])

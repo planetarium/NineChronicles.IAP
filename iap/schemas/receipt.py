@@ -32,6 +32,31 @@ class GooglePurchaseSchema(BaseSchema):
     regionCode: str
 
 
+class ApplePurchaseSchema(BaseSchema):
+    transactionId: str
+    originalTransactionId: str
+    bundleId: str
+    productId: str
+    purchaseDate: datetime
+    originalPurchaseDate: datetime
+    quantity: int
+    type: str
+    inAppOwnershipType: str
+    signedDate: datetime
+    environment: str
+    transactionReason: str
+    storefront: str
+    storefrontId: str
+
+    @property
+    def json_data(self) -> dict:
+        data = self.model_dump()
+        data["purchaseDate"] = data["purchaseDate"].timestamp()
+        data["originalPurchaseDate"] = data["originalPurchaseDate"].timestamp()
+        data["signedDate"] = data["signedDate"].timestamp()
+        return data
+
+
 @dataclass
 class ReceiptSchema:
     store: Store
