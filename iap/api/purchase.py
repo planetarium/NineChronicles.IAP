@@ -165,6 +165,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
         success, msg, purchase = validate_google(product_id, token)
         if purchase.productId != product.google_sku:
+            receipt.status = ReceiptStatus.INVALID
             raise_error(sess, receipt, ValueError(
                 f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         consume_google(product_id, token)
@@ -174,7 +175,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         if success:
             receipt.data = purchase.json_data
             receipt.purchased_at = purchase.originalPurchaseDate
-        elif purchase.productId != product.apple_sku:
+        if purchase.productId != product.apple_sku:
+            receipt.status = ReceiptStatus.INVALID
             raise_error(sess, receipt, ValueError(
                 f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
     ## Test
