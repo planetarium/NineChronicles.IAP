@@ -1,22 +1,42 @@
 from datetime import datetime, timedelta
 from typing import Optional, List, Annotated
 
-from fastapi import APIRouter, Depends, Query
+from argon2 import PasswordHasher
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select, Date, desc
 from sqlalchemy.orm import joinedload
 
+from iap.api.admin import l10n
 from common.enums import Store, ReceiptStatus
 from common.models.receipt import Receipt
 from common.utils.garage import update_iap_garage
 from common.utils.google import update_google_price
 from iap import settings
 from iap.dependencies import session
+from iap.schemas.admin import LoginSchema
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
 )
+
+router.include_router(l10n.router)
+
+
+@router.post("/login")
+def login(request: LoginSchema, response: Response):
+    hasher = PasswordHasher()
+    # if hasher.verify(settings.ADMIN_HASH, f"{request.user_id}__{request.user_password}__{os.environ.get('STAGE')}"):
+    #     response.set_cookie("admin_status", "login")
+    response.set_cookie("admin_status", "login")
+    return {"user_id": request.user_id, "login": True}
+
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie("admin_status")
+    return response
 
 
 @router.post("/update-price")
@@ -53,7 +73,7 @@ def fetch_refunded(
     """
     # List refunded receipts
     ---
-    
+
     Get list of refunded receipts. This only returns user-refunded receipts.
     """
     if not start:
