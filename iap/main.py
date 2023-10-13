@@ -118,6 +118,11 @@ def view_page(page: str = "index"):
     raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
 
 
+@app.get("/admin/{page}", response_class=FileResponse, tags=["View"], summary="Admin page")
+def admin_view(page: str):
+    return view_page(f"admin/{page}")
+
+
 app.include_router(api.router)
 app.mount("/_app", StaticFiles(directory="iap/frontend/build/_app"), name="static")
 
