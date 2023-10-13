@@ -2,6 +2,7 @@
   import Navigation from "../../../components/Navigation.svelte";
   import {
     Button,
+    Checkbox,
     ChevronDown,
     Dropdown,
     DropdownDivider,
@@ -28,6 +29,7 @@
   export let product = {header: [], body: []};
   let productLang = [];
   let selectedProductLang = [];
+  let managePath = false;
 
   onMount(async () => {
     let resp = await fetch("/api/admin/l10n/csv/category");
@@ -112,7 +114,7 @@
     {/if}
   </TabItem>
   <TabItem on:click={() => {currentTab = "product"}} title="Product">
-    <div>
+    <div class="flex gap-12">
       <Button>Select Languages
         <ChevronDown class="w-3 h-3"/>
       </Button>
@@ -131,6 +133,7 @@
           {/if}
         {/each}
       </Dropdown>
+      <Checkbox bind:checked={managePath}>Manage Image Paths</Checkbox>
     </div>
     {#if product.header.length === 0}
       Wait for fetching data...
@@ -139,7 +142,7 @@
         <TableHead>
           {#each product.header as header, i}
             {#if i === 0 || selectedProductLang.includes(header)}
-              <TableHeadCell>{header}</TableHeadCell>
+              <TableHeadCell class="text-center">{header}</TableHeadCell>
             {/if}
           {/each}
         </TableHead>
@@ -148,7 +151,9 @@
             <TableBodyRow>
               {#each body as data, i}
                 {#if i === 0 || selectedProductLang.includes(productLang[i - 1])}
-                  <TableBodyCell><Input bind:value={data}/></TableBodyCell>
+                  {#if !body[0].includes("_PATH") || (body[0].includes("_PATH") && managePath)}
+                    <TableBodyCell><Input bind:value={data}/></TableBodyCell>
+                  {/if}
                 {/if}
               {/each}
             </TableBodyRow>
