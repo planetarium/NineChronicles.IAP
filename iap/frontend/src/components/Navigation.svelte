@@ -15,6 +15,8 @@
   <NavUl {hidden}>
     <NavLi href={stageUrl("/")} active={current === "home"}>Home</NavLi>
     <NavLi href={stageUrl("/receipt")} active={current === "receipt"}>Receipt List</NavLi>
+    <NavLi href={stageUrl("/admin/l10n")} acitve={current === "l10n"}>Manage L10N</NavLi>
+    <NavLi href={stageUrl("/docs")} active={current === "docs"}>Docs (For developers)</NavLi>
   </NavUl>
 </Navbar>
 
