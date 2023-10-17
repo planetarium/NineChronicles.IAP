@@ -103,12 +103,13 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(30),
+            timeout=cdk_core.Duration.seconds(120),
             environment=env,
             events=[
                 _evt_src.SqsEventSource(shared_stack.q)
             ],
             memory_size=256,
+            reserved_concurrent_executions=1,
         )
 
         # Tracker Lambda Function
