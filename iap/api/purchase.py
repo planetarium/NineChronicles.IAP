@@ -4,6 +4,7 @@ from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
 
 import boto3
+import jwt
 import requests
 from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
@@ -13,11 +14,12 @@ from sqlalchemy.orm import joinedload
 from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.apple import get_jwt
 from common.utils.google import get_google_client
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
 from iap.utils import get_purchase_count
 from iap.validator.common import get_order_data
 
@@ -30,10 +32,21 @@ sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
 
 
-# TODO: validate from store
-def validate_apple() -> Tuple[bool, str]:
-    resp = requests.post(settings.APPLE_VALIDATION_URL, )
-    return True, ""
+def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
+    headers = {
+        "Authorization": f"Bearer {get_jwt(settings.APPLE_CREDENTIAL, settings.APPLE_BUNDLE_ID, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)}"
+    }
+    resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+    if resp.status_code != 200:
+        return False, f"Purchase state of this receipt is not valid: {resp.text}", None
+    try:
+        data = jwt.decode(resp.json()["signedTransactionInfo"], options={"verify_signature": False})
+        logger.debug(data)
+        schema = ApplePurchaseSchema(**data)
+    except:
+        return False, f"Malformed apple transaction data for {tx_id}", None
+    else:
+        return True, "", schema
 
 
 def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
@@ -78,13 +91,19 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     ### Request Body
     - `store` :: int : Store type in IntEnum Please see StoreType Enum.
-    - `data` :: str : JSON serialized string of full details of receipt.
-        For `TEST` type store, the `data` should have following fields:
-        - `productId` :: int : IAP service managed product id.
-        - `orderId` :: str : Unique order ID of this purchase. Sending random UUID string is good.
-        - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
     - `agentAddress` :: str : 9c agent address who bought product on store.
     - `avatarAddress` :: str : 9c avatar address to get items in bought product.
+    - `data` :: str : JSON serialized string of details of receipt.
+
+        For `TEST` type store, the `data` should have following fields:
+            - `productId` :: int : IAP service managed product ID.
+            - `orderId` :: str : Unique order ID of this purchase. Sending random UUID string is good.
+            - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
+
+        For `APPLE`-ish type store, the `data` must have following fields:
+            - `Payload` :: str : Encoded full receipt payload data.
+            - `Store` :: str : Store name. Should be `AppleAppStore`.
+            - `TransactionID` :: str : Apple IAP transaction ID formed like `2000000432373050`.
     """
     order_id, product_id, purchased_at = get_order_data(receipt_data)
     prev_receipt = sess.scalar(
@@ -97,20 +116,20 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     product = None
     # If prev. receipt exists, check current status and returns result
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
-        # Test based on google for soft launch v1
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
             .where(Product.active.is_(True), Product.google_sku == product_id)
         )
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        # FIXME: Get real product when you support apple
-        #  This is just to avoid error
-        product = sess.scalar(
-            select(Product)
-            .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-            .where(Product.active.is_(True), Product.id == product_id)
-        )
+        # NOTE: We can get productId after validation in apple.
+        #  So validate this later in apple.
+        # product = sess.scalar(
+        #     select(Product)
+        #     .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+        #     .where(Product.active.is_(True), Product.apple_sku == product_id)
+        # )
+        pass
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(
             select(Product)
@@ -132,7 +151,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     sess.flush()
     sess.refresh(receipt)
 
-    if not product:
+    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
         receipt.status = ReceiptStatus.INVALID
         raise_error(sess, receipt,
                     ValueError(f"{product_id} is not valid product ID for {receipt_data.store.name} store."))
@@ -140,6 +159,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     receipt.status = ReceiptStatus.VALIDATION_REQUEST
 
     # validate
+    ## Google
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
         token = receipt_data.order.get("purchaseToken")
         if not (product_id and token):
@@ -148,13 +168,33 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
         success, msg, purchase = validate_google(product_id, token)
+        if purchase.productId != product.google_sku:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(sess, receipt, ValueError(
+                f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         consume_google(product_id, token)
-
+    ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        # TODO: Support Apple
-        success, msg = validate_apple()
+        success, msg, purchase = validate_apple(order_id)
+        if success:
+            data = receipt_data.data.copy()
+            data.update(**purchase.json_data)
+            receipt.data = data
+            receipt.purchased_at = purchase.originalPurchaseDate
+            # Get product from validation result and check product existence.
+            product = sess.scalar(
+                select(Product)
+                .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+                .where(Product.active.is_(True), Product.apple_sku == purchase.productId)
+            )
+        if not product:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(sess, receipt,
+                        ValueError(f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
+    ## Test
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
+    ## INVALID
     else:
         receipt.status = ReceiptStatus.UNKNOWN
         success, msg = False, f"{receipt.store} is not validatable store."
@@ -165,6 +205,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     receipt.status = ReceiptStatus.VALID
 
+    # Check purchase limit
     if (product.daily_limit and
             get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24) > product.daily_limit):
         receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
@@ -173,8 +214,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
           get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24 * 7) > product.weekly_limit):
         receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
         raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
-
-    # TODO: check balance and inventory
+    elif (product.account_limit and
+          get_purchase_count(sess, receipt.agent_addr, product.id) > product.account_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
     msg = {
         "agent_addr": receipt_data.agentAddress,

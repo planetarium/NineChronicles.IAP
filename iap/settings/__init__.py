@@ -8,6 +8,7 @@ from common.utils.aws import fetch_secrets, fetch_parameter
 stage = os.environ.get("STAGE", "local")
 db_password = None
 google_credential = None
+apple_credential = None
 
 if not stage:
     logging.error("Config file not found")
@@ -25,6 +26,11 @@ else:
         f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
         True
     )["Value"]
+    apple_credential = fetch_parameter(
+        os.environ.get("REGION_NAME"),
+        f"{stage}_9c_IAP_APPLE_CREDENTIAL",
+        True
+    )["Value"]
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
@@ -37,6 +43,10 @@ DB_ECHO = config("DB_ECHO", cast=bool, default=False)
 GOOGLE_PACKAGE_NAME = config("GOOGLE_PACKAGE_NAME")
 GOOGLE_CREDENTIAL = google_credential or config("GOOGLE_CREDENTIAL")
 
+APPLE_BUNDLE_ID = config("APPLE_BUNDLE_ID")
+APPLE_ISSUER_ID = config("APPLE_ISSUER_ID")
+APPLE_KEY_ID = config("APPLE_KEY_ID")
+APPLE_CREDENTIAL = apple_credential or config("APPLE_CREDENTIAL")
 APPLE_VALIDATION_URL = config("APPLE_VALIDATION_URL")
 
 REGION_NAME = config("REGION_NAME")

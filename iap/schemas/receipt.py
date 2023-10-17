@@ -32,6 +32,31 @@ class GooglePurchaseSchema(BaseSchema):
     obfuscatedExternalProfileId: Optional[str] = None
 
 
+class ApplePurchaseSchema(BaseSchema):
+    transactionId: str
+    originalTransactionId: str
+    bundleId: str
+    productId: str
+    purchaseDate: datetime
+    originalPurchaseDate: datetime
+    quantity: int
+    type: str
+    inAppOwnershipType: str
+    signedDate: datetime
+    environment: str
+    transactionReason: str
+    storefront: str
+    storefrontId: str
+
+    @property
+    def json_data(self) -> dict:
+        data = self.model_dump()
+        data["purchaseDate"] = data["purchaseDate"].timestamp()
+        data["originalPurchaseDate"] = data["originalPurchaseDate"].timestamp()
+        data["signedDate"] = data["signedDate"].timestamp()
+        return data
+
+
 @dataclass
 class ReceiptSchema:
     store: Store
@@ -54,7 +79,6 @@ class ReceiptSchema:
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
-            # TODO: Support Apple
             pass
         elif self.store == Store.TEST:
             # No further action
