@@ -46,13 +46,14 @@ class SQSMessage:
         self.Records = [SQSMessageRecord(**x) for x in self.Records]
 
 
-def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Optional[str]]:
+def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tuple[Tuple[bool, str, Optional[str]], int]:
     stage = os.environ.get("STAGE", "development")
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
     gql = GQL()
-    nonce = gql.get_next_nonce(account.address)
+    if not nonce:
+        nonce = gql.get_next_nonce(account.address)
 
     product = sess.scalar(
         select(Product)
@@ -62,10 +63,9 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
 
     fav_data = [{
         "balanceAddr": message.body.get("agent_addr"),
-        "fungibleAssetValue": {
-            "currency": x.currency.name,
-            "majorUnit": x.amount,
-            "minorUnit": 0
+        "value": {
+            "currencyTicker": x.ticker.value,
+            "value": x.amount,
         }
     } for x in product.fav_list]
 
@@ -80,7 +80,7 @@ def process(sess: Session, message: SQSMessageRecord) -> Tuple[bool, str, Option
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)
-    return gql.stage(signed_tx)
+    return gql.stage(signed_tx), nonce
 
 
 def handle(event, context):
@@ -102,6 +102,7 @@ def handle(event, context):
         sess = scoped_session(sessionmaker(bind=engine))
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
         receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
+        nonce = None
         for i, record in enumerate(message.Records):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
@@ -111,7 +112,9 @@ def handle(event, context):
                 logger.error(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                success, msg, tx_id = process(sess, record)
+                (success, msg, tx_id), nonce = process(sess, record, nonce=nonce)
+                if success:
+                    nonce += 1
                 receipt.tx_id = tx_id
                 receipt.tx_status = TxStatus.STAGED
                 sess.add(receipt)

@@ -22,14 +22,14 @@ class GooglePurchaseSchema(BaseSchema):
     consumptionState: GoogleConsumptionState
     developerPayload: str = ""
     orderId: str
-    purchaseType: Optional[GooglePurchaseType]
-    acknowledgementState: GoogleAckState
-    purchaseToken: Optional[str]
-    productId: Optional[str]
-    quantity: int = 1
-    obfuscatedExternalAccountId: Optional[str]
-    obfuscatedExternalProfileId: Optional[str]
     regionCode: str
+    quantity: int = 1
+    acknowledgementState: GoogleAckState
+    purchaseToken: Optional[str] = None
+    purchaseType: Optional[GooglePurchaseType] = None
+    productId: Optional[str] = None
+    obfuscatedExternalAccountId: Optional[str] = None
+    obfuscatedExternalProfileId: Optional[str] = None
 
 
 class ApplePurchaseSchema(BaseSchema):
@@ -79,7 +79,6 @@ class ReceiptSchema:
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
-            # TODO: Support Apple
             pass
         elif self.store == Store.TEST:
             # No further action

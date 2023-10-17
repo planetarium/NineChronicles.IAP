@@ -101,8 +101,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             - `purchaseTime` :: int : Purchase timestamp in unix timestamp format. Note that not in millisecond, just second.
 
         For `APPLE`-ish type store, the `data` must have following fields:
-            - `productId` :: str : Product SKU that is defined in appstore.
-            - `transactionId` :: str : Apple IAP transaction ID formed like `2000000432373050`.
+            - `Payload` :: str : Encoded full receipt payload data.
+            - `Store` :: str : Store name. Should be `AppleAppStore`.
+            - `TransactionID` :: str : Apple IAP transaction ID formed like `2000000432373050`.
     """
     order_id, product_id, purchased_at = get_order_data(receipt_data)
     prev_receipt = sess.scalar(
@@ -121,11 +122,14 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             .where(Product.active.is_(True), Product.google_sku == product_id)
         )
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        product = sess.scalar(
-            select(Product)
-            .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-            .where(Product.active.is_(True), Product.apple_sku == product_id)
-        )
+        # NOTE: We can get productId after validation in apple.
+        #  So validate this later in apple.
+        # product = sess.scalar(
+        #     select(Product)
+        #     .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+        #     .where(Product.active.is_(True), Product.apple_sku == product_id)
+        # )
+        pass
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(
             select(Product)
@@ -147,7 +151,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     sess.flush()
     sess.refresh(receipt)
 
-    if not product:
+    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
         receipt.status = ReceiptStatus.INVALID
         raise_error(sess, receipt,
                     ValueError(f"{product_id} is not valid product ID for {receipt_data.store.name} store."))
@@ -173,12 +177,20 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(order_id)
         if success:
-            receipt.data = purchase.json_data
+            data = receipt_data.data.copy()
+            data.update(**purchase.json_data)
+            receipt.data = data
             receipt.purchased_at = purchase.originalPurchaseDate
-        if purchase.productId != product.apple_sku:
+            # Get product from validation result and check product existence.
+            product = sess.scalar(
+                select(Product)
+                .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+                .where(Product.active.is_(True), Product.apple_sku == purchase.productId)
+            )
+        if not product:
             receipt.status = ReceiptStatus.INVALID
-            raise_error(sess, receipt, ValueError(
-                f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
+            raise_error(sess, receipt,
+                        ValueError(f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
     ## Test
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"

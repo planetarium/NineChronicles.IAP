@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict
 
 import boto3
+import aws_cdk as cdk_core
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
@@ -49,6 +50,7 @@ class SharedStack(Stack):
         self.q = _sqs.Queue(
             self, f"{config.stage}-9c-iap-queue",
             dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
+            visibility_timeout=cdk_core.Duration.seconds(120),
         )
 
         # RDS
