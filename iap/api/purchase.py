@@ -168,11 +168,14 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
         success, msg, purchase = validate_google(product_id, token)
-        if purchase.productId != product.google_sku:
-            receipt.status = ReceiptStatus.INVALID
-            raise_error(sess, receipt, ValueError(
-                f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
-        consume_google(product_id, token)
+        # FIXME: google API result may not include productId.
+        #  Can we get productId allways?
+        # if purchase.productId != product.google_sku:
+        #     receipt.status = ReceiptStatus.INVALID
+        #     raise_error(sess, receipt, ValueError(
+        #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
+        # NOTE: Consume can be executed only by purchase owner.
+        # consume_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(order_id)
