@@ -58,10 +58,15 @@
         </TableBodyRow>
       {:else}
         {#each receiptList as receipt, i}
-          <TableBodyRow>
+          <TableBodyRow color={
+          !receipt.product ? "yellow"
+          : receipt.status !== 10 ? "red"
+            : receipt.tx_status > 10 ? "green"
+              : ""
+          }>
             <TableBodyCell>{i + 1}</TableBodyCell>
             <TableBodyCell>{STORE_MAP[receipt.store]}</TableBodyCell>
-            <TableBodyCell>{receipt.product.name}</TableBodyCell>
+            <TableBodyCell>{receipt.product?.name || "!! No Product Found !!"}</TableBodyCell>
             <TableBodyCell>{receipt.agent_addr}</TableBodyCell>
             <TableBodyCell>{receipt.avatar_addr}</TableBodyCell>
             <TableBodyCell>{RECEIPT_STATUS_MAP[receipt.status].Name}</TableBodyCell>
