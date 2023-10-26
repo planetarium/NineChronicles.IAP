@@ -81,7 +81,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
         fav_data=fav_data, avatar_addr=avatar_address, item_data=item_data,
-        memo=f"agent_address: {agent_address}, avatar_address: {avatar_address}"
+        memo=json.dumps([agent_address, avatar_address])
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)
