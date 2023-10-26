@@ -72,15 +72,11 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     # For Assets
     rarity = Column(ENUM(ProductRarity, create_type=False), nullable=False, default=ProductRarity.NORMAL,
                     doc="Rarity of this product. This is for UI bg color.")
-    # FIXME: Update to nullable=False
-    size = Column(ENUM(ProductAssetUISize, create_type=False), doc="UI size ratio of this product in client")
-    # FIXME: Update to nullable=False
-    path = Column(Text, doc="Full asset path")
-    # FIXME: Update to nullable=False
-    bg_path = Column(Text, doc="Product bg image in list")
+    size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False, doc="UI size ratio of this product in client")
+    path = Column(Text, nullable=False, doc="Full asset path")
+    bg_path = Column(Text, nullable=True, doc="Product bg image in list")
     popup_path_key = Column(Text, nullable=True, doc="Product detail popup path key with L10N")
-    # FIXME: Update to nullable=False
-    l10n_key = Column(Text, doc="L10N Key")
+    l10n_key = Column(Text, nullable=False, doc="L10N Key")
 
     fav_list: Mapped[List["FungibleAssetProduct"]] = relationship(back_populates="product")
     fungible_item_list: Mapped[List["FungibleItemProduct"]] = relationship(back_populates="product")
