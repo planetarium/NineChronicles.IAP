@@ -98,7 +98,7 @@ class FullReceiptSchema(BaseSchema):
     store: Store
     uuid: UUID
     order_id: str
-    product: SimpleProductSchema
+    product: Optional[SimpleProductSchema] = None
     agent_addr: str
     avatar_addr: str
     status: ReceiptStatus
