@@ -57,6 +57,7 @@ class GQL:
         fav_data = kwargs.get("fav_data")
         avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
+        memo = kwargs.get("memo")
 
         if not fav_data and not item_data:
             raise ValueError("Nothing to unload")
@@ -72,6 +73,7 @@ class GQL:
                         recipientAvatarAddr=avatar_addr,
                         fungibleAssetValues=fav_data,
                         fungibleIdAndCounts=item_data,
+                        memo=memo,
                     )
                 )
             )
