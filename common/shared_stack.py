@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict
 
 import boto3
+import aws_cdk as cdk_core
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
@@ -49,6 +50,7 @@ class SharedStack(Stack):
         self.q = _sqs.Queue(
             self, f"{config.stage}-9c-iap-queue",
             dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
+            visibility_timeout=cdk_core.Duration.seconds(120),
         )
 
         # RDS
@@ -82,6 +84,7 @@ class SharedStack(Stack):
         PARAMETER_LIST = (
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
+            ("APPLE_CREDENTIAL", True),
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
@@ -116,5 +119,5 @@ class SharedStack(Stack):
                     logger.error(e)
                     raise e
 
-            for k, v in param_value_dict.items():
-                setattr(self, f"{k.lower()}_arn", v["ARN"])
+        for k, v in param_value_dict.items():
+            setattr(self, f"{k.lower()}_arn", v["ARN"])

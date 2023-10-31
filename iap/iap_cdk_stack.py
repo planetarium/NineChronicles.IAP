@@ -47,6 +47,7 @@ class APIStack(Stack):
                 actions=["ssm:GetParameter"],
                 resources=[
                     shared_stack.google_credential_arn,
+                    shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
                 ]
             )
@@ -89,13 +90,16 @@ class APIStack(Stack):
             "DB_ECHO": "False",
             "SQS_URL": shared_stack.q.queue_url,
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
-            "APPLE_VALIDATION_URL": "",
+            "APPLE_BUNDLE_ID": config.apple_bundle_id,
+            "APPLE_VALIDATION_URL": config.apple_validation_url,
+            "APPLE_KEY_ID": config.apple_key_id,
+            "APPLE_ISSUER_ID": config.apple_issuer_id,
             "HEADLESS": config.headless,
             "CDN_HOST": config.cdn_host,
         }
 
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".gitignore", ".github",]
+        exclude_list = [".", "*", ".idea", ".git", ".pytest_cache", ".gitignore", ".github",]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 

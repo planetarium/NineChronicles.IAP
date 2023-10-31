@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel as BaseSchema
@@ -11,6 +11,7 @@ from common.enums import (
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
 from common.utils.address import format_addr
+from common.utils.receipt import PlanetID
 from iap.schemas.product import SimpleProductSchema
 
 
@@ -22,14 +23,39 @@ class GooglePurchaseSchema(BaseSchema):
     consumptionState: GoogleConsumptionState
     developerPayload: str = ""
     orderId: str
-    purchaseType: Optional[GooglePurchaseType]
-    acknowledgementState: GoogleAckState
-    purchaseToken: Optional[str]
-    productId: Optional[str]
-    quantity: int = 1
-    obfuscatedExternalAccountId: Optional[str]
-    obfuscatedExternalProfileId: Optional[str]
     regionCode: str
+    quantity: int = 1
+    acknowledgementState: GoogleAckState
+    purchaseToken: Optional[str] = None
+    purchaseType: Optional[GooglePurchaseType] = None
+    productId: Optional[str] = None
+    obfuscatedExternalAccountId: Optional[str] = None
+    obfuscatedExternalProfileId: Optional[str] = None
+
+
+class ApplePurchaseSchema(BaseSchema):
+    transactionId: str
+    originalTransactionId: str
+    bundleId: str
+    productId: str
+    purchaseDate: datetime
+    originalPurchaseDate: datetime
+    quantity: int
+    type: str
+    inAppOwnershipType: str
+    signedDate: datetime
+    environment: str
+    transactionReason: str
+    storefront: str
+    storefrontId: str
+
+    @property
+    def json_data(self) -> dict:
+        data = self.model_dump()
+        data["purchaseDate"] = data["purchaseDate"].timestamp()
+        data["originalPurchaseDate"] = data["originalPurchaseDate"].timestamp()
+        data["signedDate"] = data["signedDate"].timestamp()
+        return data
 
 
 @dataclass
@@ -38,6 +64,7 @@ class ReceiptSchema:
     data: Union[str, Dict, object]
     agentAddress: str
     avatarAddress: str
+    planetId: Union[str, PlanetID] = PlanetID.ODIN
 
     # Google
     payload: Optional[Dict] = None
@@ -54,7 +81,6 @@ class ReceiptSchema:
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
-            # TODO: Support Apple
             pass
         elif self.store == Store.TEST:
             # No further action
@@ -64,12 +90,15 @@ class ReceiptSchema:
         self.agentAddress = format_addr(self.agentAddress)
         self.avatarAddress = format_addr(self.avatarAddress)
 
+        if isinstance(self.planetId, str):
+            self.planetId = PlanetID(bytes(self.planetId, 'utf-8'))
+
 
 class FullReceiptSchema(BaseSchema):
     store: Store
     uuid: UUID
     order_id: str
-    product: SimpleProductSchema
+    product: Optional[SimpleProductSchema] = None
     agent_addr: str
     avatar_addr: str
     status: ReceiptStatus
@@ -77,6 +106,7 @@ class FullReceiptSchema(BaseSchema):
     tx_status: Optional[TxStatus] = None
     purchased_at: datetime
     updated_at: datetime
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
@@ -89,6 +119,7 @@ class ReceiptDetailSchema(BaseSchema):
     status: ReceiptStatus
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
@@ -104,6 +135,7 @@ class RefundedReceiptSchema(BaseSchema):
     agent_addr: Optional[str] = None
     purchased_at: datetime
     updated_at: datetime
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
