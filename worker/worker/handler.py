@@ -13,7 +13,7 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.address import derive_vault_address
+from common.utils.address import derive_vault_address, get_vault_agent_address, get_vault_avatar_address
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 
@@ -68,9 +68,8 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     avatar_address = message.body.get("avatar_addr")
     # relay
     if planet_id != PlanetID.ODIN:
-        vault_address = derive_vault_address(planet_id).hex()
-        agent_address = vault_address
-        avatar_address = vault_address
+        agent_address = get_vault_agent_address(planet_id)
+        avatar_address = get_vault_avatar_address(planet_id)
     fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{
