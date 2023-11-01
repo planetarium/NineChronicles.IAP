@@ -226,3 +226,21 @@ class WorkerStack(Stack):
         )
 
         minute_event_rule.add_target(_event_targets.LambdaFunction(gd_tracker))
+
+        # Manual unload function
+        # This function does not have trigger. Go to AWS console and run manually.
+        if config.stage != "mainnet":
+            manual_unload = _lambda.Function(
+                self, f"{config.stage}-9c-iap-manual-unload-function",
+                function_name=f"{config.stage}-9c-iap-manual-unload",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Manual unload Tx. executor from NineChronicles.IAP",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.handle",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=512,
+            )

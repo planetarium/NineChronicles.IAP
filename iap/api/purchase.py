@@ -146,6 +146,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         order_id=order_id,
         purchased_at=purchased_at,
         product_id=product.id if product is not None else None,
+        planet_id=receipt_data.planetId.value,
     )
     sess.add(receipt)
     sess.flush()
@@ -227,6 +228,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         "avatar_addr": receipt_data.avatarAddress,
         "product_id": product.id,
         "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
     }
 
     resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
