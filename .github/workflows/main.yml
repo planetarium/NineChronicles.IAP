@@ -44,6 +44,7 @@ jobs:
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
+      SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
 
   deploy_without_approval:
     # This is for development / internal deployment
@@ -65,6 +66,7 @@ jobs:
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
+      SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
 
   approval:
     runs-on: ubuntu-latest
@@ -98,3 +100,4 @@ jobs:
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
+      SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
