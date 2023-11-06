@@ -64,13 +64,13 @@ def product_list(agent_addr: str, sess=Depends(session)):
             # Check purchase history
             schema = schema_dict[product.id]
             if product.daily_limit:
-                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24)
+                schema.purchase_count = get_purchase_count(sess, product.id, agent_addr=agent_addr, hour_limit=24)
                 schema.buyable = schema.purchase_count < product.daily_limit
             elif product.weekly_limit:
-                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id, hour_limit=24 * 7)
+                schema.purchase_count = get_purchase_count(sess, product.id, agent_addr=agent_addr, hour_limit=24 * 7)
                 schema.buyable = schema.purchase_count < product.weekly_limit
             elif product.account_limit:
-                schema.purchase_count = get_purchase_count(sess, agent_addr, product.id)
+                schema.purchase_count = get_purchase_count(sess, product.id, agent_addr=agent_addr)
                 schema.buyable = schema.purchase_count < product.account_limit
         cat_schema.product_list = list(schema_dict.values())
         category_schema_list.append(cat_schema)
