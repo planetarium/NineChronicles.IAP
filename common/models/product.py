@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any
 
 from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Integer, Numeric, Text, DateTime, Table
 from sqlalchemy.dialects.postgresql import ENUM
@@ -89,6 +89,19 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     product: Mapped["Product"] = relationship(back_populates="fav_list")
     ticker = Column(ENUM(Currency, create_type=False), nullable=False)
     amount = Column(Numeric, CheckConstraint("amount > 0"), nullable=False)
+
+    def to_fav_data(self, agent_address: str, avatar_address: str) -> dict[str, Any]:
+        if self.ticker in [Currency.NCG, Currency.CRYSTAL, Currency.GARAGE]:
+            balance_address = agent_address
+        else:
+            balance_address = avatar_address
+        return {
+            "balanceAddr": balance_address,
+            "value": {
+                "currencyTicker": self.ticker.value,
+                "value": self.amount
+            }
+        }
 
 
 # TODO: Create Item Table

@@ -270,13 +270,15 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             "avatar_addr": receipt_data.avatarAddress,
             "product_id": product.id,
             "uuid": str(receipt.uuid),
+            "planet_id": receipt_data.planetId.decode('utf-8'),
         }
 
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
-    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     return receipt
 
