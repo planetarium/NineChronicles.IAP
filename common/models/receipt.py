@@ -29,3 +29,4 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")
     tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True, doc="Transaction status")
     planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value, doc="An identifier of planets")
+    msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")
