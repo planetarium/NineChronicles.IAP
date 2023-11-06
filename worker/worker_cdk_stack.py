@@ -96,6 +96,7 @@ class WorkerStack(Stack):
 
         worker = _lambda.Function(
             self, f"{config.stage}-9c-iap-worker-function",
+            function_name=f"{config.stage}-9c-iap-worker",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c Action making worker of NineChronicles.IAP",
             code=_lambda.AssetCode("worker/worker/", exclude=exclude_list),
@@ -115,6 +116,7 @@ class WorkerStack(Stack):
         # Tracker Lambda Function
         tracker = _lambda.Function(
             self, f"{config.stage}-9c-iap-tracker-function",
+            function_name=f"{config.stage}-9c-iap-tx-tracker",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c transaction status tracker of NineChronicles.IAP",
             code=_lambda.AssetCode("worker/worker/", exclude=exclude_list),
@@ -136,6 +138,7 @@ class WorkerStack(Stack):
         # Price updater Lambda function
         updater = _lambda.Function(
             self, f"{config.stage}-9c-iap-price-updater-function",
+            function_name=f"{config.stage}-9c-iap-price-updater",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c IAP price updater from google/apple store",
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
@@ -162,6 +165,7 @@ class WorkerStack(Stack):
         env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
         garage_report = _lambda.Function(
             self, f"{config.stage}-9c-iap-garage-report",
+            function_name=f"{config.stage}_9c-iap-garage-reporter",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="Daily report of 9c IAP Garage item count",
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
