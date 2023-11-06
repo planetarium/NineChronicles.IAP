@@ -1,13 +1,16 @@
 import datetime
 
+import jwt
 from sqlalchemy import func, Date, cast
 
 from common import logger
 from common.enums import ReceiptStatus
 from common.models.receipt import Receipt
+from iap import settings
 
 
-def get_purchase_count(sess, agent_addr: str, product_id: int, hour_limit: int = 0) -> int:
+def get_purchase_count(sess, product_id: int, *, agent_addr: str = None, avatar_addr: str = None,
+                       hour_limit: int = 0) -> int:
     """
     Scan purchase history and get purchase count in given time limit.
 
@@ -17,22 +20,34 @@ def get_purchase_count(sess, agent_addr: str, product_id: int, hour_limit: int =
     :param hour_limit: purchase history limit in hours. 24 for daily limit, 168(24*7) for weekly limit
     :return:
     """
-    purchase_count = (
-        sess.query(func.count(Receipt.id)).filter_by(product_id=product_id, agent_addr=agent_addr)
-        .filter(Receipt.status.in_(
+    stmt = sess.query(func.count(Receipt.id).filter_by(product_id=product_id)).filter(
+        Receipt.status.in_(
             (ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID)
-        ))
+        )
     )
+    if agent_addr:
+        stmt = stmt.filter(Receipt.agent_addr == agent_addr)
+    if avatar_addr:
+        stmt = stmt.filter(Receipt.avatar_addr == avatar_addr)
 
     start = None
     if hour_limit:
         # NOTE: Subtract 24 hours from incoming hour_limit.
         #  Because last 24 hours means today. Using `datetime.date()` function, timedelta -24 hours makes yesterday.
         start = (datetime.datetime.utcnow() - datetime.timedelta(hours=hour_limit - 24)).date()
-        purchase_count = purchase_count.filter(cast(Receipt.purchased_at, Date) >= start)
+        stmt = stmt.filter(cast(Receipt.purchased_at, Date) >= start)
 
-    purchase_count = purchase_count.scalar()
+    purchase_count = stmt.scalar()
     logger.debug(
         f"Agent {agent_addr} purchased product {product_id} {purchase_count} times in {hour_limit} hours from {start or 'Anytime'}"
     )
     return purchase_count
+
+
+def create_season_pass_jwt() -> str:
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    return jwt.encode({
+        "iat": now,
+        "exp": now + datetime.timedelta(minutes=10),
+        "aud": "SeasonPass",
+    }, settings.SEASON_PASS_JWT_SECRET, algorithm="HS256")
