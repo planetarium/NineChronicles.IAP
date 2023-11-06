@@ -42,3 +42,12 @@ def get_purchase_count(sess, product_id: int, *, agent_addr: str = None, avatar_
         f"Agent {agent_addr} purchased product {product_id} {purchase_count} times in {hour_limit} hours from {start or 'Anytime'}"
     )
     return purchase_count
+
+
+def create_season_pass_jwt() -> str:
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    return jwt.encode({
+        "iat": now,
+        "exp": now + datetime.timedelta(minutes=10),
+        "aud": "SeasonPass",
+    }, settings.SEASON_PASS_JWT_SECRET, algorithm="HS256")
