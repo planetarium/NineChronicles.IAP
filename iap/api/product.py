@@ -19,7 +19,7 @@ router = APIRouter(
 
 @router.get("", response_model=List[CategorySchema])
 def product_list(agent_addr: str, sess=Depends(session)):
-    agent_addr = format_addr(agent_addr)
+    agent_addr = format_addr(agent_addr).lower()
     # FIXME: Optimize query
     all_category_list = (
         sess.query(Category).options(joinedload(Category.product_list))

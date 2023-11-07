@@ -143,8 +143,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     receipt = Receipt(
         store=receipt_data.store,
         data=receipt_data.data,
-        agent_addr=receipt_data.agentAddress,
-        avatar_addr=receipt_data.avatarAddress,
+        agent_addr=receipt_data.agentAddress.lower(),
+        avatar_addr=receipt_data.avatarAddress.lower(),
         order_id=order_id,
         purchased_at=purchased_at,
         product_id=product.id if product is not None else None,
@@ -198,6 +198,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError(
                             f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
+        receipt.product_id = product.id
     ## Test
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
@@ -217,7 +218,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     if "SeasonPass" in product.name:
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
         if (product.account_limit and
-                get_purchase_count(sess, product.id, avatar_addr=receipt.avatar_addr) > product.account_limit):
+                get_purchase_count(sess, product.id, avatar_addr=receipt.avatar_addr.lower()) > product.account_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
@@ -228,8 +229,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         )
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
-                                 "agent_addr": receipt.agent_addr,
-                                 "avatar_addr": receipt.avatar_addr,
+                                 "agent_addr": receipt.agent_addr.lower(),
+                                 "avatar_addr": receipt.avatar_addr.lower(),
                                  "season_id": int(season),
                                  "is_premium": suffix.lower() in ("", "all"),
                                  "is_premium_plus": suffix.lower in ("plus", "all"),
@@ -251,23 +252,23 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             logging.error(f"SeasonPass Upgrade Failed: {resp.text}")
     else:
         if (product.daily_limit and
-                get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr,
+                get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower(),
                                    hour_limit=24) > product.daily_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
         elif (product.weekly_limit and
-              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr,
+              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower(),
                                  hour_limit=24 * 7) > product.weekly_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
         elif (product.account_limit and
-              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr) > product.account_limit):
+              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower()) > product.account_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
         msg = {
-            "agent_addr": receipt_data.agentAddress,
-            "avatar_addr": receipt_data.avatarAddress,
+            "agent_addr": receipt_data.agentAddress.lower(),
+            "avatar_addr": receipt_data.avatarAddress.lower(),
             "product_id": product.id,
             "uuid": str(receipt.uuid),
             "planet_id": receipt_data.planetId.decode('utf-8'),
