@@ -13,7 +13,7 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.address import derive_vault_address, get_vault_agent_address, get_vault_avatar_address
+from common.utils.address import get_vault_agent_address, get_vault_avatar_address
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 
