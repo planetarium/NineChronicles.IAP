@@ -198,6 +198,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError(
                             f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
+        receipt.product_id = product.id
     ## Test
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
