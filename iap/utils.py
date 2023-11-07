@@ -20,11 +20,12 @@ def get_purchase_count(sess, product_id: int, *, agent_addr: str = None, avatar_
     :param hour_limit: purchase history limit in hours. 24 for daily limit, 168(24*7) for weekly limit
     :return:
     """
-    stmt = sess.query(func.count(Receipt.id).filter_by(product_id=product_id)).filter(
+    stmt = sess.query(func.count(Receipt.id).filter(
+        Receipt.product_id == product_id,
         Receipt.status.in_(
             (ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID)
         )
-    )
+    ))
     if agent_addr:
         stmt = stmt.filter(Receipt.agent_addr == agent_addr)
     if avatar_addr:
