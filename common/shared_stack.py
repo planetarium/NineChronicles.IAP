@@ -85,6 +85,7 @@ class SharedStack(Stack):
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
             ("APPLE_CREDENTIAL", True),
+            ("SEASON_PASS_JWT_SECRET", True)
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),

@@ -49,6 +49,8 @@ class APIStack(Stack):
                     shared_stack.google_credential_arn,
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
+                    shared_stack.season_pass_jwt_secret_arn,
+                    f"arn:aws:ssm:{config.region_name}:{config.account_id}:parameter/{config.stage}_9c_SEASON_PASS_HOST"
                 ]
             )
         )

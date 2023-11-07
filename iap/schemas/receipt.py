@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel as BaseSchema
@@ -11,6 +11,7 @@ from common.enums import (
     GooglePurchaseState, GoogleConsumptionState, GooglePurchaseType, GoogleAckState,
 )
 from common.utils.address import format_addr
+from common.utils.receipt import PlanetID
 from iap.schemas.product import SimpleProductSchema
 
 
@@ -63,6 +64,7 @@ class ReceiptSchema:
     data: Union[str, Dict, object]
     agentAddress: str
     avatarAddress: str
+    planetId: Union[str, PlanetID] = PlanetID.ODIN
 
     # Google
     payload: Optional[Dict] = None
@@ -88,12 +90,15 @@ class ReceiptSchema:
         self.agentAddress = format_addr(self.agentAddress)
         self.avatarAddress = format_addr(self.avatarAddress)
 
+        if isinstance(self.planetId, str):
+            self.planetId = PlanetID(bytes(self.planetId, 'utf-8'))
+
 
 class FullReceiptSchema(BaseSchema):
     store: Store
     uuid: UUID
     order_id: str
-    product: SimpleProductSchema
+    product: Optional[SimpleProductSchema] = None
     agent_addr: str
     avatar_addr: str
     status: ReceiptStatus
@@ -101,6 +106,7 @@ class FullReceiptSchema(BaseSchema):
     tx_status: Optional[TxStatus] = None
     purchased_at: datetime
     updated_at: datetime
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
@@ -113,6 +119,7 @@ class ReceiptDetailSchema(BaseSchema):
     status: ReceiptStatus
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
@@ -128,6 +135,7 @@ class RefundedReceiptSchema(BaseSchema):
     agent_addr: Optional[str] = None
     purchased_at: datetime
     updated_at: datetime
+    planet_id: PlanetID
 
     class Config:
         from_attributes = True
