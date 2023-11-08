@@ -1,18 +1,19 @@
 <script>
   import {
     Button,
-    Heading, ListPlaceholder,
+    Heading,
+    ListPlaceholder,
     Table,
     TableBody,
     TableBodyCell,
     TableBodyRow,
     TableHead,
-    TableHeadCell,
-  } from 'flowbite-svelte';
-  import {RECEIPT_STATUS_MAP, STAGE, STORE_MAP, TxStatus} from "../../const.js";
-  import {DateTime} from "luxon";
+    TableHeadCell
+  } from "flowbite-svelte";
+  import { RECEIPT_STATUS_MAP, STORE_MAP, TxStatus } from "../../const.js";
+  import { DateTime } from "luxon";
   import Navigation from "../../components/Navigation.svelte";
-  import {stageUrl} from "../../util.js";
+  import { stageUrl } from "../../util.js";
 
   let receiptList = [];
 
@@ -20,15 +21,15 @@
     const resp = await fetch(stageUrl("/api/admin/receipt"));
     receiptList = await resp.json();
     return receiptList;
-  }
+  };
 
   const copyTxId = (txId) => {
     navigator.clipboard.writeText(txId).then(() => {
-      console.log("copied")
+      console.log("copied");
     });
   };
 </script>
-<Navigation current="receipt"/>
+<Navigation current="receipt" />
 
 <Table>
   <TableHead>
@@ -46,22 +47,28 @@
     {#await fetchReceiptList()}
       <TableBodyRow>
         <TableBodyCell colspan="9">
-          <ListPlaceholder divClass="p-4 space-y-4 rounded border border-gray-200 divide-y divide-gray-200 shadow animate-pulse dark:divide-gray-700 md:p-6 dark:border-gray-700"/>
+          <ListPlaceholder
+            divClass="p-4 space-y-4 rounded border border-gray-200 divide-y divide-gray-200 shadow animate-pulse dark:divide-gray-700 md:p-6 dark:border-gray-700" />
         </TableBodyCell>
       </TableBodyRow>
     {:then receiptList}
       {#if receiptList.length === 0}
         <TableBodyRow>
-          <TableBodyCell colspan=9 class="text-center">
+          <TableBodyCell colspan="9" class="text-center">
             <Heading tag="h3">There is no receipt yet.</Heading>
           </TableBodyCell>
         </TableBodyRow>
       {:else}
         {#each receiptList as receipt, i}
-          <TableBodyRow>
+          <TableBodyRow color={
+          !receipt.product ? "yellow"
+          : receipt.status !== 10 ? "red"
+            : receipt.tx_status > 10 ? "green"
+              : ""
+          }>
             <TableBodyCell>{i + 1}</TableBodyCell>
             <TableBodyCell>{STORE_MAP[receipt.store]}</TableBodyCell>
-            <TableBodyCell>{receipt.product.name}</TableBodyCell>
+            <TableBodyCell>{receipt.product?.name || "!! No Product Found !!"}</TableBodyCell>
             <TableBodyCell>{receipt.agent_addr}</TableBodyCell>
             <TableBodyCell>{receipt.avatar_addr}</TableBodyCell>
             <TableBodyCell>{RECEIPT_STATUS_MAP[receipt.status].Name}</TableBodyCell>

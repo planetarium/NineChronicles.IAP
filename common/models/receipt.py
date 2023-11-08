@@ -1,12 +1,13 @@
 import uuid
 
-from sqlalchemy import Column, Text, UUID, DateTime, Integer, ForeignKey
+from sqlalchemy import Column, Text, UUID, DateTime, Integer, ForeignKey, LargeBinary
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.orm import relationship, backref
 
 from common.enums import ReceiptStatus, Store, TxStatus
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
 from common.models.product import Product
+from common.utils.receipt import PlanetID
 
 
 class Receipt(AutoIdMixin, TimeStampMixin, Base):
@@ -27,3 +28,5 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     avatar_addr = Column(Text, doc="9c avatar's address where to get items")
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")
     tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True, doc="Transaction status")
+    planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value, doc="An identifier of planets")
+    msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")

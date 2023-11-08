@@ -13,7 +13,9 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.address import derive_vault_address, get_vault_agent_address, get_vault_avatar_address
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
+from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -61,13 +63,14 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         .where(Product.id == message.body.get("product_id"))
     )
 
-    fav_data = [{
-        "balanceAddr": message.body.get("agent_addr"),
-        "value": {
-            "currencyTicker": x.ticker.value,
-            "value": x.amount,
-        }
-    } for x in product.fav_list]
+    planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
+    agent_address = message.body.get("agent_addr")
+    avatar_address = message.body.get("avatar_addr")
+    # relay
+    if planet_id != PlanetID.ODIN:
+        agent_address = get_vault_agent_address(planet_id)
+        avatar_address = get_vault_avatar_address(planet_id)
+    fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{
         "fungibleId": x.fungible_item_id,
@@ -76,7 +79,8 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
 
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
-        fav_data=fav_data, avatar_addr=message.body.get("avatar_addr"), item_data=item_data,
+        fav_data=fav_data, avatar_addr=avatar_address, item_data=item_data,
+        memo=json.dumps([agent_address, avatar_address])
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)

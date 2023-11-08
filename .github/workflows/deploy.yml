@@ -39,6 +39,24 @@ on:
         required: true
       GOLDEN_DUST_WORK_SHEET_ID:
         required: true
+      SEASON_PASS_JWT_SECRET:
+        required: true
+      ODIN_AGENT_ADDRESS:
+        required: true
+      ODIN_AVATAR_ADDRESS:
+        required: true
+      HEIMDALL_AGENT_ADDRESS:
+        required: true
+      HEIMDALL_AVATAR_ADDRESS:
+        required: true
+      ODIN_INTERNAL_AGENT_ADDRESS:
+        required: true
+      ODIN_INTERNAL_AVATAR_ADDRESS:
+        required: true
+      HEIMDALL_INTERNAL_AGENT_ADDRESS:
+        required: true
+      HEIMDALL_INTERNAL_AVATAR_ADDRESS:
+        required: true
 
 jobs:
   deployment:
@@ -131,6 +149,15 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+          ODIN_AGENT_ADDRESS: ${{ secrets.ODIN_AGENT_ADDRESS }}
+          ODIN_AVATAR_ADDRESS: ${{ secrets.ODIN_AVATAR_ADDRESS }}
+          HEIMDALL_AGENT_ADDRESS: ${{ secrets.HEIMDALL_AGENT_ADDRESS }}
+          HEIMDALL_AVATAR_ADDRESS: ${{ secrets.HEIMDALL_AVATAR_ADDRESS }}
+          ODIN_INTERNAL_AGENT_ADDRESS: ${{ secrets.ODIN_INTERNAL_AGENT_ADDRESS }}
+          ODIN_INTERNAL_AVATAR_ADDRESS: ${{ secrets.ODIN_INTERNAL_AVATAR_ADDRESS }}
+          HEIMDALL_INTERNAL_AGENT_ADDRESS: ${{ secrets.HEIMDALL_INTERNAL_AGENT_ADDRESS }}
+          HEIMDALL_INTERNAL_AVATAR_ADDRESS: ${{ secrets.HEIMDALL_INTERNAL_AVATAR_ADDRESS }}
         run: |
           source $VENV
           yarn cdk synth
@@ -157,6 +184,15 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+          ODIN_AGENT_ADDRESS: ${{ secrets.ODIN_AGENT_ADDRESS }}
+          ODIN_AVATAR_ADDRESS: ${{ secrets.ODIN_AVATAR_ADDRESS }}
+          HEIMDALL_AGENT_ADDRESS: ${{ secrets.HEIMDALL_AGENT_ADDRESS }}
+          HEIMDALL_AVATAR_ADDRESS: ${{ secrets.HEIMDALL_AVATAR_ADDRESS }}
+          ODIN_INTERNAL_AGENT_ADDRESS: ${{ secrets.ODIN_INTERNAL_AGENT_ADDRESS }}
+          ODIN_INTERNAL_AVATAR_ADDRESS: ${{ secrets.ODIN_INTERNAL_AVATAR_ADDRESS }}
+          HEIMDALL_INTERNAL_AGENT_ADDRESS: ${{ secrets.HEIMDALL_INTERNAL_AGENT_ADDRESS }}
+          HEIMDALL_INTERNAL_AVATAR_ADDRESS: ${{ secrets.HEIMDALL_INTERNAL_AVATAR_ADDRESS }}
         run: |
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt

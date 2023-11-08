@@ -53,7 +53,7 @@ TX_QUERY = """{{
     }}
     transactionResult(txId: "{tx_hash}") {{
       txStatus
-      exceptionName
+      exceptionNames
     }}
   }}
 }}"""
@@ -195,8 +195,8 @@ def handle_tx_detail(data: Optional[dict], result: TxData) -> TxData:
 
 def handle_tx_result(data: dict, result: TxData) -> TxData:
     result.tx_status = TxStatus[data["txStatus"]]
-    if data.get("exceptionName") is not None:
-        result.comment.append(data["exceptionName"])
+    if data.get("exceptionNames") is not None:
+        result.comment.extend(data["exceptionNames"])
 
     return result
 
@@ -364,7 +364,7 @@ def track_tx(event, context):
                         client.ds.TxResultType.txStatus,
                         client.ds.TxResultType.blockIndex,
                         client.ds.TxResultType.blockHash,
-                        client.ds.TxResultType.exceptionName,
+                        client.ds.TxResultType.exceptionNames,
                     )
                 )
             )
@@ -379,8 +379,8 @@ def track_tx(event, context):
         data = resp["transaction"]["transactionResult"]
         tx[1] = TxStatus[data["txStatus"]].value
         tx[2] = data["blockIndex"]
-        if data.get("exceptionName"):
-            tx[-1] = data["exceptionName"]
+        if data.get("exceptionNames"):
+            tx[-1] = json.dumps(data["exceptionNames"])
         sheet.set_values(f"{WORK_SHEET}!{TX_HASH_COL}{i + 2}:{COMMENT_COL}", [tx])
         print(f"{i + 1} / {len(tx_data)} updated.")
 

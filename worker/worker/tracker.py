@@ -31,7 +31,7 @@ def process(tx_id: str) -> Tuple[str, Optional[TxStatus]]:
                     client.ds.TxResultType.txStatus,
                     client.ds.TxResultType.blockIndex,
                     client.ds.TxResultType.blockHash,
-                    client.ds.TxResultType.exceptionName,
+                    client.ds.TxResultType.exceptionNames,
                 )
             )
         )
