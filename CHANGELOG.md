@@ -6,6 +6,7 @@
 
 - Change GQL scheme from `exceptionName` to `exceptionNames` to apply GQL scheme update
 
+
 ## 0.5.1 (2023-10-23)
 
 ### Bugfix
