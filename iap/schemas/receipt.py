@@ -64,7 +64,7 @@ class ReceiptSchema:
     data: Union[str, Dict, object]
     agentAddress: str
     avatarAddress: str
-    planetId: Union[str, PlanetID] = PlanetID.ODIN
+    planetId: Union[str, PlanetID] = None
 
     # Google
     payload: Optional[Dict] = None
