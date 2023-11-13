@@ -222,7 +222,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     if "SeasonPass" in product.name:
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
         if (product.account_limit and
-                get_purchase_count(sess, product.id, avatar_addr=receipt.avatar_addr.lower()) > product.account_limit):
+                get_purchase_count(sess, product.id, planet_id=receipt_data.planetId,
+                                   avatar_addr=receipt.avatar_addr.lower()) > product.account_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
@@ -256,17 +257,18 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             logging.error(f"SeasonPass Upgrade Failed: {resp.text}")
     else:
         if (product.daily_limit and
-                get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower(),
-                                   hour_limit=24) > product.daily_limit):
+                get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                   agent_addr=receipt.agent_addr.lower(), hour_limit=24) > product.daily_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
         elif (product.weekly_limit and
-              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower(),
-                                 hour_limit=24 * 7) > product.weekly_limit):
+              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                 agent_addr=receipt.agent_addr.lower(), hour_limit=24 * 7) > product.weekly_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
         elif (product.account_limit and
-              get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr.lower()) > product.account_limit):
+              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                 agent_addr=receipt.agent_addr.lower()) > product.account_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 

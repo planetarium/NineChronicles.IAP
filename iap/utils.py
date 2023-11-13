@@ -7,9 +7,10 @@ from common import logger
 from common.enums import ReceiptStatus
 from common.models.receipt import Receipt
 from iap import settings
+from common.utils.receipt import PlanetID
 
 
-def get_purchase_count(sess, product_id: int, *, planet_id: str, agent_addr: str = None, avatar_addr: str = None,
+def get_purchase_count(sess, product_id: int, *, planet_id: PlanetID, agent_addr: str = None, avatar_addr: str = None,
                        hour_limit: int = 0) -> int:
     """
     Scan purchase history and get purchase count in given time limit.
