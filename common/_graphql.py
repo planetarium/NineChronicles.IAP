@@ -1,7 +1,5 @@
 import datetime
 import logging
-import os
-import random
 from typing import Union, Dict, Any, Tuple, Optional
 
 from gql import Client
@@ -9,13 +7,19 @@ from gql.dsl import DSLSchema, dsl_gql, DSLQuery, DSLMutation
 from gql.transport.requests import RequestsHTTPTransport
 from graphql import DocumentNode, ExecutionResult
 
-from common.consts import HOST_LIST, CURRENCY_LIST
+from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self):
-        stage = os.environ.get("STAGE", "development")
-        self._url = f"{random.choice(HOST_LIST[stage])}/graphql"
+    def __init__(self, url: Optional[str] = None):
+        self._url = url
+        self.client = None
+        self.ds = None
+
+        if self._url:
+            self.set_url()
+
+    def set_url(self):
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
@@ -27,7 +31,6 @@ class GQL:
             return sess.execute(query)
 
     def get_next_nonce(self, address: str) -> int:
-
         """
         Get next Tx Nonce to create Transaction.
         -1 will be returned in case of any error.

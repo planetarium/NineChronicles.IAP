@@ -1,27 +1,37 @@
-import logging
+import json
 import os
 from collections import defaultdict
 from typing import Optional, Tuple
 
+import requests
 from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
+from common import logger
 from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets
 from common.utils.garage import update_iap_garage
+from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 
+resp = requests.get(os.environ.get("PLANET_URL"))
+data = resp.json()
+planet_dict = {
+    PlanetID(bytes(x["id"], "utf-8")): x["rpcEndpoints"]["headless.gql"][0]
+    for x in data
+}
+
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
-def process(tx_id: str) -> Tuple[str, Optional[TxStatus]]:
-    client = GQL()
+def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
+    client = GQL(planet_dict[planet_id])
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(
@@ -55,7 +65,7 @@ def track_tx(event, context):
     receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.STAGED)).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
-        tx_id, tx_status = process(receipt.tx_id)
+        tx_id, tx_status, msg = process(PlanetID(receipt.planet_id), receipt.tx_id)
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
         sess.add(receipt)

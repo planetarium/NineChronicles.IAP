@@ -1,11 +1,20 @@
 import os
 
+import requests
+
 from _crypto import Account
 from _graphql import GQL
 from common.utils.aws import fetch_kms_key_id
+from common.utils.receipt import PlanetID
 
 stage = os.environ.get("STAGE", "development")
 region_name = os.environ.get("REGION_NAME", "us-east-2")
+resp = requests.get(os.environ.get("PLANET_URL"))
+data = resp.json()
+host_dict = {
+    PlanetID(bytes(x["id"], "utf-8")): x["rpcEndpoints"]["headless.gql"][0]
+    for x in data
+}
 
 
 def handle(event, context):
