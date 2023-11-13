@@ -77,10 +77,12 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
+    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
     # Through bridge
     if planet_id != current_planet:
         agent_address = planet_dict[planet_id]["agent"]
         avatar_address = planet_dict[planet_id]["avatar"]
+        memo = json.dumps([agent_address, avatar_address])
     fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{
@@ -91,7 +93,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
         fav_data=fav_data, avatar_addr=avatar_address, item_data=item_data,
-        memo=json.dumps([agent_address, avatar_address])
+        memo=memo,
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)
