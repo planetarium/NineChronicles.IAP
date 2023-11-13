@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 
@@ -13,7 +14,6 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.address import get_vault_agent_address, get_vault_avatar_address
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 
@@ -22,6 +22,17 @@ db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRE
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
+
+resp = requests.get(os.environ.get("PLANET_URL"))
+data = resp.json()
+current_planet = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
+planet_dict = {}
+for planet in data:
+    if PlanetID(bytes(planet["id"], "utf-8")) == current_planet:
+        planet_dict = {
+            PlanetID(bytes(k, "utf-8")): {"agent": v["agent"], "avatar": v["avatar"]}
+            for k, v in planet["bridges"].items()
+        }
 
 
 @dataclass
@@ -66,10 +77,10 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
-    # relay
-    if planet_id != PlanetID.ODIN:
-        agent_address = get_vault_agent_address(planet_id)
-        avatar_address = get_vault_avatar_address(planet_id)
+    # Through bridge
+    if planet_id != current_planet:
+        agent_address = planet_dict[planet_id]["agent"]
+        avatar_address = planet_dict[planet_id]["avatar"]
     fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{

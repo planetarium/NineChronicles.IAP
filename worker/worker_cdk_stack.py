@@ -87,6 +87,7 @@ class WorkerStack(Stack):
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "HEADLESS": config.headless,
+            "PLANET_URL": config.planet_url,
         }
 
         # Worker Lambda Function
