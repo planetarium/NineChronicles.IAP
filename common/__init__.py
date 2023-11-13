@@ -36,6 +36,7 @@ class Config:
     account_id: str
     region_name: str
     cdn_host: str
+    planet_url: str
 
     google_package_name: str
     apple_bundle_id: str

@@ -136,6 +136,7 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           ODIN_AGENT_ADDRESS: ${{ secrets.ODIN_AGENT_ADDRESS }}
           ODIN_AVATAR_ADDRESS: ${{ secrets.ODIN_AVATAR_ADDRESS }}

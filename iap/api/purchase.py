@@ -18,6 +18,7 @@ from common.models.receipt import Receipt
 from common.utils.apple import get_jwt
 from common.utils.aws import fetch_parameter
 from common.utils.google import get_google_client
+from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger
@@ -107,6 +108,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             - `Store` :: str : Store name. Should be `AppleAppStore`.
             - `TransactionID` :: str : Apple IAP transaction ID formed like `2000000432373050`.
     """
+    if not receipt_data.planetId:
+        receipt_data.planetId = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
+
     order_id, product_id, purchased_at = get_order_data(receipt_data)
     prev_receipt = sess.scalar(
         select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)

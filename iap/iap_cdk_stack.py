@@ -98,6 +98,7 @@ class APIStack(Stack):
             "APPLE_ISSUER_ID": config.apple_issuer_id,
             "HEADLESS": config.headless,
             "CDN_HOST": config.cdn_host,
+            "PLANET_URL": config.planet_url,
         }
 
         # Lambda Function
