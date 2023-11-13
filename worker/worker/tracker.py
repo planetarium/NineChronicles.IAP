@@ -63,7 +63,9 @@ def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], O
 def track_tx(event, context):
     logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
-    receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.STAGED)).fetchall()
+    receipt_list = sess.scalars(
+        select(Receipt).where(Receipt.tx_status.in_(TxStatus.STAGED, TxStatus.INVALID))
+    ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
         tx_id, tx_status, msg = process(PlanetID(receipt.planet_id), receipt.tx_id)
