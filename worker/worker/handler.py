@@ -48,7 +48,7 @@ class SQSMessageRecord:
     awsRegion: str
 
     def __post_init__(self):
-        self.body = json.loads(self.body) if type(self.body) == str else self.body
+        self.body = json.loads(self.body) if isinstance(self.body, str) else self.body
 
 
 @dataclass

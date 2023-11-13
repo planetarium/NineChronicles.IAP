@@ -74,7 +74,7 @@ class ReceiptSchema:
 
     def __post_init__(self):
         # Parse purchase data to JSON
-        if type(self.data) == str:
+        if isinstance(self.data, str):
             self.data = json.loads(self.data)
 
         if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
