@@ -51,12 +51,13 @@ def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], O
 
     if "errors" in resp:
         logger.error(f"GQL failed to get transaction status: {resp['errors']}")
-        return tx_id, None
+        return tx_id, None, json.dumps(resp["errors"])
 
     try:
-        return tx_id, TxStatus[resp["transaction"]["transactionResult"]["txStatus"]]
+        return tx_id, TxStatus[resp["transaction"]["transactionResult"]["txStatus"]], json.dumps(
+            TxStatus[resp["transaction"]["transactionResult"]["exceptionNames"]])
     except:
-        return tx_id, None
+        return tx_id, None, json.dumps(TxStatus[resp["transaction"]["transactionResult"]["exceptionNames"]])
 
 
 def track_tx(event, context):
@@ -68,6 +69,8 @@ def track_tx(event, context):
         tx_id, tx_status, msg = process(PlanetID(receipt.planet_id), receipt.tx_id)
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
+        if msg:
+            receipt.msg = "\n".join([receipt.msg, msg])
         sess.add(receipt)
     update_iap_garage(sess)
     sess.commit()
