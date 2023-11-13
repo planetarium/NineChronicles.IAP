@@ -145,13 +145,3 @@ class APIStack(Stack):
             deploy_options=_apig.StageOptions(stage_name=config.stage),
             domain_name=custom_domain,
         )
-
-        # Route53
-        # if config.stage != "development":
-        #     from aws_cdk import (aws_route53 as _r53, aws_route53_targets as _targets)
-        #
-        #     hosted_zone = _r53.PublicHostedZone.from_lookup(self, "9c-hosted-zone", domain_name="9c.gg")
-        #     record = _r53.ARecord(
-        #         self, f"{config.stage}-9c-iap-record", zone=hosted_zone,
-        #         target=_r53.RecordTarget.from_alias(_targets.ApiGateway(apig))
-        #     )

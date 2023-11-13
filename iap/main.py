@@ -22,9 +22,9 @@ app = FastAPI(
     title="Nine Chronicles In-app Purchase Validation Service",
     description="",
     version=__VERSION__,
-    root_path=f"/{stage}" if stage != "local" else "",
     debug=settings.DEBUG,
 )
+
 
 @app.middleware("http")
 def log_incoming_url(request: Request, call_next):
