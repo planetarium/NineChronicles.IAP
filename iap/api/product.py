@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import joinedload
 
-import settings
+from iap import settings
 from common.models.product import Product, Category
 from common.utils.address import format_addr
 from common.utils.garage import get_iap_garage
