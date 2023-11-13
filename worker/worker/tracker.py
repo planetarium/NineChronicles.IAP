@@ -47,10 +47,10 @@ def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], O
         )
     )
     resp = client.execute(query)
-    logging.debug(resp)
+    logger.debug(resp)
 
     if "errors" in resp:
-        logging.error(f"GQL failed to get transaction status: {resp['errors']}")
+        logger.error(f"GQL failed to get transaction status: {resp['errors']}")
         return tx_id, None
 
     try:
@@ -60,7 +60,7 @@ def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], O
 
 
 def track_tx(event, context):
-    logging.info("Tracking unfinished transactions")
+    logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.STAGED)).fetchall()
     result = defaultdict(list)
@@ -72,13 +72,13 @@ def track_tx(event, context):
     update_iap_garage(sess)
     sess.commit()
 
-    logging.info(f"{len(receipt_list)} transactions are found to track status")
+    logger.info(f"{len(receipt_list)} transactions are found to track status")
     for status, tx_list in result.items():
         if status is None:
-            logging.error(f"{len(tx_list)} transactions are not able to track.")
+            logger.error(f"{len(tx_list)} transactions are not able to track.")
             for tx in tx_list:
-                logging.error(tx)
+                logger.error(tx)
         elif status == TxStatus.STAGED:
-            logging.info(f"{len(tx_list)} transactions are still staged.")
+            logger.info(f"{len(tx_list)} transactions are still staged.")
         else:
-            logging.info(f"{len(tx_list)} transactions are changed to {status}")
+            logger.info(f"{len(tx_list)} transactions are changed to {status}")
