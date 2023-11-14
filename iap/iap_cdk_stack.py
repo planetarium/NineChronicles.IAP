@@ -99,6 +99,7 @@ class APIStack(Stack):
             "HEADLESS": config.headless,
             "CDN_HOST": config.cdn_host,
             "PLANET_URL": config.planet_url,
+            "BRIDGE_DATA": config.bridge_data,
         }
 
         # Lambda Function
