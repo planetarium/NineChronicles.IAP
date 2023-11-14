@@ -55,16 +55,16 @@ def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], O
 
     try:
         return tx_id, TxStatus[resp["transaction"]["transactionResult"]["txStatus"]], json.dumps(
-            TxStatus[resp["transaction"]["transactionResult"]["exceptionNames"]])
+            resp["transaction"]["transactionResult"]["exceptionNames"])
     except:
-        return tx_id, None, json.dumps(TxStatus[resp["transaction"]["transactionResult"]["exceptionNames"]])
+        return tx_id, None, json.dumps(resp["transaction"]["transactionResult"]["exceptionNames"])
 
 
 def track_tx(event, context):
     logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(
-        select(Receipt).where(Receipt.tx_status.in_(TxStatus.STAGED, TxStatus.INVALID))
+        select(Receipt).where(Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID)))
     ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
@@ -72,7 +72,7 @@ def track_tx(event, context):
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
         if msg:
-            receipt.msg = "\n".join([receipt.msg, msg])
+            receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
     update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
     sess.commit()
