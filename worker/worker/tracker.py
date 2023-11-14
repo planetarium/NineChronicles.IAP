@@ -74,7 +74,7 @@ def track_tx(event, context):
         if msg:
             receipt.msg = "\n".join([receipt.msg, msg])
         sess.add(receipt)
-    update_iap_garage(sess)
+    update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
     sess.commit()
 
     logger.info(f"{len(receipt_list)} transactions are found to track status")
