@@ -20,19 +20,25 @@ from common.utils.receipt import PlanetID
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
+CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
+GQL_URL = f"{os.environ.get('headless')}/graphql"
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
-resp = requests.get(os.environ.get("PLANET_URL"))
-data = resp.json()
-current_planet = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 planet_dict = {}
-for planet in data:
-    if PlanetID(bytes(planet["id"], "utf-8")) == current_planet:
-        planet_dict = {
-            PlanetID(bytes(k, "utf-8")): {"agent": v["agent"], "avatar": v["avatar"]}
-            for k, v in planet["bridges"].items()
-        }
+try:
+    resp = requests.get(os.environ.get("PLANET_URL"))
+    data = resp.json()
+    GQL_URL = None
+    for planet in data:
+        if PlanetID(bytes(planet["id"], "utf-8")) == CURRENT_PLANET:
+            GQL_URL = planet["rpcEndpoints"]["headless.gql"][0]
+            planet_dict = {
+                PlanetID(bytes(k, "utf-8")): v for k, v in planet["bridges"].items()
+            }
+except:
+    # Fail over
+    planet_dict = json.loads(os.environ.get("BRIDGE_DATA", "{}"))
 
 
 @dataclass
@@ -79,7 +85,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     avatar_address = message.body.get("avatar_addr")
     memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
     # Through bridge
-    if planet_id != current_planet:
+    if planet_id != CURRENT_PLANET:
         agent_address = planet_dict[planet_id]["agent"]
         avatar_address = planet_dict[planet_id]["avatar"]
         memo = json.dumps([agent_address, avatar_address])
