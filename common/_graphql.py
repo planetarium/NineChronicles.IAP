@@ -12,15 +12,10 @@ from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self, url: Optional[str] = None):
+    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql"):
         self._url = url
         self.client = None
         self.ds = None
-
-        if self._url:
-            self.set_url()
-
-    def set_url(self):
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:

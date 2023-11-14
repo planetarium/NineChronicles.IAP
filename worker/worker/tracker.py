@@ -20,6 +20,7 @@ DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
+GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 
 planet_dict = {}
 try:
@@ -27,6 +28,7 @@ try:
     data = resp.json()
     for d in data:
         if PlanetID(bytes(d["id"], "utf-8")) == CURRENT_PLANET:
+            GQL_URL = d["rpcEndpoints"]["headless.gql"][0]
             planet_dict = {
                 PlanetID(bytes(k, "utf-8")): v for k, v in d["bridges"].items()
             }
@@ -36,8 +38,8 @@ except:
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
-def process(planet_id: PlanetID, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
-    client = GQL(planet_dict[planet_id])
+def process(tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
+    client = GQL(GQL_URL)
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(
@@ -74,7 +76,7 @@ def track_tx(event, context):
     ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
-        tx_id, tx_status, msg = process(PlanetID(receipt.planet_id), receipt.tx_id)
+        tx_id, tx_status, msg = process(receipt.tx_id)
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
         if msg:

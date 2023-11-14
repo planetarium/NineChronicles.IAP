@@ -70,7 +70,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL()
+    gql = GQL(GQL_URL)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
