@@ -77,6 +77,7 @@ def consume_google(sku: str, token: str):
 
 
 def raise_error(sess, receipt: Receipt, e: Exception):
+    receipt.msg = "\n".join([receipt.msg or "", str(e)])
     sess.add(receipt)
     sess.commit()
     logger.error(f"[{receipt.uuid}] :: {e}")
@@ -228,11 +229,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         )
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
+                                 "planet_id": receipt.planet_id.decode(),
                                  "agent_addr": receipt.agent_addr,
                                  "avatar_addr": receipt.avatar_addr,
                                  "season_id": int(season),
                                  "is_premium": suffix.lower() in ("", "all"),
-                                 "is_premium_plus": suffix.lower in ("plus", "all"),
+                                 "is_premium_plus": suffix.lower() in ("plus", "all"),
                                  "g_sku": product.google_sku, "a_sku": product.apple_sku,
                                  "reward_list": {
                                      "items": [{"id": x.id, "amount": x.amount}
@@ -247,8 +249,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                              },
                              headers={"Authorization": f"Bearer {create_season_pass_jwt()}"})
         if resp.status_code != 200:
-            receipt.msg = f"{resp.status_code} :: {resp.text}"
             logging.error(f"SeasonPass Upgrade Failed: {resp.text}")
+            raise_error(sess, receipt, Exception(f"{resp.status_code} :: {resp.text}"))
+
     else:
         if (product.daily_limit and
                 get_purchase_count(sess, product.id, agent_addr=receipt.agent_addr,
