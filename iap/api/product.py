@@ -4,11 +4,11 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import joinedload
 
-from iap import settings
 from common.models.product import Product, Category
 from common.utils.address import format_addr
 from common.utils.garage import get_iap_garage
 from common.utils.receipt import PlanetID
+from iap import settings
 from iap.dependencies import session
 from iap.schemas.product import CategorySchema, ProductSchema
 from iap.utils import get_purchase_count
@@ -21,8 +21,13 @@ router = APIRouter(
 
 @router.get("", response_model=List[CategorySchema])
 def product_list(agent_addr: str,
-                 planet_id: str = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL,
+                 planet_id: str = "",
                  sess=Depends(session)):
+    if not planet_id:
+        planet_id = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
+    else:
+        planet_id = PlanetID(bytes(planet_id, "utf-8"))
+
     agent_addr = format_addr(agent_addr).lower()
     # FIXME: Optimize query
     all_category_list = (
@@ -69,17 +74,17 @@ def product_list(agent_addr: str,
             schema = schema_dict[product.id]
             if product.daily_limit:
                 schema.purchase_count = get_purchase_count(
-                    sess, product.id, planet_id=PlanetID(planet_id), agent_addr=agent_addr, hour_limit=24
+                    sess, product.id, planet_id=planet_id, agent_addr=agent_addr, hour_limit=24
                 )
                 schema.buyable = schema.purchase_count < product.daily_limit
             elif product.weekly_limit:
                 schema.purchase_count = get_purchase_count(
-                    sess, product.id, planet_id=PlanetID(planet_id), agent_addr=agent_addr, hour_limit=24 * 7
+                    sess, product.id, planet_id=planet_id, agent_addr=agent_addr, hour_limit=24 * 7
                 )
                 schema.buyable = schema.purchase_count < product.weekly_limit
             elif product.account_limit:
                 schema.purchase_count = get_purchase_count(
-                    sess, product.id, planet_id=PlanetID(planet_id), agent_addr=agent_addr
+                    sess, product.id, planet_id=planet_id, agent_addr=agent_addr
                 )
                 schema.buyable = schema.purchase_count < product.account_limit
         cat_schema.product_list = list(schema_dict.values())
