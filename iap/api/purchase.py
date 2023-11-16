@@ -231,9 +231,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         season_pass_host = fetch_parameter(
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
-        )
+        )["Value"]
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
+                                 "planet_id": receipt_data.planetId.value.decode("utf-8"),
                                  "agent_addr": receipt.agent_addr.lower(),
                                  "avatar_addr": receipt.avatar_addr.lower(),
                                  "season_id": int(season),
@@ -244,11 +245,11 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                                      "items": [{"id": x.id, "amount": x.amount}
                                                for x in product.fungible_item_list
                                                if not x.fungible_item_id.startswith("Item_")],
-                                     "currencies": [{"ticker": x.ticker, "amount": x.amount}
+                                     "currencies": [{"ticker": x.ticker.value, "amount": str(x.amount)}
                                                     for x in product.fav_list],
-                                     "claims": [{"id": x.id, "amount": x.amount}
+                                     "claims": [{"id": str(x.id), "amount": x.amount}
                                                 for x in product.fungible_item_list
-                                                if not x.fungible_item_id.startswith("Item_")]
+                                                if x.fungible_item_id.startswith("Item_")]
                                  }
                              },
                              headers={"Authorization": f"Bearer {create_season_pass_jwt()}"})
