@@ -23,7 +23,7 @@ from iap import settings
 from iap.dependencies import session
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
-from iap.utils import get_purchase_count, create_season_pass_jwt
+from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.common import get_order_data
 
 router = APIRouter(
@@ -273,16 +273,16 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
-        msg = {
-            "agent_addr": receipt_data.agentAddress.lower(),
-            "avatar_addr": receipt_data.avatarAddress.lower(),
-            "product_id": product.id,
-            "uuid": str(receipt.uuid),
-            "planet_id": receipt_data.planetId.decode('utf-8'),
-        }
+    msg = {
+        "agent_addr": receipt_data.agentAddress.lower(),
+        "avatar_addr": receipt_data.avatarAddress.lower(),
+        "product_id": product.id,
+        "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
+    }
 
-        resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
-        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     sess.add(receipt)
     sess.commit()
