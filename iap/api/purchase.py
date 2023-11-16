@@ -23,7 +23,7 @@ from iap import settings
 from iap.dependencies import session
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
-from iap.utils import get_purchase_count, create_season_pass_jwt
+from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.common import get_order_data
 
 router = APIRouter(
@@ -235,9 +235,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         season_pass_host = fetch_parameter(
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
-        )
+        )["Value"]
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
+                                 "planet_id": receipt_data.planetId.value.decode("utf-8"),
                                  "agent_addr": receipt.agent_addr.lower(),
                                  "avatar_addr": receipt.avatar_addr.lower(),
                                  "season_id": int(season),
@@ -248,7 +249,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                                      "items": [{"id": x.sheet_item_id, "amount": x.amount}
                                                for x in product.fungible_item_list
                                                if not x.fungible_item_id.startswith("Item_")],
-                                     "currencies": [{"ticker": x.ticker, "amount": x.amount}
+                                     "currencies": [{"ticker": x.ticker.value, "amount": str(x.amount)}
                                                     for x in product.fav_list],
                                      "claims": [{"id": x.fungible_item_id, "amount": x.amount}
                                                 for x in product.fungible_item_list
@@ -278,16 +279,16 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
-        msg = {
-            "agent_addr": receipt_data.agentAddress.lower(),
-            "avatar_addr": receipt_data.avatarAddress.lower(),
-            "product_id": product.id,
-            "uuid": str(receipt.uuid),
-            "planet_id": receipt_data.planetId.decode('utf-8'),
-        }
+    msg = {
+        "agent_addr": receipt_data.agentAddress.lower(),
+        "avatar_addr": receipt_data.avatarAddress.lower(),
+        "product_id": product.id,
+        "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
+    }
 
-        resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
-        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     sess.add(receipt)
     sess.commit()
