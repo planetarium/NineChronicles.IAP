@@ -227,7 +227,11 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
-        season, suffix = product.name.replace("SeasonPass", "").split("Premium")
+        prefix, body = product.google_sku.split("seasonpass")
+        try:
+            season = int(body[-1])
+        except:
+            season = 0
         season_pass_host = fetch_parameter(
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
@@ -237,24 +241,26 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                                  "agent_addr": receipt.agent_addr.lower(),
                                  "avatar_addr": receipt.avatar_addr.lower(),
                                  "season_id": int(season),
-                                 "is_premium": suffix.lower() in ("", "all"),
-                                 "is_premium_plus": suffix.lower in ("plus", "all"),
+                                 "is_premium": True if (not body[:-1] or "all" in body) else False,
+                                 "is_premium_plus": "plus" in body or "all" in body,
                                  "g_sku": product.google_sku, "a_sku": product.apple_sku,
                                  "reward_list": {
-                                     "items": [{"id": x.id, "amount": x.amount}
+                                     "items": [{"id": x.sheet_item_id, "amount": x.amount}
                                                for x in product.fungible_item_list
                                                if not x.fungible_item_id.startswith("Item_")],
                                      "currencies": [{"ticker": x.ticker, "amount": x.amount}
                                                     for x in product.fav_list],
-                                     "claims": [{"id": x.id, "amount": x.amount}
+                                     "claims": [{"id": x.fungible_item_id, "amount": x.amount}
                                                 for x in product.fungible_item_list
-                                                if not x.fungible_item_id.startswith("Item_")]
+                                                if x.fungible_item_id.startswith("Item_")]
                                  }
                              },
                              headers={"Authorization": f"Bearer {create_season_pass_jwt()}"})
         if resp.status_code != 200:
             receipt.msg = f"{resp.status_code} :: {resp.text}"
-            logging.error(f"SeasonPass Upgrade Failed: {resp.text}")
+            msg = f"SeasonPass Upgrade Failed: {resp.text}"
+            logging.error(msg)
+            raise_error(sess, receipt, Exception(msg))
     else:
         if (product.daily_limit and
                 get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
