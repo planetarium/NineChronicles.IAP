@@ -88,7 +88,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     if planet_id != CURRENT_PLANET:
         agent_address = planet_dict[planet_id]["agent"]
         avatar_address = planet_dict[planet_id]["avatar"]
-        memo = json.dumps([message.body.get("agent_addr"), message.body.get("avatar_addr")])
+        memo = json.dumps([message.body.get("agent_addr"), message.body.get("avatar_addr"), memo])
     fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{
