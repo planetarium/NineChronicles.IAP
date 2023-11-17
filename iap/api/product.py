@@ -63,7 +63,7 @@ def product_list(agent_addr: str,
             product_buyable = True
             # Check fungible item stock in garage
             for item in product.fungible_item_list:
-                if garage[item.fungible_item_id] < item.amount:
+                if garage.get(item.fungible_item_id, 0) < item.amount:
                     schema_dict[product.id].buyable = False
                     product_buyable = False
                     break

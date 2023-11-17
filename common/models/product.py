@@ -4,9 +4,9 @@ from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Integer, Nu
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import relationship, Mapped
 
-from common.enums import Currency, Store, ProductAssetUISize, ProductRarity
+from common.consts import AVATAR_BOUND_TICKER
+from common.enums import Store, ProductAssetUISize, ProductRarity
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
-from consts import AVATAR_BOUND_TICKER
 
 category_product_table = Table(
     "category_product",
@@ -73,7 +73,8 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     # For Assets
     rarity = Column(ENUM(ProductRarity, create_type=False), nullable=False, default=ProductRarity.NORMAL,
                     doc="Rarity of this product. This is for UI bg color.")
-    size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False, doc="UI size ratio of this product in client")
+    size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False,
+                  doc="UI size ratio of this product in client")
     path = Column(Text, nullable=False, doc="Full asset path")
     bg_path = Column(Text, nullable=True, doc="Product bg image in list")
     popup_path_key = Column(Text, nullable=True, doc="Product detail popup path key with L10N")

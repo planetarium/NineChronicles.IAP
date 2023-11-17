@@ -30,7 +30,7 @@ class PriceSchema(BaseSchema):
 
 
 class FungibleAssetValueSchema(BaseSchema):
-    ticker: Currency
+    ticker: str
     amount: float
 
     class Config:
