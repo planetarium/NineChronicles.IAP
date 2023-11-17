@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship, Mapped
 
 from common.enums import Currency, Store, ProductAssetUISize, ProductRarity
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
+from consts import AVATAR_BOUND_TICKER
 
 category_product_table = Table(
     "category_product",
@@ -92,14 +93,14 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     amount = Column(Numeric, CheckConstraint("amount > 0"), nullable=False)
 
     def to_fav_data(self, agent_address: str, avatar_address: str) -> dict[str, Any]:
-        if self.ticker in [Currency.NCG, Currency.CRYSTAL, Currency.GARAGE]:
-            balance_address = agent_address
-        else:
+        if self.ticker in AVATAR_BOUND_TICKER:
             balance_address = avatar_address
+        else:
+            balance_address = agent_address
         return {
             "balanceAddr": balance_address,
             "value": {
-                "currencyTicker": self.ticker.value,
+                "currencyTicker": self.ticker,
                 "value": self.amount
             }
         }

@@ -249,7 +249,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                                      "items": [{"id": x.sheet_item_id, "amount": x.amount}
                                                for x in product.fungible_item_list
                                                if not x.fungible_item_id.startswith("Item_")],
-                                     "currencies": [{"ticker": x.ticker.value, "amount": str(x.amount)}
+                                     "currencies": [{"ticker": x.ticker, "amount": str(x.amount)}
                                                     for x in product.fav_list],
                                      "claims": [{"id": x.fungible_item_id, "amount": x.amount}
                                                 for x in product.fungible_item_list
