@@ -87,7 +87,8 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_asset_product"
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
     product: Mapped["Product"] = relationship(back_populates="fav_list")
-    ticker = Column(ENUM(Currency, create_type=False), nullable=False)
+    ticker = Column(Text, nullable=False)
+    decimal_places = Column(Integer, nullable=False)
     amount = Column(Numeric, CheckConstraint("amount > 0"), nullable=False)
 
     def to_fav_data(self, agent_address: str, avatar_address: str) -> dict[str, Any]:
