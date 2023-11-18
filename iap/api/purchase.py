@@ -236,6 +236,10 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
         )["Value"]
+        claim_list = [{"id": x.fungible_item_id, "amount": x.amount, "decimal_places": 0}
+                      for x in product.fungible_item_list]
+        claim_list.extend([{"id": x.ticker, "amount": x.amount, "decimal_places": x.decimal_places}
+                           for x in product.fav_list])
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
                                  "planet_id": receipt_data.planetId.value.decode("utf-8"),
@@ -245,16 +249,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
                                  "is_premium": True if (not body[:-1] or "all" in body) else False,
                                  "is_premium_plus": "plus" in body or "all" in body,
                                  "g_sku": product.google_sku, "a_sku": product.apple_sku,
-                                 "reward_list": {
-                                     "items": [{"id": x.sheet_item_id, "amount": x.amount}
-                                               for x in product.fungible_item_list
-                                               if not x.fungible_item_id.startswith("Item_")],
-                                     "currencies": [{"ticker": x.ticker.value, "amount": str(x.amount)}
-                                                    for x in product.fav_list],
-                                     "claims": [{"id": x.fungible_item_id, "amount": x.amount}
-                                                for x in product.fungible_item_list
-                                                if x.fungible_item_id.startswith("Item_")]
-                                 }
+                                 # SeasonPass only uses claims
+                                 "reward_list": claim_list,
                              },
                              headers={"Authorization": f"Bearer {create_season_pass_jwt()}"})
         if resp.status_code != 200:
