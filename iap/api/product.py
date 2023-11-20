@@ -46,10 +46,6 @@ def product_list(agent_addr: str,
             continue
 
         for product in category.product_list:
-            if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
-                    (product.close_timestamp and product.close_timestamp <= datetime.now())):
-                continue
-
             for fungible_item in product.fungible_item_list:
                 garage[fungible_item.fungible_item_id] = iap_garage.get(fungible_item.fungible_item_id, 0)
 
@@ -58,6 +54,11 @@ def product_list(agent_addr: str,
         cat_schema = CategorySchema.model_validate(category)
         schema_dict = {}
         for product in category.product_list:
+            # Skip non-active products
+            if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
+                    (product.close_timestamp and product.close_timestamp <= datetime.now())):
+                continue
+
             schema_dict[product.id] = ProductSchema.model_validate(product)
             # FIXME: Pinpoint get product buyability
             product_buyable = True
@@ -67,6 +68,7 @@ def product_list(agent_addr: str,
                     schema_dict[product.id].buyable = False
                     product_buyable = False
                     break
+
             if not product_buyable:
                 continue
 
