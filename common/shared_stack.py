@@ -77,8 +77,6 @@ class SharedStack(Stack):
             database_name="iap",
             credentials=self.credentials,
             instance_type=(
-                _ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO)
-                if config.stage != "mainnet" else
                 _ec2.InstanceType.of(_ec2.InstanceClass.M6G, _ec2.InstanceSize.LARGE)
             ),
             security_groups=[self.rds_security_group],
