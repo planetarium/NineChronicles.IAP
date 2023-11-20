@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
 
@@ -216,6 +217,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
+
+    now = datetime.now()
+    if ((product.open_timestamp and product.open_timestamp > now) or
+            (product.close_timestamp and product.close_timestamp < datetime.now())):
+        receipt.status = ReceiptStatus.TIME_LIMIT
+        raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
     # Check purchase limit
     # FIXME: Can we get season pass product without magic string?
