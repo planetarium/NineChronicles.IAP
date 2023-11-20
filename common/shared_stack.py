@@ -2,8 +2,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict
 
-import boto3
 import aws_cdk as cdk_core
+import boto3
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
@@ -76,7 +76,11 @@ class SharedStack(Stack):
             vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
             credentials=self.credentials,
-            instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
+            instance_type=(
+                _ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO)
+                if config.stage != "mainnet" else
+                _ec2.InstanceType.of(_ec2.InstanceClass.M6G, _ec2.InstanceSize.LARGE)
+            ),
             security_groups=[self.rds_security_group],
         )
 
