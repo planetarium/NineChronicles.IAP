@@ -12,8 +12,8 @@ from common.models.product import FungibleItemProduct
 from common.utils.aws import fetch_kms_key_id
 
 
-def update_iap_garage(sess):
-    client = GQL()
+def update_iap_garage(sess, url: str):
+    client = GQL(url)
     account = Account(fetch_kms_key_id(os.environ.get("STAGE", "development"), os.environ.get("REGION_NAME")))
     fungible_id_list = sess.scalars(select(distinct(FungibleItemProduct.fungible_item_id))).fetchall()
     query = dsl_gql(
