@@ -138,23 +138,23 @@ class WorkerStack(Stack):
         minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
 
         # Price updater Lambda function
-        updater = _lambda.Function(
-            self, f"{config.stage}-9c-iap-price-updater-function",
-            function_name=f"{config.stage}-9c-iap-price-updater",
-            runtime=_lambda.Runtime.PYTHON_3_10,
-            description="9c IAP price updater from google/apple store",
-            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-            handler="updater.update_prices",
-            layers=[layer],
-            role=role,
-            vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(120),
-            environment=env,
-            memory_size=192,
-        )
-
         # NOTE: Price is directly fetched between client and google play.
-        #  To not need to update price in IAP service.
+        #  Not need to update price in IAP service.
+        # updater = _lambda.Function(
+        #     self, f"{config.stage}-9c-iap-price-updater-function",
+        #     function_name=f"{config.stage}-9c-iap-price-updater",
+        #     runtime=_lambda.Runtime.PYTHON_3_10,
+        #     description="9c IAP price updater from google/apple store",
+        #     code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+        #     handler="updater.update_prices",
+        #     layers=[layer],
+        #     role=role,
+        #     vpc=shared_stack.vpc,
+        #     timeout=cdk_core.Duration.seconds(120),
+        #     environment=env,
+        #     memory_size=192,
+        # )
+
         # Every hour
         # hourly_event_rule = _events.Rule(
         #     self, f"{config.stage}-9c-iap-price-updater-event",
