@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 from typing import Union, Dict, Any, Tuple, Optional
@@ -13,9 +12,13 @@ from common.consts import CURRENCY_LIST
 
 class GQL:
     def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql"):
-        self._url = url
+        self._url = None
         self.client = None
         self.ds = None
+        self.reset(url)
+
+    def reset(self, url: str):
+        self._url = url
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
@@ -51,8 +54,7 @@ class GQL:
 
         return resp["transaction"]["nextTxNonce"]
 
-    def _unload_from_garage(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
+    def _unload_from_garage(self, **kwargs) -> bytes:
         fav_data = kwargs.get("fav_data")
         avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
@@ -76,8 +78,7 @@ class GQL:
         result = self.execute(query)
         return bytes.fromhex(result["actionQuery"]["unloadFromMyGarages"])
 
-    def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", datetime.datetime.utcnow().isoformat())
+    def _transfer_asset(self, **kwargs) -> bytes:
         sender = kwargs.get("sender")
         recipient = kwargs.get("recipient")
         currency = kwargs.get("currency")
@@ -122,7 +123,7 @@ class GQL:
         if not fn:
             raise ValueError(f"Action named {action_type} does not exists.")
 
-        plain_value = fn(pubkey, nonce, **kwargs)
+        plain_value = fn(**kwargs)
         if tx:
             return self.create_unsigned_tx(plain_value, pubkey, nonce)
         else:
