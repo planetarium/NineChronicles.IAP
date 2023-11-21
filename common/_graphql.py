@@ -1,7 +1,6 @@
 import datetime
 import logging
 import os
-import random
 from typing import Union, Dict, Any, Tuple, Optional
 
 from gql import Client
@@ -9,13 +8,14 @@ from gql.dsl import DSLSchema, dsl_gql, DSLQuery, DSLMutation
 from gql.transport.requests import RequestsHTTPTransport
 from graphql import DocumentNode, ExecutionResult
 
-from common.consts import HOST_LIST, CURRENCY_LIST
+from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self):
-        stage = os.environ.get("STAGE", "development")
-        self._url = f"{random.choice(HOST_LIST[stage])}/graphql"
+    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql"):
+        self._url = url
+        self.client = None
+        self.ds = None
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
@@ -27,7 +27,6 @@ class GQL:
             return sess.execute(query)
 
     def get_next_nonce(self, address: str) -> int:
-
         """
         Get next Tx Nonce to create Transaction.
         -1 will be returned in case of any error.
@@ -57,6 +56,7 @@ class GQL:
         fav_data = kwargs.get("fav_data")
         avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
+        memo = kwargs.get("memo")
 
         if not fav_data and not item_data:
             raise ValueError("Nothing to unload")
@@ -68,6 +68,7 @@ class GQL:
                         recipientAvatarAddr=avatar_addr,
                         fungibleAssetValues=fav_data,
                         fungibleIdAndCounts=item_data,
+                        memo=memo,
                     )
                 )
             )

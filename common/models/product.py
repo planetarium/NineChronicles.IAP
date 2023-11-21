@@ -1,10 +1,11 @@
-from typing import List
+from typing import List, Any
 
 from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Integer, Numeric, Text, DateTime, Table
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import relationship, Mapped
 
-from common.enums import Currency, Store, ProductAssetUISize, ProductRarity
+from common.consts import AVATAR_BOUND_TICKER
+from common.enums import Store, ProductAssetUISize, ProductRarity
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
 
 category_product_table = Table(
@@ -72,7 +73,8 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     # For Assets
     rarity = Column(ENUM(ProductRarity, create_type=False), nullable=False, default=ProductRarity.NORMAL,
                     doc="Rarity of this product. This is for UI bg color.")
-    size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False, doc="UI size ratio of this product in client")
+    size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False,
+                  doc="UI size ratio of this product in client")
     path = Column(Text, nullable=False, doc="Full asset path")
     bg_path = Column(Text, nullable=True, doc="Product bg image in list")
     popup_path_key = Column(Text, nullable=True, doc="Product detail popup path key with L10N")
@@ -87,8 +89,22 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_asset_product"
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
     product: Mapped["Product"] = relationship(back_populates="fav_list")
-    ticker = Column(ENUM(Currency, create_type=False), nullable=False)
+    ticker = Column(Text, nullable=False)
+    decimal_places = Column(Integer, nullable=False)
     amount = Column(Numeric, CheckConstraint("amount > 0"), nullable=False)
+
+    def to_fav_data(self, agent_address: str, avatar_address: str) -> dict[str, Any]:
+        if self.ticker in AVATAR_BOUND_TICKER:
+            balance_address = avatar_address
+        else:
+            balance_address = agent_address
+        return {
+            "balanceAddr": balance_address,
+            "value": {
+                "currencyTicker": self.ticker,
+                "value": self.amount
+            }
+        }
 
 
 # TODO: Create Item Table

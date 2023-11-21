@@ -34,6 +34,10 @@ on:
         required: true
       GOLDEN_DUST_WORK_SHEET_ID:
         required: true
+      SEASON_PASS_JWT_SECRET:
+        required: true
+      BRIDGE_DATA:
+        required: true
 
 jobs:
   synth:
@@ -118,6 +122,9 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          PLANET_URL: ${{ vars.PLANET_URL }}
+          SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+          BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
         run: |
           source $VENV
           yarn cdk synth

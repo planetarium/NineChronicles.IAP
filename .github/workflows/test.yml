@@ -64,6 +64,10 @@ jobs:
           alembic upgrade head
           popd
 
+      - name: Run test
+        run: |
+          poetry run pytest tests/utils
+
   slack_notification:
     uses: ./.github/workflows/slack_message.yml
     needs: test

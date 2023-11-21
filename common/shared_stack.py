@@ -76,7 +76,11 @@ class SharedStack(Stack):
             vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
             credentials=self.credentials,
-            instance_type=_ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO),
+            instance_type=(
+                _ec2.InstanceType.of(_ec2.InstanceClass.M6G, _ec2.InstanceSize.LARGE)
+                if config.stage == "mainnet" else
+                _ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO)
+            ),
             security_groups=[self.rds_security_group],
         )
 
@@ -85,6 +89,7 @@ class SharedStack(Stack):
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
             ("APPLE_CREDENTIAL", True),
+            ("SEASON_PASS_JWT_SECRET", True)
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),

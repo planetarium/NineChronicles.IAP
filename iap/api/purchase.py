@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
 
@@ -15,12 +17,14 @@ from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.apple import get_jwt
+from common.utils.aws import fetch_parameter
 from common.utils.google import get_google_client
+from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
-from iap.utils import get_purchase_count
+from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.common import get_order_data
 
 router = APIRouter(
@@ -105,6 +109,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             - `Store` :: str : Store name. Should be `AppleAppStore`.
             - `TransactionID` :: str : Apple IAP transaction ID formed like `2000000432373050`.
     """
+    if not receipt_data.planetId:
+        receipt_data.planetId = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
+
     order_id, product_id, purchased_at = get_order_data(receipt_data)
     prev_receipt = sess.scalar(
         select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)
@@ -141,8 +148,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     receipt = Receipt(
         store=receipt_data.store,
         data=receipt_data.data,
-        agent_addr=receipt_data.agentAddress,
-        avatar_addr=receipt_data.avatarAddress,
+        agent_addr=receipt_data.agentAddress.lower(),
+        avatar_addr=receipt_data.avatarAddress.lower(),
         order_id=order_id,
         purchased_at=purchased_at,
         product_id=product.id if product is not None else None,
@@ -194,7 +201,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         if not product:
             receipt.status = ReceiptStatus.INVALID
             raise_error(sess, receipt,
-                        ValueError(f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
+                        ValueError(
+                            f"{purchase.productId} is not valid product ID for {receipt_data.store.name} store."))
+        receipt.product_id = product.id
     ## Test
     elif receipt_data.store == Store.TEST:
         success, msg = True, "This is test"
@@ -209,32 +218,85 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
     receipt.status = ReceiptStatus.VALID
 
+    now = datetime.now()
+    if ((product.open_timestamp and product.open_timestamp > now) or
+            (product.close_timestamp and product.close_timestamp < datetime.now())):
+        receipt.status = ReceiptStatus.TIME_LIMIT
+        raise_error(sess, receipt, ValueError(f"Not in product opening time"))
+
     # Check purchase limit
-    if (product.daily_limit and
-            get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24) > product.daily_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
-    elif (product.weekly_limit and
-          get_purchase_count(sess, receipt.agent_addr, product.id, hour_limit=24 * 7) > product.weekly_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
-    elif (product.account_limit and
-          get_purchase_count(sess, receipt.agent_addr, product.id) > product.account_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+    # FIXME: Can we get season pass product without magic string?
+    if "SeasonPass" in product.name:
+        # NOTE: Check purchase limit using avatar_addr, not agent_addr
+        if (product.account_limit and
+                get_purchase_count(sess, product.id, planet_id=receipt_data.planetId,
+                                   avatar_addr=receipt.avatar_addr.lower()) > product.account_limit):
+            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+            raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+
+        prefix, body = product.google_sku.split("seasonpass")
+        try:
+            season = int(body[-1])
+        except:
+            season = 0
+        season_pass_host = fetch_parameter(
+            settings.REGION_NAME,
+            f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
+        )["Value"]
+        claim_list = [{"ticker": x.fungible_item_id, "amount": x.amount, "decimal_places": 0}
+                      for x in product.fungible_item_list]
+        claim_list.extend([{"ticker": x.ticker, "amount": x.amount, "decimal_places": x.decimal_places}
+                           for x in product.fav_list])
+        resp = requests.post(f"{season_pass_host}/api/user/upgrade",
+                             json={
+                                 "planet_id": receipt_data.planetId.value.decode("utf-8"),
+                                 "agent_addr": receipt.agent_addr.lower(),
+                                 "avatar_addr": receipt.avatar_addr.lower(),
+                                 "season_id": int(season),
+                                 "is_premium": True if (not body[:-1] or "all" in body) else False,
+                                 "is_premium_plus": "plus" in body or "all" in body,
+                                 "g_sku": product.google_sku, "a_sku": product.apple_sku,
+                                 # SeasonPass only uses claims
+                                 "reward_list": claim_list,
+                             },
+                             headers={"Authorization": f"Bearer {create_season_pass_jwt()}"})
+        if resp.status_code != 200:
+            receipt.msg = f"{resp.status_code} :: {resp.text}"
+            msg = f"SeasonPass Upgrade Failed: {resp.text}"
+            logging.error(msg)
+            raise_error(sess, receipt, Exception(msg))
+    else:
+        if (product.daily_limit and
+                get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                   agent_addr=receipt.agent_addr.lower(), hour_limit=24) > product.daily_limit):
+            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+            raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
+        elif (product.weekly_limit and
+              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                 agent_addr=receipt.agent_addr.lower(), hour_limit=24 * 7) > product.weekly_limit):
+            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+            raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
+        elif (product.account_limit and
+              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                                 agent_addr=receipt.agent_addr.lower()) > product.account_limit):
+            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+            raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
     msg = {
-        "agent_addr": receipt_data.agentAddress,
-        "avatar_addr": receipt_data.avatarAddress,
+        "agent_addr": receipt_data.agentAddress.lower(),
+        "avatar_addr": receipt_data.avatarAddress.lower(),
         "product_id": product.id,
         "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
     }
 
     resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
-    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+
     return receipt
 
 

@@ -9,6 +9,7 @@ stage = os.environ.get("STAGE", "local")
 db_password = None
 google_credential = None
 apple_credential = None
+season_pass_jwt_secret = None
 
 if not stage:
     logging.error("Config file not found")
@@ -31,6 +32,11 @@ else:
         f"{stage}_9c_IAP_APPLE_CREDENTIAL",
         True
     )["Value"]
+    season_pass_jwt_secret = fetch_parameter(
+        os.environ.get("REGION_NAME"),
+        f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET",
+        True
+    )["Value"]
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
@@ -50,3 +56,5 @@ APPLE_CREDENTIAL = apple_credential or config("APPLE_CREDENTIAL")
 APPLE_VALIDATION_URL = config("APPLE_VALIDATION_URL")
 
 REGION_NAME = config("REGION_NAME")
+
+SEASON_PASS_JWT_SECRET = season_pass_jwt_secret or config("SEASON_PASS_JWT_SECRET")

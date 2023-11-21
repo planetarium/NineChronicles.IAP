@@ -87,6 +87,8 @@ class WorkerStack(Stack):
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "HEADLESS": config.headless,
+            "PLANET_URL": config.planet_url,
+            "BRIDGE_DATA": config.bridge_data,
         }
 
         # Worker Lambda Function
@@ -96,6 +98,7 @@ class WorkerStack(Stack):
 
         worker = _lambda.Function(
             self, f"{config.stage}-9c-iap-worker-function",
+            function_name=f"{config.stage}-9c-iap-worker",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c Action making worker of NineChronicles.IAP",
             code=_lambda.AssetCode("worker", exclude=exclude_list),
@@ -115,6 +118,7 @@ class WorkerStack(Stack):
         # Tracker Lambda Function
         tracker = _lambda.Function(
             self, f"{config.stage}-9c-iap-tracker-function",
+            function_name=f"{config.stage}-9c-iap-tx-tracker",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="9c transaction status tracker of NineChronicles.IAP",
             code=_lambda.AssetCode("worker", exclude=exclude_list),
@@ -134,22 +138,23 @@ class WorkerStack(Stack):
         minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
 
         # Price updater Lambda function
-        updater = _lambda.Function(
-            self, f"{config.stage}-9c-iap-price-updater-function",
-            runtime=_lambda.Runtime.PYTHON_3_10,
-            description="9c IAP price updater from google/apple store",
-            code=_lambda.AssetCode("worker", exclude=exclude_list),
-            handler="function.updater.update_prices",
-            layers=[layer],
-            role=role,
-            vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(120),
-            environment=env,
-            memory_size=192,
-        )
-
         # NOTE: Price is directly fetched between client and google play.
-        #  To not need to update price in IAP service.
+        #  Not need to update price in IAP service.
+        # updater = _lambda.Function(
+        #     self, f"{config.stage}-9c-iap-price-updater-function",
+        #     function_name=f"{config.stage}-9c-iap-price-updater",
+        #     runtime=_lambda.Runtime.PYTHON_3_10,
+        #     description="9c IAP price updater from google/apple store",
+        #     code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+        #     handler="updater.update_prices",
+        #     layers=[layer],
+        #     role=role,
+        #     vpc=shared_stack.vpc,
+        #     timeout=cdk_core.Duration.seconds(120),
+        #     environment=env,
+        #     memory_size=192,
+        # )
+
         # Every hour
         # hourly_event_rule = _events.Rule(
         #     self, f"{config.stage}-9c-iap-price-updater-event",
@@ -162,6 +167,7 @@ class WorkerStack(Stack):
         env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
         garage_report = _lambda.Function(
             self, f"{config.stage}-9c-iap-garage-report",
+            function_name=f"{config.stage}_9c-iap-garage-reporter",
             runtime=_lambda.Runtime.PYTHON_3_10,
             description="Daily report of 9c IAP Garage item count",
             code=_lambda.AssetCode("worker", exclude=exclude_list),
@@ -226,3 +232,21 @@ class WorkerStack(Stack):
         )
 
         minute_event_rule.add_target(_event_targets.LambdaFunction(gd_tracker))
+
+        # Manual unload function
+        # This function does not have trigger. Go to AWS console and run manually.
+        if config.stage != "mainnet":
+            manual_unload = _lambda.Function(
+                self, f"{config.stage}-9c-iap-manual-unload-function",
+                function_name=f"{config.stage}-9c-iap-manual-unload",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Manual unload Tx. executor from NineChronicles.IAP",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.handle",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=512,
+            )

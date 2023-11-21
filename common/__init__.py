@@ -37,6 +37,10 @@ class Config:
     region_name: str
     cdn_host: str
 
+    # Multiplanetary
+    planet_url: str
+    bridge_data: str
+
     google_package_name: str
     apple_bundle_id: str
 
@@ -53,3 +57,6 @@ class Config:
     golden_dust_request_sheet_id: Optional[str] = None
     golden_dust_work_sheet_id: Optional[str] = None
     form_sheet: Optional[str] = None
+
+    # SeasonPass
+    season_pass_jwt_secret: str = None

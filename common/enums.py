@@ -126,6 +126,11 @@ class ReceiptStatus(IntEnum):
 
         Purchase limit reached for the daily/weekly limit existing product.
 
+    - **94: `TIME_LIMIT`**
+
+        Purchase timestamp is not between target product's open/close timestamp.
+        This purchase is executed in appstore, so admin should refund this purchase in manual.
+
     - **99: `UNKNOWN`**
 
         An unhandled error case. This is reserve to catch all other errors.  
@@ -139,6 +144,7 @@ class ReceiptStatus(IntEnum):
     INVALID = 91
     REFUNDED_BY_BUYER = 92
     PURCHASE_LIMIT_EXCEED = 93
+    TIME_LIMIT = 94
     UNKNOWN = 99
 
 
