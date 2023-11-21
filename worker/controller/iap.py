@@ -48,6 +48,7 @@ class IAPController(BaseController):
 
             history_list.append(SignHistory(
                 uuid=record.body["uuid"],
+                planet_id=receipt.planet_id,
                 request_type=record.body["type"],
                 data=json.dumps(record.body.get("data", {})),
                 nonce=nonce
@@ -78,15 +79,16 @@ class IAPController(BaseController):
                 .where(Product.id == request_data.get("product_id"))
             )
 
-            fav_data = [{
-                "balanceAddr": request_data.get("agent_addr"),
-                "fungibleAssetValue": {
-                    "currency": x.currency.name,
-                    "majorUnit": x.amount,
-                    "minorUnit": 0
-                }
-            } for x in product.fav_list]
+            agent_addr = request_data.get("agent_addr")
+            avatar_addr = request_data.get("avatar_addr")
 
+            memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
+            if history.planet_id != self.main_planet:
+                agent_addr = self.planet_dict[history.planet_id]["agent"]
+                avatar_addr = self.planet_dict[history.planet_id]["avatar"]
+                memo = json.dumps([request_data.get("agent_addr"), request_data.get("avatar_addr"), memo])
+
+            fav_data = [x.to_fav_data(agent_addr, avatar_addr) for x in product.fav_list]
             item_data = [{
                 "fungibleId": x.fungible_item_id,
                 "count": x.amount
@@ -94,13 +96,15 @@ class IAPController(BaseController):
 
             plain_value = self.gql.create_action(
                 "unload_from_garage", pubkey=self.account.pubkey, nonce=history.nonce, tx=False,
-                fav_data=fav_data, avatar_addr=request_data.get("avatar_addr"), item_data=item_data
+                fav_data=fav_data, avatar_addr=request_data.get("avatar_addr"), item_data=item_data,
+                memo=memo
             )
+            history.plain_value = plain_value.hex()
+
             unsigned_tx = self.gql.create_unsigned_tx(plain_value, pubkey=self.account.pubkey, nonce=history.nonce)
             signature = self.account.sign_tx(unsigned_tx)
             signed_tx = self.gql.sign(unsigned_tx, signature)
             success, msg, tx_id = self.gql.stage(signed_tx)
-            history.plain_value = plain_value.hex()
             history.tx_id = tx_id
             # Staged data should be recorded at the moment
             self.sess.add(history)
