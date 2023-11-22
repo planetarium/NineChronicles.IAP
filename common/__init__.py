@@ -37,6 +37,10 @@ class Config:
     region_name: str
     cdn_host: str
 
+    # Multiplanetary
+    planet_url: str
+    bridge_data: str
+
     google_package_name: str
     apple_bundle_id: str
 

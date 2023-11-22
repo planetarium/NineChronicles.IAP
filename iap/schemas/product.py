@@ -30,8 +30,13 @@ class PriceSchema(BaseSchema):
 
 
 class FungibleAssetValueSchema(BaseSchema):
-    ticker: Currency
+    ticker: str
     amount: float
+
+    @model_validator(mode="after")
+    def make_ticker_to_name(self):
+        self.ticker = self.ticker.split("_")[-1]
+        return self
 
     class Config:
         from_attributes = True
