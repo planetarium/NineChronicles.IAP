@@ -162,7 +162,7 @@ class APIStack(Stack):
                 logging_level=_apig.MethodLoggingLevel.INFO,
                 access_log_destination=_apig.LogGroupLogDestination(log_group),
                 metrics_enabled=True,
-                tracing_enabled=True,
+                data_trace_enabled=True,
             ),
             domain_name=custom_domain,
         )
