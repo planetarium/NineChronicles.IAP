@@ -153,13 +153,6 @@ class APIStack(Stack):
             )
         )
 
-        full_log_format = _apig.AccessLogFormat.custom(
-            '$context.identity.sourceIp - $context.identity.caller - '
-            '[$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" '
-            '$context.status $context.responseLength $context.requestId '
-            '"$context.error.message" "$context.integrationErrorMessage"'
-        )
-
         # API Gateway
         apig = _apig.LambdaRestApi(
             self, f"{config.stage}-9c_iap-api-apig",
@@ -168,7 +161,6 @@ class APIStack(Stack):
                 stage_name=config.stage,
                 logging_level=_apig.MethodLoggingLevel.INFO,
                 access_log_destination=_apig.LogGroupLogDestination(log_group),
-                access_log_format=full_log_format,
                 metrics_enabled=True,
                 tracing_enabled=True,
             ),
