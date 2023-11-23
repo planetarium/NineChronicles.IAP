@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_certificatemanager as _acm,
     aws_iam as _iam,
     aws_lambda as _lambda,
+    aws_logs as _logs,
 )
 from constructs import Construct
 
@@ -139,10 +140,37 @@ class APIStack(Stack):
         else:
             custom_domain = None
 
+
+        log_group = _logs.LogGroup(
+            self, f"{config.stage}-9c-iap-api-log-group",
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["logs:CreateLogStream", "logs:PutLogEvents"],
+                resources=[log_group.log_group_arn]
+            )
+        )
+
+        full_log_format = _apig.AccessLogFormat.custom(
+            '$context.identity.sourceIp - $context.identity.caller - '
+            '[$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" '
+            '$context.status $context.responseLength $context.requestId '
+            '"$context.error.message" "$context.integrationErrorMessage"'
+        )
+
         # API Gateway
         apig = _apig.LambdaRestApi(
             self, f"{config.stage}-9c_iap-api-apig",
             handler=function,
-            deploy_options=_apig.StageOptions(stage_name=config.stage),
+            deploy_options=_apig.StageOptions(
+                stage_name=config.stage,
+                logging_level=_apig.MethodLoggingLevel.INFO,
+                access_log_destination=_apig.LogGroupLogDestination(log_group),
+                access_log_format=full_log_format,
+                metrics_enabled=True
+            ),
+            tracing_enabled=True,
             domain_name=custom_domain,
         )
