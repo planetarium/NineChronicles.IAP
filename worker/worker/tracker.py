@@ -57,7 +57,10 @@ def track_tx(event, context):
     logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(
-        select(Receipt).where(Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID)))
+        select(Receipt).where(
+            Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
+            .order_by(Receipt.id).limit(100)
+        )
     ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
