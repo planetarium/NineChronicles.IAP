@@ -2,8 +2,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict
 
-import boto3
 import aws_cdk as cdk_core
+import boto3
 from aws_cdk import (
     Stack,
     aws_ec2 as _ec2,
