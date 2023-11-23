@@ -3,7 +3,6 @@ import os
 from collections import defaultdict
 from typing import Optional, Tuple
 
-import requests
 from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -13,7 +12,6 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets
-from common.utils.garage import update_iap_garage
 from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
@@ -22,18 +20,7 @@ DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 
-planet_dict = {}
-try:
-    resp = requests.get(os.environ.get("PLANET_URL"))
-    data = resp.json()
-    for d in data:
-        if PlanetID(bytes(d["id"], "utf-8")) == CURRENT_PLANET:
-            GQL_URL = d["rpcEndpoints"]["headless.gql"][0]
-            planet_dict = {
-                PlanetID(bytes(k, "utf-8")): v for k, v in d["bridges"].items()
-            }
-except:
-    planet_dict = json.loads(os.environ.get("BRIDGE_DATA", "{}"))
+BLOCK_LIMIT = 50
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
@@ -72,7 +59,10 @@ def track_tx(event, context):
     logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(
-        select(Receipt).where(Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID)))
+        select(Receipt).where(
+            Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
+            .order_by(Receipt.id).limit(BLOCK_LIMIT)
+        )
     ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
@@ -82,7 +72,7 @@ def track_tx(event, context):
         if msg:
             receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
-    update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
+    # update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
     sess.commit()
 
     logger.info(f"{len(receipt_list)} transactions are found to track status")
