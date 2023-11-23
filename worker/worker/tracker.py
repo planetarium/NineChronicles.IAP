@@ -61,8 +61,7 @@ def track_tx(event, context):
     receipt_list = sess.scalars(
         select(Receipt).where(
             Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
-            .order_by(Receipt.id).limit(BLOCK_LIMIT)
-        )
+        ).order_by(Receipt.id).limit(BLOCK_LIMIT)
     ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
