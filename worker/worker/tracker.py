@@ -20,6 +20,8 @@ DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 
+BLOCK_LIMIT = 50
+
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
@@ -59,7 +61,7 @@ def track_tx(event, context):
     receipt_list = sess.scalars(
         select(Receipt).where(
             Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
-            .order_by(Receipt.id).limit(100)
+            .order_by(Receipt.id).limit(BLOCK_LIMIT)
         )
     ).fetchall()
     result = defaultdict(list)
