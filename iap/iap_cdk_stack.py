@@ -140,19 +140,6 @@ class APIStack(Stack):
         else:
             custom_domain = None
 
-
-        log_group = _logs.LogGroup(
-            self, f"{config.stage}-9c-iap-api-log-group",
-            removal_policy=RemovalPolicy.DESTROY
-        )
-
-        role.add_to_policy(
-            _iam.PolicyStatement(
-                actions=["logs:CreateLogStream", "logs:PutLogEvents"],
-                resources=[log_group.log_group_arn]
-            )
-        )
-
         # API Gateway
         apig = _apig.LambdaRestApi(
             self, f"{config.stage}-9c_iap-api-apig",
@@ -160,7 +147,6 @@ class APIStack(Stack):
             deploy_options=_apig.StageOptions(
                 stage_name=config.stage,
                 logging_level=_apig.MethodLoggingLevel.INFO,
-                access_log_destination=_apig.LogGroupLogDestination(log_group),
                 metrics_enabled=True,
                 data_trace_enabled=True,
             ),
