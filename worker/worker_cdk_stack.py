@@ -127,6 +127,7 @@ class WorkerStack(Stack):
             role=role,
             vpc=shared_stack.vpc,
             timeout=cdk_core.Duration.seconds(50),
+            memory_size=256,
             environment=env,
         )
 
