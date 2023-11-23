@@ -1,7 +1,7 @@
 import os
 
-from _crypto import Account
-from _graphql import GQL
+from common._crypto import Account
+from common._graphql import GQL
 from common.utils.aws import fetch_kms_key_id
 
 stage = os.environ.get("STAGE", "development")

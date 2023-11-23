@@ -98,6 +98,8 @@ class APIStack(Stack):
             "APPLE_ISSUER_ID": config.apple_issuer_id,
             "HEADLESS": config.headless,
             "CDN_HOST": config.cdn_host,
+            "PLANET_URL": config.planet_url,
+            "BRIDGE_DATA": config.bridge_data,
         }
 
         # Lambda Function
@@ -125,10 +127,10 @@ class APIStack(Stack):
         if config.stage != "development":
             certificate = _acm.Certificate.from_certificate_arn(
                 self, "9c-acm",
-                certificate_arn="arn:aws:acm:us-east-1:319679068466:certificate/774ba332-0886-481b-b823-d0c4ab160d37"
+                certificate_arn="arn:aws:acm:us-east-1:319679068466:certificate/8e3f8d11-ead8-4a90-bda0-94a35db71678",
             )
             custom_domain = _apig.DomainNameOptions(
-                domain_name=f"{'internal-' if config.stage == 'internal' else ''}iap.nine-chronicles.com",
+                domain_name=f"iap{'-internal' if config.stage == 'internal' else ''}.9c.gg",
                 certificate=certificate,
                 security_policy=_apig.SecurityPolicy.TLS_1_2,
                 endpoint_type=_apig.EndpointType.EDGE,
@@ -144,14 +146,3 @@ class APIStack(Stack):
             deploy_options=_apig.StageOptions(stage_name=config.stage),
             domain_name=custom_domain,
         )
-
-        # Route53
-        # # TODO: Set custom domain
-        # if config.stage != "development":
-        #     from aws_cdk import (aws_route53 as _r53, aws_route53_targets as _targets)
-        #
-        #     hosted_zone = _r53.PublicHostedZone.from_lookup(self, "9c-hosted-zone", domain_name="nine-chronicles.com")
-        #     record = _r53.ARecord(
-        #         self, f"{config.stage}-9c-iap-record", zone=hosted_zone,
-        #         target=_r53.RecordTarget.from_alias(_targets.ApiGateway(apig))
-        #     )

@@ -158,10 +158,10 @@ def derive_address(address: Union[str, bytes], key: Union[str, bytes], get_byte:
     if address.startswith("0x"):
         address = address[2:]
 
-    if type(address) == str:
+    if isinstance(address, str):
         address = bytes.fromhex(address)
 
-    if type(key) == str:
+    if isinstance(key, str):
         key = bytes(key, "UTF-8")
 
     derived = hmac.new(key, address, sha1).digest()

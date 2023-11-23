@@ -78,6 +78,8 @@ class SharedStack(Stack):
             credentials=self.credentials,
             instance_type=(
                 _ec2.InstanceType.of(_ec2.InstanceClass.M6G, _ec2.InstanceSize.LARGE)
+                if config.stage == "mainnet" else
+                _ec2.InstanceType.of(_ec2.InstanceClass.BURSTABLE4_GRAVITON, _ec2.InstanceSize.MICRO)
             ),
             security_groups=[self.rds_security_group],
         )

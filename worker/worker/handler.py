@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 
@@ -13,15 +14,31 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.address import get_vault_agent_address, get_vault_avatar_address
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
+CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
+GQL_URL = f"{os.environ.get('headless')}/graphql"
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
+
+planet_dict = {}
+try:
+    resp = requests.get(os.environ.get("PLANET_URL"))
+    data = resp.json()
+    GQL_URL = None
+    for planet in data:
+        if PlanetID(bytes(planet["id"], "utf-8")) == CURRENT_PLANET:
+            GQL_URL = planet["rpcEndpoints"]["headless.gql"][0]
+            planet_dict = {
+                PlanetID(bytes(k, "utf-8")): v for k, v in planet["bridges"].items()
+            }
+except:
+    # Fail over
+    planet_dict = json.loads(os.environ.get("BRIDGE_DATA", "{}"))
 
 
 @dataclass
@@ -37,7 +54,7 @@ class SQSMessageRecord:
     awsRegion: str
 
     def __post_init__(self):
-        self.body = json.loads(self.body) if type(self.body) == str else self.body
+        self.body = json.loads(self.body) if isinstance(self.body, str) else self.body
 
 
 @dataclass
@@ -53,7 +70,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL()
+    gql = GQL(GQL_URL)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
@@ -66,10 +83,12 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
-    # relay
-    if planet_id != PlanetID.ODIN:
-        agent_address = get_vault_agent_address(planet_id)
-        avatar_address = get_vault_avatar_address(planet_id)
+    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
+    # Through bridge
+    if planet_id != CURRENT_PLANET:
+        agent_address = planet_dict[planet_id]["agent"]
+        avatar_address = planet_dict[planet_id]["avatar"]
+        memo = json.dumps([message.body.get("agent_addr"), message.body.get("avatar_addr"), memo])
     fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
     item_data = [{
@@ -80,7 +99,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     unsigned_tx = gql.create_action(
         "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
         fav_data=fav_data, avatar_addr=avatar_address, item_data=item_data,
-        memo=json.dumps([agent_address, avatar_address])
+        memo=memo,
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)

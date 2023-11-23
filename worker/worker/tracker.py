@@ -1,27 +1,45 @@
-import logging
+import json
 import os
 from collections import defaultdict
 from typing import Optional, Tuple
 
+import requests
 from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
+from common import logger
 from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets
 from common.utils.garage import update_iap_garage
+from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
+CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
+GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+
+planet_dict = {}
+try:
+    resp = requests.get(os.environ.get("PLANET_URL"))
+    data = resp.json()
+    for d in data:
+        if PlanetID(bytes(d["id"], "utf-8")) == CURRENT_PLANET:
+            GQL_URL = d["rpcEndpoints"]["headless.gql"][0]
+            planet_dict = {
+                PlanetID(bytes(k, "utf-8")): v for k, v in d["bridges"].items()
+            }
+except:
+    planet_dict = json.loads(os.environ.get("BRIDGE_DATA", "{}"))
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
-def process(tx_id: str) -> Tuple[str, Optional[TxStatus]]:
-    client = GQL()
+def process(tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
+    client = GQL(GQL_URL)
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(
@@ -37,38 +55,43 @@ def process(tx_id: str) -> Tuple[str, Optional[TxStatus]]:
         )
     )
     resp = client.execute(query)
-    logging.debug(resp)
+    logger.debug(resp)
 
     if "errors" in resp:
-        logging.error(f"GQL failed to get transaction status: {resp['errors']}")
-        return tx_id, None
+        logger.error(f"GQL failed to get transaction status: {resp['errors']}")
+        return tx_id, None, json.dumps(resp["errors"])
 
     try:
-        return tx_id, TxStatus[resp["transaction"]["transactionResult"]["txStatus"]]
+        return tx_id, TxStatus[resp["transaction"]["transactionResult"]["txStatus"]], json.dumps(
+            resp["transaction"]["transactionResult"]["exceptionNames"])
     except:
-        return tx_id, None
+        return tx_id, None, json.dumps(resp["transaction"]["transactionResult"]["exceptionNames"])
 
 
 def track_tx(event, context):
-    logging.info("Tracking unfinished transactions")
+    logger.info("Tracking unfinished transactions")
     sess = scoped_session(sessionmaker(bind=engine))
-    receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.STAGED)).fetchall()
+    receipt_list = sess.scalars(
+        select(Receipt).where(Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID)))
+    ).fetchall()
     result = defaultdict(list)
     for receipt in receipt_list:
-        tx_id, tx_status = process(receipt.tx_id)
+        tx_id, tx_status, msg = process(receipt.tx_id)
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
+        if msg:
+            receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
-    update_iap_garage(sess)
+    update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
     sess.commit()
 
-    logging.info(f"{len(receipt_list)} transactions are found to track status")
+    logger.info(f"{len(receipt_list)} transactions are found to track status")
     for status, tx_list in result.items():
         if status is None:
-            logging.error(f"{len(tx_list)} transactions are not able to track.")
+            logger.error(f"{len(tx_list)} transactions are not able to track.")
             for tx in tx_list:
-                logging.error(tx)
+                logger.error(tx)
         elif status == TxStatus.STAGED:
-            logging.info(f"{len(tx_list)} transactions are still staged.")
+            logger.info(f"{len(tx_list)} transactions are still staged.")
         else:
-            logging.info(f"{len(tx_list)} transactions are changed to {status}")
+            logger.info(f"{len(tx_list)} transactions are changed to {status}")
