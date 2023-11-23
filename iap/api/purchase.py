@@ -268,12 +268,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     else:
         if (product.daily_limit and
                 get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                   agent_addr=receipt.agent_addr.lower(), hour_limit=24) > product.daily_limit):
+                                   agent_addr=receipt.agent_addr.lower(), daily_limit=True) > product.daily_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
         elif (product.weekly_limit and
               get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                 agent_addr=receipt.agent_addr.lower(), hour_limit=24 * 7) > product.weekly_limit):
+                                 agent_addr=receipt.agent_addr.lower(), weekly_limit=True) > product.weekly_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
         elif (product.account_limit and
