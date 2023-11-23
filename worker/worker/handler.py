@@ -32,7 +32,6 @@ try:
     GQL_URL = None
     for planet in data:
         if PlanetID(bytes(planet["id"], "utf-8")) == CURRENT_PLANET:
-            GQL_URL = planet["rpcEndpoints"]["headless.gql"][0]
             planet_dict = {
                 PlanetID(bytes(k, "utf-8")): v for k, v in planet["bridges"].items()
             }
