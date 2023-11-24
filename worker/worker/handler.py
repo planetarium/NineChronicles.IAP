@@ -132,9 +132,9 @@ def handle(event, context):
     - uuid (uuid): UUID of receipt-tx pair managed by DB
     """
     message = SQSMessage(Records=event.get("Records", {}))
-    logging.debug("=== Message from SQS ====\n")
-    logging.debug(message)
-    logging.debug("=== Message end ====\n")
+    logger.info("=== Message from SQS ====\n")
+    logger.info(message)
+    logger.info("=== Message end ====\n")
 
     sess = None
     try:
@@ -146,6 +146,7 @@ def handle(event, context):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
+            logger.info(f"UUID : {record.body.get('uuid')}")
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
