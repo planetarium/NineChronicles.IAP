@@ -6,12 +6,12 @@ import bencodex
 from common.utils.receipt import PlanetID
 
 
-def create_unsigned_tx(planet_id: PlanetID, public_key: str, address: str, nonce: int, plain_value: str, timestamp: datetime.datetime) -> bytes:
+def create_unsigned_tx(planet_id: PlanetID, public_key: str, address: str, nonce: int, plain_value: Dict[str, Any], timestamp: datetime.datetime) -> bytes:
     if address.startswith("0x"):
         address = address[2:]
     return bencodex.dumps({
         # Raw action value
-        b"a": [bencodex.loads(bytes.fromhex(plain_value))],
+        b"a": [plain_value],
         # Genesis block hash
         b"g": get_genesis_block_hash(planet_id),
         # GasLimit (see also GasLimit list section below)
