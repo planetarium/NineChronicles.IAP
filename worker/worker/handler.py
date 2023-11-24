@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 import json
 import logging
@@ -62,6 +63,13 @@ class SQSMessageRecord:
 @dataclass
 class SQSMessage:
     Records: Union[List[SQSMessageRecord], dict]
+
+    # Avoid TypeError when init dataclass. https://stackoverflow.com/questions/54678337/how-does-one-ignore-extra-arguments-passed-to-a-dataclass # noqa
+    def __init__(self, **kwargs):
+        names = set([f.name for f in dataclasses.fields(self)])
+        for k, v in kwargs.items():
+            if k in names:
+                setattr(self, k, v)
 
     def __post_init__(self):
         self.Records = [SQSMessageRecord(**x) for x in self.Records]
