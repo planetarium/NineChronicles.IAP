@@ -72,6 +72,7 @@ def handle_500(request, e):
     """
     This can cause Exception inside itself: Please track https://github.com/tiangolo/fastapi/discussions/8647
     """
+    logger.error(e)
     return JSONResponse(status_code=HTTP_500_INTERNAL_SERVER_ERROR,
                         content=f"An unexpected error occurred. Please contact to administrator. :: {str(e)}")
 
