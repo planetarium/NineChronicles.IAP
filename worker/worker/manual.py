@@ -46,7 +46,7 @@ def handle(event, context):
                 address=account.address,
                 nonce=nonce,
                 plain_value=unload_from_garage,
-                timestamp=datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+                timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
             )
             signature = account.sign_tx(utx)
             signed_tx = append_signature_to_unsigned_tx(utx, signature)

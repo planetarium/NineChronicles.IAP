@@ -339,7 +339,7 @@ def handle_request(event, context):
             address=account.address,
             nonce=nonce,
             plain_value=unload_from_garage,
-            timestamp=datetime.utcnow() + datetime.timedelta(hours=1))
+            timestamp=datetime.utcnow() + datetime.timedelta(days=1))
         signature = account.sign_tx(unsigned_tx)
         signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
         success, msg, tx_id = gql.stage(signed_tx)
