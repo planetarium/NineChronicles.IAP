@@ -156,7 +156,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         planet_id=receipt_data.planetId.value,
     )
     sess.add(receipt)
-    sess.flush()
+    sess.commit()
     sess.refresh(receipt)
 
     if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
