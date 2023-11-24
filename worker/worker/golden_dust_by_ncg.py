@@ -326,7 +326,7 @@ def handle_request(event, context):
             continue
 
         unload_from_garage = create_unload_my_garages_action_plain_value(
-            id=uuid.uuid1().hex(),
+            id=uuid.uuid1().hex,
             fav_data=[],
             avatar_addr=req.avatar_addr,
             item_data=[{"fungibleId": GOLDEN_DUST_FUNGIBLE_ID,
