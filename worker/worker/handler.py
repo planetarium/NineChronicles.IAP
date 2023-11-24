@@ -21,7 +21,7 @@ DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('headless')}/graphql"
+GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
@@ -29,7 +29,6 @@ planet_dict = {}
 try:
     resp = requests.get(os.environ.get("PLANET_URL"))
     data = resp.json()
-    GQL_URL = None
     for planet in data:
         if PlanetID(bytes(planet["id"], "utf-8")) == CURRENT_PLANET:
             planet_dict = {
