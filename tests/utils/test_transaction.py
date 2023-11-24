@@ -2,6 +2,7 @@ import datetime
 
 import bencodex
 import pytest
+from common.utils.actions import create_unload_my_garages_action_plain_value
 
 from common.utils.receipt import PlanetID
 from common.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx, get_genesis_block_hash
@@ -64,7 +65,7 @@ def test_create_unsigned_tx():
                     "m": '{"season_pass": {"n": [1], "p": [], "t": "claim"}}',
                 },
             }
-    plain_value = bencodex.dumps(plain_value_dict).hex()
+    plain_value = plain_value_dict
     unsigned_tx = create_unsigned_tx(
         PlanetID.ODIN,
         "024007a3342b03083e7c87e80b6daa9be6f7e1caae66c368fb32ca43994394ef3e",
