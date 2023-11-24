@@ -106,7 +106,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     } for x in product.fungible_item_list]
 
     unload_from_garage = create_unload_my_garages_action_plain_value(
-        id=uuid.uuid1().hex(),
+        id=uuid.uuid1().hex,
         fav_data=fav_data,
         avatar_addr=avatar_address,
         item_data=item_data,

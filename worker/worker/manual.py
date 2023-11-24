@@ -34,7 +34,7 @@ def handle(event, context):
         print(f"{i + 1} / {len(unload_data)} : Unload to {unload['avatar_addr']}")
         try:
             unload_from_garage = create_unload_my_garages_action_plain_value(
-                id=uuid.uuid1().hex(),
+                id=uuid.uuid1().hex,
                 fav_data=unload["fav_data"],
                 avatar_addr=unload["avatar_addr"],
                 item_data=unload["item_data"],
