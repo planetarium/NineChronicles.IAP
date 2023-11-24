@@ -6,14 +6,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Union, List, Optional
+import uuid
 
 import requests
 from gql.dsl import dsl_gql, DSLQuery
 
 from common._crypto import Account
 from common._graphql import GQL
+from common.utils.actions import create_unload_my_garages_action_plain_value
 from common.utils.aws import fetch_kms_key_id, fetch_parameter
 from common.utils.google import Spreadsheet
+from common.utils.receipt import PlanetID
+from common.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx
 
 GOOGLE_CREDENTIAL = fetch_parameter(
     os.environ.get("REGION_NAME"),
@@ -321,13 +325,23 @@ def handle_request(event, context):
             print(f"{i + 1} / {len(request_data)} is invalid. Skip.")
             continue
 
-        unsigned_tx = gql.create_action("unload_from_garage", pubkey=account.pubkey, nonce=nonce,
-                                        fav_data=[], avatar_addr=req.avatar_addr,
-                                        item_data=[{"fungibleId": GOLDEN_DUST_FUNGIBLE_ID,
-                                                    "count": req.request_dust_set * GOLDEN_DUST_SET}]
-                                        )
+        unload_from_garage = create_unload_my_garages_action_plain_value(
+            id=uuid.uuid1().hex(),
+            fav_data=[],
+            avatar_addr=req.avatar_addr,
+            item_data=[{"fungibleId": GOLDEN_DUST_FUNGIBLE_ID,
+                        "count": req.request_dust_set * GOLDEN_DUST_SET}],
+            memo=None
+        )
+        unsigned_tx = create_unsigned_tx(
+            planet_id=PlanetID.ODIN,
+            pubkey=account.pubkey.hex(),
+            address=account.address,
+            nonce=nonce,
+            plain_value=unload_from_garage,
+            timestamp=datetime.utcnow() + datetime.timedelta(hours=1))
         signature = account.sign_tx(unsigned_tx)
-        signed_tx = gql.sign(unsigned_tx, signature)
+        signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
         success, msg, tx_id = gql.stage(signed_tx)
         req.nonce = nonce
         req.plain_text = unsigned_tx.hex()

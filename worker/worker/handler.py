@@ -1,7 +1,9 @@
 import dataclasses
+import datetime
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
@@ -15,8 +17,10 @@ from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.actions import create_unload_my_garages_action_plain_value
 from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
+from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
@@ -104,13 +108,20 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         "count": x.amount
     } for x in product.fungible_item_list]
 
-    unsigned_tx = gql.create_action(
-        "unload_from_garage", pubkey=account.pubkey, nonce=nonce,
-        fav_data=fav_data, avatar_addr=avatar_address, item_data=item_data,
-        memo=memo,
+    unload_from_garage = create_unload_my_garages_action_plain_value(
+        id=uuid.uuid1().hex(),
+        fav_data=fav_data,
+        avatar_addr=avatar_address,
+        item_data=item_data,
+        memo=memo
+    )
+
+    unsigned_tx = create_unsigned_tx(
+        planet_id=planet_id, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
+        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(hours=1)
     )
     signature = account.sign_tx(unsigned_tx)
-    signed_tx = gql.sign(unsigned_tx, signature)
+    signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
     return gql.stage(signed_tx), nonce, signed_tx
 
 
