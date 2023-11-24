@@ -63,7 +63,9 @@ class SQSMessage:
         self.Records = [SQSMessageRecord(**x) for x in self.Records]
 
 
-def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tuple[Tuple[bool, str, Optional[str]], int]:
+def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tuple[
+    Tuple[bool, str, Optional[str]], int, bytes
+]:
     stage = os.environ.get("STAGE", "development")
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
@@ -101,7 +103,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = gql.sign(unsigned_tx, signature)
-    return gql.stage(signed_tx), nonce
+    return gql.stage(signed_tx), nonce, signed_tx
 
 
 def handle(event, context):
@@ -133,11 +135,13 @@ def handle(event, context):
                 logger.error(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                (success, msg, tx_id), nonce = process(sess, record, nonce=nonce)
+                (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
+                receipt.nonce = nonce
                 if success:
                     nonce += 1
                 receipt.tx_id = tx_id
                 receipt.tx_status = TxStatus.STAGED
+                receipt.tx = signed_tx.hex()
                 sess.add(receipt)
                 sess.commit()
             print(
