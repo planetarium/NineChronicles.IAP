@@ -1,16 +1,21 @@
 import os.path
+from datetime import datetime, timezone
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.exceptions import RequestValidationError
 from mangum import Mangum
 from pydantic.v1.error_wrappers import _display_error_type_and_ctx
+from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
 from common import logger
+from common.models.receipt import Receipt
+from common.enums import TxStatus
+from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException
 from . import api, settings
 
@@ -100,6 +105,18 @@ def robots():
 @app.get("/favicon.png", response_class=FileResponse, tags=["Default"])
 def favicon():
     return "iap/frontend/build/favicon.png"
+
+
+@app.get("/receipt-status", tags=["Default"])
+def receipt_status(sess=Depends(session)):
+    invalid_receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.INVALID)).fetchall()
+    if not invalid_receipt_list:
+        return JSONResponse(status_code=200, content="No INVALID transactions.")
+
+    delay = (datetime.now(tz=timezone.utc) - min([x.created_at for x in invalid_receipt_list])).seconds
+    msg = f"There are {len(invalid_receipt_list)} Invalid receipts over {delay} seconds."
+    # Return error when delay more than 5min
+    return JSONResponse(status_code=503 if delay >= 300 else 200, content=msg)
 
 
 @app.get("/", response_class=FileResponse, tags=["View"], summary="Index page")
