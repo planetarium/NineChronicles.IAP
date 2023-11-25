@@ -115,7 +115,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
 
     unsigned_tx = create_unsigned_tx(
         planet_id=PlanetID.ODIN, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
-        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
@@ -150,6 +150,9 @@ def handle(event, context):
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
+            elif receipt.tx_id:
+                success, msg, tx_id = False, f"{record.body.get('uuid')} is already treated with Tx : {receipt.tx_id}", None
+                logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
                 (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
