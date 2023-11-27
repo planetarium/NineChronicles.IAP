@@ -78,9 +78,9 @@ class ReceiptSchema:
             self.data = json.loads(self.data)
 
         if not self.store:
-            if "TransactionID" in self.data:
+            if "AppleAppStore" in self.data.get("Store", ""):
                 self.store = Store.APPLE
-            elif "orderId" in self.data:
+            elif "GooglePlay" in self.data.get("Store", ""):
                 self.store = Store.GOOGLE
             else:
                 self.store = Store.TEST

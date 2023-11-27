@@ -20,6 +20,7 @@ from common.utils.apple import get_jwt
 from common.utils.aws import fetch_parameter
 from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
+from exceptions import ReceiptNotFoundException
 from iap import settings
 from iap.dependencies import session
 from iap.main import logger
@@ -119,6 +120,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     if prev_receipt:
         logger.debug(f"prev. receipt exists: {prev_receipt.uuid}")
         return prev_receipt
+
+    if not receipt_data.agentAddress:
+        raise ReceiptNotFoundException("", order_id)
 
     product = None
     # If prev. receipt exists, check current status and returns result
