@@ -135,39 +135,32 @@ def handle(event, context):
     message = SQSMessage(Records=event.get("Records", {}))
     logger.debug(f"SQS Message: {message}")
 
-    sess = None
     results = []
-    try:
-        sess = scoped_session(sessionmaker(bind=engine))
+    ScopedSession = scoped_session(sessionmaker(bind=engine))
+    with ScopedSession.begin() as session:
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
-        receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
+        receipt_dict = {str(x.uuid): x for x in session.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
         nonce = None
         for i, record in enumerate(message.Records):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
             logger.debug(f"UUID : {record.body.get('uuid')}")
-            success, msg, error = False, None, None
+            success, msg = False, None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
-                logger.error(msg)
             elif receipt.tx_id:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is already treated with Tx : {receipt.tx_id}", None
-                logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                try:
-                    (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
-                    receipt.nonce = nonce
-                    if success:
-                        nonce += 1
-                    receipt.tx_id = tx_id
-                    receipt.tx_status = TxStatus.STAGED
-                    receipt.tx = signed_tx.hex()
-                    sess.add(receipt)
-                    sess.commit()
-                except Exception as e:
-                    error = traceback.format_exc()
+                (success, msg, tx_id), nonce, signed_tx = process(session, record, nonce=nonce)
+                receipt.nonce = nonce
+                if success:
+                    nonce += 1
+                receipt.tx_id = tx_id
+                receipt.tx_status = TxStatus.STAGED
+                receipt.tx = signed_tx.hex()
+                session.add(receipt)
 
             result = {
                 "sqs_message_id": record.messageId,
@@ -177,12 +170,13 @@ def handle(event, context):
                 "tx_id": str(receipt.tx_id) if receipt else None,
                 "nonce": str(receipt.nonce) if receipt else None,
                 "order_id": str(receipt.order_id) if receipt else None,
-                "error": error
             }
             results.append(result)
+    
+    for result in results:
+        if result["success"]:
             logger.info(json.dumps(result))
-    finally:
-        if sess is not None:
-            sess.close()
+        else:
+            logger.error(json.dumps(result))
 
     return results
