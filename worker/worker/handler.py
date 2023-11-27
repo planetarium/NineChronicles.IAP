@@ -134,7 +134,7 @@ def handle(event, context):
     - uuid (uuid): UUID of receipt-tx pair managed by DB
     """
     message = SQSMessage(Records=event.get("Records", {}))
-    logger.debug(f"SQS Message: {message}")
+    logger.info(f"SQS Message: {message}")
 
     sess = None
     results = []
