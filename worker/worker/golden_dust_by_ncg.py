@@ -326,7 +326,7 @@ def handle_request(event, context):
             continue
 
         unload_from_garage = create_unload_my_garages_action_plain_value(
-            id=uuid.uuid1().hex(),
+            id=uuid.uuid1().hex,
             fav_data=[],
             avatar_addr=req.avatar_addr,
             item_data=[{"fungibleId": GOLDEN_DUST_FUNGIBLE_ID,
@@ -334,12 +334,12 @@ def handle_request(event, context):
             memo=None
         )
         unsigned_tx = create_unsigned_tx(
-            planet_id=PlanetID.ODIN,
+            planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
             pubkey=account.pubkey.hex(),
             address=account.address,
             nonce=nonce,
             plain_value=unload_from_garage,
-            timestamp=datetime.utcnow() + datetime.timedelta(hours=1))
+            timestamp=datetime.utcnow() + datetime.timedelta(days=1))
         signature = account.sign_tx(unsigned_tx)
         signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
         success, msg, tx_id = gql.stage(signed_tx)

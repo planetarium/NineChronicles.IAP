@@ -1,7 +1,9 @@
+import dataclasses
 import datetime
 import json
 import logging
 import os
+import traceback
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
@@ -25,24 +27,20 @@ DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('headless')}/graphql"
+GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
-planet_dict = {}
-try:
-    resp = requests.get(os.environ.get("PLANET_URL"))
-    data = resp.json()
-    GQL_URL = None
-    for planet in data:
-        if PlanetID(bytes(planet["id"], "utf-8")) == CURRENT_PLANET:
-            GQL_URL = planet["rpcEndpoints"]["headless.gql"][0]
-            planet_dict = {
-                PlanetID(bytes(k, "utf-8")): v for k, v in planet["bridges"].items()
-            }
-except:
-    # Fail over
-    planet_dict = json.loads(os.environ.get("BRIDGE_DATA", "{}"))
+planet_dict = {
+    PlanetID.ODIN: {
+        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
+        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
+    },
+    PlanetID.HEIMDALL: {
+        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
+        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
+    }
+}
 
 
 @dataclass
@@ -57,8 +55,14 @@ class SQSMessageRecord:
     eventSourceARN: str
     awsRegion: str
 
-    def __post_init__(self):
-        self.body = json.loads(self.body) if isinstance(self.body, str) else self.body
+    # Avoid TypeError when init dataclass. https://stackoverflow.com/questions/54678337/how-does-one-ignore-extra-arguments-passed-to-a-dataclass # noqa
+    def __init__(self, **kwargs):
+        names = set([f.name for f in dataclasses.fields(self)])
+        for k, v in kwargs.items():
+            if k in names:
+                if k == 'body' and isinstance(v, str):
+                    v = json.loads(v)
+                setattr(self, k, v)
 
 
 @dataclass
@@ -69,7 +73,9 @@ class SQSMessage:
         self.Records = [SQSMessageRecord(**x) for x in self.Records]
 
 
-def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tuple[Tuple[bool, str, Optional[str]], int]:
+def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tuple[
+    Tuple[bool, str, Optional[str]], int, bytes
+]:
     stage = os.environ.get("STAGE", "development")
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
@@ -101,7 +107,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     } for x in product.fungible_item_list]
 
     unload_from_garage = create_unload_my_garages_action_plain_value(
-        id=uuid.uuid1().hex(),
+        id=uuid.uuid1().hex,
         fav_data=fav_data,
         avatar_addr=avatar_address,
         item_data=item_data,
@@ -109,12 +115,13 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
 
     unsigned_tx = create_unsigned_tx(
-        planet_id=planet_id, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
-        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
+        public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
+        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
     signature = account.sign_tx(unsigned_tx)
     signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
-    return gql.stage(signed_tx), nonce
+    return gql.stage(signed_tx), nonce, signed_tx
 
 
 def handle(event, context):
@@ -127,11 +134,10 @@ def handle(event, context):
     - uuid (uuid): UUID of receipt-tx pair managed by DB
     """
     message = SQSMessage(Records=event.get("Records", {}))
-    logging.debug("=== Message from SQS ====\n")
-    logging.debug(message)
-    logging.debug("=== Message end ====\n")
+    logger.info(f"SQS Message: {message}")
 
     sess = None
+    results = []
     try:
         sess = scoped_session(sessionmaker(bind=engine))
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
@@ -141,23 +147,42 @@ def handle(event, context):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
+            logger.debug(f"UUID : {record.body.get('uuid')}")
+            success, msg = False, None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
+            elif receipt.tx_id:
+                success, msg, tx_id = False, f"{record.body.get('uuid')} is already treated with Tx : {receipt.tx_id}", None
+                logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                (success, msg, tx_id), nonce = process(sess, record, nonce=nonce)
+                (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
+                receipt.nonce = nonce
                 if success:
                     nonce += 1
                 receipt.tx_id = tx_id
                 receipt.tx_status = TxStatus.STAGED
+                receipt.tx = signed_tx.hex()
                 sess.add(receipt)
                 sess.commit()
-            print(
-                f"{i + 1}/{len(message.Records)} : {'Success' if success else 'Fail'} with message: "
-                f"\n\tTx. ID: {tx_id}"
-                f"\n\t{msg}"
-            )
+
+            result = {
+                "sqs_message_id": record.messageId,
+                "success": success,
+                "message": msg,
+                "uuid": str(receipt.uuid) if receipt else None,
+                "tx_id": str(receipt.tx_id) if receipt else None,
+                "nonce": str(receipt.nonce) if receipt else None,
+                "order_id": str(receipt.order_id) if receipt else None,
+            }
+            results.append(result)
+            if success:
+                logger.info(json.dumps(result))
+            else:
+                logger.error(json.dumps(result))
     finally:
         if sess is not None:
             sess.close()
+
+    return results
