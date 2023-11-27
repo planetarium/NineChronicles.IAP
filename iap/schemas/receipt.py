@@ -60,10 +60,10 @@ class ApplePurchaseSchema(BaseSchema):
 
 @dataclass
 class ReceiptSchema:
-    store: Store
     data: Union[str, Dict, object]
-    agentAddress: str
-    avatarAddress: str
+    store: Optional[Store] = None
+    agentAddress: Optional[str] = None
+    avatarAddress: Optional[str] = None
     planetId: Union[str, PlanetID] = None
 
     # Google
@@ -87,8 +87,10 @@ class ReceiptSchema:
             pass
 
         # Reformat address to starts with `0x`
-        self.agentAddress = format_addr(self.agentAddress)
-        self.avatarAddress = format_addr(self.avatarAddress)
+        if self.agentAddress:
+            self.agentAddress = format_addr(self.agentAddress)
+        if self.avatarAddress:
+            self.avatarAddress = format_addr(self.avatarAddress)
 
         if isinstance(self.planetId, str):
             self.planetId = PlanetID(bytes(self.planetId, 'utf-8'))
