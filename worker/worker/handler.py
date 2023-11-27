@@ -8,8 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
-import requests
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, desc
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 
 from common import logger
@@ -141,7 +140,7 @@ def handle(event, context):
         sess = scoped_session(sessionmaker(bind=engine))
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
         receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-        nonce = None
+        nonce = sess.scalar(select(Receipt.nonce).order_by(desc(Receipt.nonce)))
         for i, record in enumerate(message.Records):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
