@@ -334,7 +334,7 @@ def handle_request(event, context):
             memo=None
         )
         unsigned_tx = create_unsigned_tx(
-            planet_id=PlanetID.ODIN,
+            planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
             pubkey=account.pubkey.hex(),
             address=account.address,
             nonce=nonce,
