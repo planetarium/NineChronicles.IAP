@@ -106,12 +106,12 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(120),
+            timeout=cdk_core.Duration.seconds(15),
             environment=env,
             events=[
                 _evt_src.SqsEventSource(shared_stack.q)
             ],
-            memory_size=256,
+            memory_size=1024,
             reserved_concurrent_executions=1,
         )
 
@@ -126,6 +126,7 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
+            memory_size=256,
             timeout=cdk_core.Duration.seconds(50),
             environment=env,
         )

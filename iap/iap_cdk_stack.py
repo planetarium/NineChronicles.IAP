@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_certificatemanager as _acm,
     aws_iam as _iam,
     aws_lambda as _lambda,
+    aws_logs as _logs,
 )
 from constructs import Construct
 
@@ -143,6 +144,11 @@ class APIStack(Stack):
         apig = _apig.LambdaRestApi(
             self, f"{config.stage}-9c_iap-api-apig",
             handler=function,
-            deploy_options=_apig.StageOptions(stage_name=config.stage),
+            deploy_options=_apig.StageOptions(
+                stage_name=config.stage,
+                logging_level=_apig.MethodLoggingLevel.INFO,
+                metrics_enabled=True,
+                data_trace_enabled=True,
+            ),
             domain_name=custom_domain,
         )

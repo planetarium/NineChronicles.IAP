@@ -22,6 +22,7 @@ from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
+from iap.exceptions import ReceiptNotFoundException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
@@ -120,6 +121,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         logger.debug(f"prev. receipt exists: {prev_receipt.uuid}")
         return prev_receipt
 
+    if not receipt_data.agentAddress:
+        raise ReceiptNotFoundException("", order_id)
+
     product = None
     # If prev. receipt exists, check current status and returns result
     if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
@@ -156,7 +160,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         planet_id=receipt_data.planetId.value,
     )
     sess.add(receipt)
-    sess.flush()
+    sess.commit()
     sess.refresh(receipt)
 
     if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
@@ -268,12 +272,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     else:
         if (product.daily_limit and
                 get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                   agent_addr=receipt.agent_addr.lower(), hour_limit=24) > product.daily_limit):
+                                   agent_addr=receipt.agent_addr.lower(), daily_limit=True) > product.daily_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
         elif (product.weekly_limit and
               get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                 agent_addr=receipt.agent_addr.lower(), hour_limit=24 * 7) > product.weekly_limit):
+                                 agent_addr=receipt.agent_addr.lower(), weekly_limit=True) > product.weekly_limit):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
         elif (product.account_limit and
@@ -282,16 +286,16 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
-    msg = {
-        "agent_addr": receipt_data.agentAddress.lower(),
-        "avatar_addr": receipt_data.avatarAddress.lower(),
-        "product_id": product.id,
-        "uuid": str(receipt.uuid),
-        "planet_id": receipt_data.planetId.decode('utf-8'),
-    }
+        msg = {
+            "agent_addr": receipt_data.agentAddress.lower(),
+            "avatar_addr": receipt_data.avatarAddress.lower(),
+            "product_id": product.id,
+            "uuid": str(receipt.uuid),
+            "planet_id": receipt_data.planetId.decode('utf-8'),
+        }
 
-    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
-    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+        resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     sess.add(receipt)
     sess.commit()
