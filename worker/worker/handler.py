@@ -146,7 +146,7 @@ def handle(event, context):
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
             logger.debug(f"UUID : {record.body.get('uuid')}")
-            error = None
+            success, msg, error = False, None, None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
