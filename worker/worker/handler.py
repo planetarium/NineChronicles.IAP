@@ -168,15 +168,16 @@ def handle(event, context):
                 except Exception as e:
                     error = e
 
-            dict_receipt = receipt.__dict__ if receipt else None
-            if dict_receipt:
-                dict_receipt.pop("_sa_instance_state")
             result = {
                 "sqs_message_id": record.messageId,
                 "sqs_message_body": record.body,
                 "success": success,
                 "message": msg,
-                "receipt": dict_receipt,
+                "uuid": str(receipt.uuid) if receipt else None,
+                "tx_id": receipt.tx_id if receipt else None,
+                "nonce": receipt.nonce if receipt else None,
+                "order_id": receipt.order_id if receipt else None,
+                "store": receipt.store if receipt else None,
                 "error": error
             }
             results.append(result)
