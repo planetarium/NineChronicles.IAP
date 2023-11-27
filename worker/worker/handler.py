@@ -115,7 +115,8 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
 
     unsigned_tx = create_unsigned_tx(
-        planet_id=PlanetID.ODIN, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
+        planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
+        public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
         plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
     signature = account.sign_tx(unsigned_tx)
