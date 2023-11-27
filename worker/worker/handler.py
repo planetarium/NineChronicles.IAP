@@ -180,7 +180,7 @@ def handle(event, context):
                 "error": error
             }
             results.append(result)
-            logger.info(json.dumps(result, indent=2))
+            logger.info(json.dumps(result))
     finally:
         if sess is not None:
             sess.close()
