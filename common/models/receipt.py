@@ -1,3 +1,4 @@
+from typing import Any, Dict
 import uuid
 
 from sqlalchemy import Column, Text, UUID, DateTime, Integer, ForeignKey, LargeBinary
@@ -36,3 +37,27 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value,
                        doc="An identifier of planets")
     msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")
+
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "store": self.store,
+            "order_id": self.order_id,
+            "uuid": str(self.uuid),
+            "data": self.data,
+            "status": self.status,
+            "purchased_at": self.purchased_at,
+            "product_id": self.product_id,
+            "agent_addr": self.agent_addr,
+            "avatar_addr": self.avatar_addr,
+            "tx": self.tx,
+            "nonce": self.nonce,
+            "tx_id": self.tx_id,
+            "tx_status": self.tx_status,
+            "bridged_tx_id": self.bridged_tx_id,
+            "bridged_tx_status": self.bridged_tx_status,
+            "planet_id": self.planet_id,
+            "msg": self.msg,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
