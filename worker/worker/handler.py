@@ -132,11 +132,10 @@ def handle(event, context):
     - uuid (uuid): UUID of receipt-tx pair managed by DB
     """
     message = SQSMessage(Records=event.get("Records", {}))
-    logger.info("=== Message from SQS ====\n")
-    logger.info(message)
-    logger.info("=== Message end ====\n")
+    logger.debug(f"SQS Message: {message}")
 
     sess = None
+    results = []
     try:
         sess = scoped_session(sessionmaker(bind=engine))
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
@@ -146,7 +145,8 @@ def handle(event, context):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
-            logger.info(f"UUID : {record.body.get('uuid')}")
+            logger.debug(f"UUID : {record.body.get('uuid')}")
+            error = None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
@@ -155,20 +155,31 @@ def handle(event, context):
                 logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
-                receipt.nonce = nonce
-                if success:
-                    nonce += 1
-                receipt.tx_id = tx_id
-                receipt.tx_status = TxStatus.STAGED
-                receipt.tx = signed_tx.hex()
-                sess.add(receipt)
-                sess.commit()
-            print(
-                f"{i + 1}/{len(message.Records)} : {'Success' if success else 'Fail'} with message: "
-                f"\n\tTx. ID: {tx_id}"
-                f"\n\t{msg}"
-            )
+                try:
+                    (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
+                    receipt.nonce = nonce
+                    if success:
+                        nonce += 1
+                    receipt.tx_id = tx_id
+                    receipt.tx_status = TxStatus.STAGED
+                    receipt.tx = signed_tx.hex()
+                    sess.add(receipt)
+                    sess.commit()
+                except Exception as e:
+                    error = e
+
+            result = {
+                "sqs_message_id": record.messageId,
+                "sqs_message_body": record.body,
+                "success": success,
+                "message": msg,
+                "receipt": receipt.__dict__ if receipt else None,
+                "error": error
+            }
+            results.append(result)
+            logger.info(json.dumps(result, indent=2))
     finally:
         if sess is not None:
             sess.close()
+
+    return results
