@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import traceback
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
@@ -166,18 +167,16 @@ def handle(event, context):
                     sess.add(receipt)
                     sess.commit()
                 except Exception as e:
-                    error = e
+                    error = traceback.format_exc()
 
             result = {
                 "sqs_message_id": record.messageId,
-                "sqs_message_body": record.body,
                 "success": success,
                 "message": msg,
                 "uuid": str(receipt.uuid) if receipt else None,
-                "tx_id": receipt.tx_id if receipt else None,
-                "nonce": receipt.nonce if receipt else None,
-                "order_id": receipt.order_id if receipt else None,
-                "store": receipt.store if receipt else None,
+                "tx_id": str(receipt.tx_id) if receipt else None,
+                "nonce": str(receipt.nonce) if receipt else None,
+                "order_id": str(receipt.order_id) if receipt else None,
                 "error": error
             }
             results.append(result)
