@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict
 from uuid import UUID
 
 from pydantic import BaseModel as BaseSchema
@@ -76,6 +76,14 @@ class ReceiptSchema:
         # Parse purchase data to JSON
         if isinstance(self.data, str):
             self.data = json.loads(self.data)
+
+        if not self.store:
+            if "TransactionID" in self.data:
+                self.store = Store.APPLE
+            elif "orderId" in self.data:
+                self.store = Store.GOOGLE
+            else:
+                self.store = Store.TEST
 
         if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
             self.payload = json.loads(self.data["Payload"])
