@@ -140,19 +140,19 @@ def handle(event, context):
     with ScopedSession.begin() as session:
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
         receipt_dict = {str(x.uuid): x for x in session.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-        nonce = None
-        for i, record in enumerate(message.Records):
-            # Always 1 record in message since IAP sends one record at a time.
-            # TODO: Handle exceptions and send messages to DLQ
-            receipt = receipt_dict.get(record.body.get("uuid"))
-            logger.debug(f"UUID : {record.body.get('uuid')}")
-            success, msg = False, None
-            if not receipt:
-                success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
-            elif receipt.tx_id:
-                success, msg, tx_id = False, f"{record.body.get('uuid')} is already treated with Tx : {receipt.tx_id}", None
-            else:
-                receipt.tx_status = TxStatus.CREATED
+
+    nonce = None
+    for _, record in enumerate(message.Records):
+        receipt = receipt_dict.get(record.body.get("uuid"))
+        logger.debug(f"UUID : {record.body.get('uuid')}")
+        success, msg = False, None
+        if not receipt:
+            success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
+        elif receipt.tx_id:
+            success, msg, tx_id = False, f"{record.body.get('uuid')} is already treated with Tx : {receipt.tx_id}", None
+        else:
+            receipt.tx_status = TxStatus.CREATED
+            with ScopedSession.begin() as session:
                 (success, msg, tx_id), nonce, signed_tx = process(session, record, nonce=nonce)
                 receipt.nonce = nonce
                 if success:
@@ -162,16 +162,16 @@ def handle(event, context):
                 receipt.tx = signed_tx.hex()
                 session.add(receipt)
 
-            result = {
-                "sqs_message_id": record.messageId,
-                "success": success,
-                "message": msg,
-                "uuid": str(receipt.uuid) if receipt else None,
-                "tx_id": str(receipt.tx_id) if receipt else None,
-                "nonce": str(receipt.nonce) if receipt else None,
-                "order_id": str(receipt.order_id) if receipt else None,
-            }
-            results.append(result)
+        result = {
+            "sqs_message_id": record.messageId,
+            "success": success,
+            "message": msg,
+            "uuid": str(receipt.uuid) if receipt else None,
+            "tx_id": str(receipt.tx_id) if receipt else None,
+            "nonce": str(receipt.nonce) if receipt else None,
+            "order_id": str(receipt.order_id) if receipt else None,
+        }
+        results.append(result)
     
     for result in results:
         if result["success"]:
