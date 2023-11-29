@@ -32,6 +32,7 @@ GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 planet_dict = {
+    # Mainnet
     PlanetID.ODIN: {
         "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
         "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
@@ -39,7 +40,16 @@ planet_dict = {
     PlanetID.HEIMDALL: {
         "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
         "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    }
+    },
+    # Internal
+    PlanetID.ODIN_INTERNAL: {
+        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
+        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
+    },
+    PlanetID.HEIMDALL_INTERNAL: {
+        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
+        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
+    },
 }
 
 
