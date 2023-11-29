@@ -21,7 +21,7 @@ class Currency():
             }
         else:
             return {
-                "decimalPlaces": b'0',
+                "decimalPlaces": b'\x00',
                 "minters": None,
                 "ticker": ticker.upper(),
             }
