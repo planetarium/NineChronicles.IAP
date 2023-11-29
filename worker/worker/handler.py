@@ -114,7 +114,8 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
 
     unsigned_tx = create_unsigned_tx(
-        planet_id=PlanetID.ODIN, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
+        planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
+        public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
         plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
     signature = account.sign_tx(unsigned_tx)
@@ -132,7 +133,7 @@ def handle(event, context):
     - uuid (uuid): UUID of receipt-tx pair managed by DB
     """
     message = SQSMessage(Records=event.get("Records", {}))
-    logger.debug(f"SQS Message: {message}")
+    logger.info(f"SQS Message: {message}")
 
     sess = None
     results = []
@@ -146,7 +147,7 @@ def handle(event, context):
             # TODO: Handle exceptions and send messages to DLQ
             receipt = receipt_dict.get(record.body.get("uuid"))
             logger.debug(f"UUID : {record.body.get('uuid')}")
-            success, msg, error = False, None, None
+            success, msg = False, None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
@@ -155,18 +156,15 @@ def handle(event, context):
                 logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                try:
-                    (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
-                    receipt.nonce = nonce
-                    if success:
-                        nonce += 1
-                    receipt.tx_id = tx_id
-                    receipt.tx_status = TxStatus.STAGED
-                    receipt.tx = signed_tx.hex()
-                    sess.add(receipt)
-                    sess.commit()
-                except Exception as e:
-                    error = traceback.format_exc()
+                (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
+                receipt.nonce = nonce
+                if success:
+                    nonce += 1
+                receipt.tx_id = tx_id
+                receipt.tx_status = TxStatus.STAGED
+                receipt.tx = signed_tx.hex()
+                sess.add(receipt)
+                sess.commit()
 
             result = {
                 "sqs_message_id": record.messageId,
@@ -176,10 +174,12 @@ def handle(event, context):
                 "tx_id": str(receipt.tx_id) if receipt else None,
                 "nonce": str(receipt.nonce) if receipt else None,
                 "order_id": str(receipt.order_id) if receipt else None,
-                "error": error
             }
             results.append(result)
-            logger.info(json.dumps(result))
+            if success:
+                logger.info(json.dumps(result))
+            else:
+                logger.error(json.dumps(result))
     finally:
         if sess is not None:
             sess.close()
