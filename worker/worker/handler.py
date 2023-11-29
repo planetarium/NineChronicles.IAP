@@ -142,6 +142,10 @@ def handle(event, context):
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
         receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
         nonce = sess.scalar(select(Receipt.nonce).order_by(desc(Receipt.nonce)))
+        if nonce:
+            # Use next nonce
+            nonce += 1
+
         for i, record in enumerate(message.Records):
             # Always 1 record in message since IAP sends one record at a time.
             # TODO: Handle exceptions and send messages to DLQ
