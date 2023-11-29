@@ -2,13 +2,15 @@ from common.utils.actions import create_unload_my_garages_action_plain_value
 
 import bencodex
 
+
 def test_create_unload_my_garages_action_plain_value():
     fav_data = [
         {
             "balanceAddr": "1c2ae97380cfb4f732049e454f6d9a25d4967c6f",
             "value": {
                 "currencyTicker": "CRYSTAL",
-                "value": 1500000000000000000000000
+                "value": 1500000,
+                "decimalPlaces": 18,
             }
         }
     ]

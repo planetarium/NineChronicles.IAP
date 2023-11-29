@@ -102,7 +102,8 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
             "balanceAddr": balance_address,
             "value": {
                 "currencyTicker": self.ticker,
-                "value": self.amount
+                "value": self.amount,
+                "decimalPlaces": self.decimal_places,
             }
         }
 
