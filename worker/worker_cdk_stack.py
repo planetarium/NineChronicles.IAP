@@ -138,56 +138,30 @@ class WorkerStack(Stack):
         )
         minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
 
-        # Price updater Lambda function
-        # NOTE: Price is directly fetched between client and google play.
-        #  Not need to update price in IAP service.
-        # updater = _lambda.Function(
-        #     self, f"{config.stage}-9c-iap-price-updater-function",
-        #     function_name=f"{config.stage}-9c-iap-price-updater",
-        #     runtime=_lambda.Runtime.PYTHON_3_10,
-        #     description="9c IAP price updater from google/apple store",
-        #     code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-        #     handler="updater.update_prices",
-        #     layers=[layer],
-        #     role=role,
-        #     vpc=shared_stack.vpc,
-        #     timeout=cdk_core.Duration.seconds(120),
-        #     environment=env,
-        #     memory_size=192,
-        # )
-
-        # Every hour
-        # hourly_event_rule = _events.Rule(
-        #     self, f"{config.stage}-9c-iap-price-updater-event",
-        #     schedule=_events.Schedule.cron(minute="0")  # Every hour
-        # )
-        #
-        # hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
-
-        # IAP garage daily report
-        env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
-        garage_report = _lambda.Function(
-            self, f"{config.stage}-9c-iap-garage-report",
-            function_name=f"{config.stage}_9c-iap-garage-reporter",
-            runtime=_lambda.Runtime.PYTHON_3_10,
-            description="Daily report of 9c IAP Garage item count",
+        # IAP Status Monitor
+        status_monitor = _lambda.Function(
+            self, f"{config.stage}-9c-iap-status-monitor-function",
+            function_name=f"{config.stage}-9c-iap-status-monitor",
+            description="Receipt and Tx. status monitor for Nine Chronicles",
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-            handler="garage_noti.noti",
+            handler="status_monitor.handle",
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(10),
-            environment=env,
-            memory_size=192,
+            timeout=cdk_core.Duration.seconds(300),
+            memory_size=512,
         )
 
-        # EveryDay 03:00 UTC == 12:00 KST
-        if config.stage != "internal":
-            everyday_event_rule = _events.Rule(
-                self, f"{config.stage}-9c-iap-everyday-event",
-                schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
+        if config.stage == "mainnet":
+            minute_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
+        else:
+            # Every hour
+            hourly_event_rule = _events.Rule(
+                self, f"{config.stage}-9c-iap-hourly-event",
+                schedule=_events.Schedule.cron(minute="0")  # Every hour
             )
-            everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
+
+            hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
