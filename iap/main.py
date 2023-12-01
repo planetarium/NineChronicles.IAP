@@ -27,9 +27,14 @@ app = FastAPI(
 
 
 @app.middleware("http")
-def log_incoming_url(request: Request, call_next):
+async def log_request_response(request: Request, call_next):
     logger.info(f"[{request.method}] {request.url}")
-    return call_next(request)
+    response = await call_next(request)
+    if response.status_code == 200:
+        logger.info(f"Request success with {response.status_code}")
+    else:
+        logger.error(f"Request failed with {response.status_code}")
+    return response
 
 
 # Error handler
