@@ -143,6 +143,7 @@ class WorkerStack(Stack):
             self, f"{config.stage}-9c-iap-status-monitor-function",
             function_name=f"{config.stage}-9c-iap-status-monitor",
             description="Receipt and Tx. status monitor for Nine Chronicles",
+            runtime=_lambda.Runtime.PYTHON_3_10,
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="status_monitor.handle",
             layers=[layer],
