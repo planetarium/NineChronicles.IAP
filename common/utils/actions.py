@@ -15,7 +15,7 @@ def create_unload_my_garages_action_plain_value(id: str, fav_data: List, avatar_
                 [
                     [
                         bytes.fromhex(x['balanceAddr'][2:] if x["balanceAddr"].startswith("0x") else x["balanceAddr"]),
-                        FungibleAsset.to_fungible_asset(x['value']['currencyTicker'], int(x['value']['value']))
+                        FungibleAsset.to_fungible_asset(x['value']['currencyTicker'], int(x['value']['value']), int(x['value']['decimalPlaces']))
                     ]
                     for x in fav_data
                 ],
