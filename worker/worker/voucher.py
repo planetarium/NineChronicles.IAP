@@ -1,9 +1,11 @@
 import os
 from datetime import datetime, timezone, timedelta
+from typing import Tuple
 
 import jwt
 import requests
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
@@ -34,7 +36,7 @@ def get_voucher_token() -> str:
     return jwt.encode(data, VOUCHER_JWT_SECRET)
 
 
-def request(sess, voucher: VoucherRequest) -> bool:
+def request(sess, voucher: VoucherRequest) -> Tuple[bool, VoucherRequest]:
     resp = requests.post(
         VOUCHER_URL,
         headers={"Authorization": f"Bearer {get_voucher_token()}"},
@@ -60,7 +62,7 @@ def request(sess, voucher: VoucherRequest) -> bool:
     sess.commit()
     sess.refresh(voucher)
 
-    return success
+    return success, voucher
 
 
 def handle(event, context):
@@ -78,9 +80,15 @@ def handle(event, context):
             voucher = VoucherRequest(**msg)
             voucher.planet_id = PlanetID(voucher.planet_id.encode())
             sess.add(voucher)
-            sess.commit()
-            sess.refresh(voucher)
-            request(sess, voucher)
+            try:
+                sess.commit()
+                sess.refresh(voucher)
+            except IntegrityError:
+                logger.warning(f"Receipt {voucher.uuid} is duplicated. Skip.")
+                sess.rollback()
+            else:
+                success, voucher = request(sess, voucher)
+                logger.info(f"Voucher request for {voucher.uuid} :: {success} :: {voucher.message}")
     finally:
         if sess is not None:
             sess.close()

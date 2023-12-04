@@ -11,7 +11,7 @@ from common.utils.receipt import PlanetID
 
 class VoucherRequest(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "voucher_request"
-    receipt_id = Column(Integer, ForeignKey("receipt.id"), nullable=False)
+    receipt_id = Column(Integer, ForeignKey("receipt.id"), nullable=False, unique=True)
     receipt: Mapped["Receipt"] = relationship("Receipt", foreign_keys=[receipt_id], uselist=False,
                                               backref=backref("voucher_request"))
 
