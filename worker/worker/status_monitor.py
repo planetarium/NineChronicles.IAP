@@ -153,14 +153,17 @@ def check_garage():
 
 
 def handle(event, context):
-    session = scoped_session(sessionmaker(bind=engine))
+    sess = scoped_session(sessionmaker(bind=engine))
     if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
         check_garage()
 
-    with session.begin() as sess:
+    try:
         check_invalid_receipt(sess)
         check_halt_tx(sess)
         check_tx_failure(sess)
+    finally:
+        if sess is not None:
+            sess.close()
 
 
 if __name__ == "__main__":
