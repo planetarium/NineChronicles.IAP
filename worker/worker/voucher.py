@@ -39,10 +39,10 @@ def request(sess, voucher: VoucherRequest) -> bool:
         VOUCHER_URL,
         headers={"Authorization": f"Bearer {get_voucher_token()}"},
         json={
-            "planetId": voucher.planet_id,
+            "planetId": voucher.planet_id.decode(),
             "agentAddress": voucher.agent_addr,
             # "avatarAddress": voucher.avatar_addr,
-            "iapUuid": voucher.uuid,
+            "iapUuid": str(voucher.uuid),
             "productId": voucher.product_id,
             "productName": voucher.product.name,
         },
