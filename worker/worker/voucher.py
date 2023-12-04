@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from common import logger
 from common.models.voucher import VoucherRequest
 from common.utils.aws import fetch_secrets, fetch_parameter
+from common.utils.receipt import PlanetID
 from schemas.aws import SQSMessage
 
 DB_URI = os.environ.get("DB_URI")
@@ -66,7 +67,8 @@ def handle(event, context):
     message = SQSMessage(Records=event.get("Records", {}))
     logger.info(f"SQS Message: {message}")
 
-    with scoped_session(sessionmaker(bind=engine)) as sess:
+    sess = scoped_session(sessionmaker(bind=engine))
+    try:
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid")]
         voucher_list = sess.scalars(select(VoucherRequest.uuid).where(VoucherRequest.uuid.in_(uuid_list))).fetchall()
         target_message_list = [x.body for x in message.Records if
@@ -74,7 +76,11 @@ def handle(event, context):
 
         for msg in target_message_list:
             voucher = VoucherRequest(**msg)
+            voucher.planet_id = PlanetID(voucher.planet_id.encode())
             sess.add(voucher)
             sess.commit()
             sess.refresh(voucher)
             request(sess, voucher)
+    finally:
+        if sess is not None:
+            sess.close()
