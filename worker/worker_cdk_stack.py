@@ -146,6 +146,7 @@ class WorkerStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_10,
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="status_monitor.handle",
+            environment=env,
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
@@ -172,7 +173,14 @@ class WorkerStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_10,
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="voucher.handle",
-
+            layers=[layer],
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(30),
+            memory_size=512,
+            events=[
+                _evt_src.SqsEventSource(shared_stack.voucher_q)
+            ],
         )
 
         # Golden dust by NCG handler
