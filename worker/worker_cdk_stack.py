@@ -174,6 +174,7 @@ class WorkerStack(Stack):
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="voucher.handle",
             layers=[layer],
+            environment=env,
             role=role,
             vpc=shared_stack.vpc,
             timeout=cdk_core.Duration.seconds(30),
