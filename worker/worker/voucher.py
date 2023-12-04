@@ -66,7 +66,8 @@ def handle(event, context):
     message = SQSMessage(Records=event.get("Records", {}))
     logger.info(f"SQS Message: {message}")
 
-    with scoped_session(sessionmaker(bind=engine)).begin() as sess:
+    sess = scoped_session(sessionmaker(bind=engine))
+    try:
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid")]
         voucher_list = sess.scalars(select(VoucherRequest.uuid).where(VoucherRequest.uuid.in_(uuid_list))).fetchall()
         target_message_list = [x.body for x in message.Records if
@@ -78,3 +79,6 @@ def handle(event, context):
             sess.commit()
             sess.refresh(voucher)
             request(sess, voucher)
+    finally:
+        if sess is not None:
+            sess.close()
