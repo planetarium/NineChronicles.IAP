@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 
 import aws_cdk as cdk_core
 import boto3
@@ -167,6 +168,8 @@ class WorkerStack(Stack):
             hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
         # IAP Voucher
+        voucher_env = deepcopy(env)
+        voucher_env["VOUCHER_URL"] = config.voucher_url
         voucher_handler = _lambda.Function(
             self, f"{config.stage}-9c-iap-voucher-handler-function",
             function_name=f"{config.stage}-9c-iap-voucher-handler",
@@ -175,7 +178,7 @@ class WorkerStack(Stack):
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="voucher.handle",
             layers=[layer],
-            environment=env,
+            environment=voucher_env,
             role=role,
             vpc=shared_stack.vpc,
             timeout=cdk_core.Duration.seconds(30),
