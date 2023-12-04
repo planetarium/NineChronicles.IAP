@@ -41,6 +41,8 @@ on:
         required: true
       SEASON_PASS_JWT_SECRET:
         required: true
+      VOUCHER_JWT_SECRET:
+        required: true
       BRIDGE_DATA:
         required: true
 
@@ -137,6 +139,7 @@ jobs:
           CDN_HOST: ${{ vars.CDN_HOST }}
           PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+          VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
         run: |
           source $VENV
@@ -166,6 +169,7 @@ jobs:
           CDN_HOST: ${{ vars.CDN_HOST }}
           PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+          VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
         run: |
           source $VENV
