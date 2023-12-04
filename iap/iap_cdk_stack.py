@@ -8,7 +8,6 @@ from aws_cdk import (
     aws_certificatemanager as _acm,
     aws_iam as _iam,
     aws_lambda as _lambda,
-    aws_logs as _logs,
 )
 from constructs import Construct
 
@@ -64,7 +63,7 @@ class APIStack(Stack):
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions=["sqs:sendmessage"],
-                resources=[shared_stack.q.queue_arn]
+                resources=[shared_stack.q.queue_arn, shared_stack.voucher_q.queue_arn, ]
             )
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
@@ -92,6 +91,7 @@ class APIStack(Stack):
             "LOGGING_LEVEL": "INFO",
             "DB_ECHO": "False",
             "SQS_URL": shared_stack.q.queue_url,
+            "VOUCHER_SQS_URL": shared_stack.voucher_q.queue_url,
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "APPLE_BUNDLE_ID": config.apple_bundle_id,
             "APPLE_VALIDATION_URL": config.apple_validation_url,
@@ -104,7 +104,7 @@ class APIStack(Stack):
         }
 
         # Lambda Function
-        exclude_list = [".", "*", ".idea", ".git", ".pytest_cache", ".gitignore", ".github",]
+        exclude_list = [".", "*", ".idea", ".git", ".pytest_cache", ".gitignore", ".github", ]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
         exclude_list.extend(IAP_LAMBDA_EXCLUDE)
 
