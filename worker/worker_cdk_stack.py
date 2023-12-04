@@ -164,6 +164,17 @@ class WorkerStack(Stack):
 
             hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
+        # IAP Voucher
+        voucher_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-voucher-handler-function",
+            function_name=f"{config.stage}-9c-iap-voucher-handler",
+            description="IAP voucher handler between IAP and portal",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="voucher.handle",
+
+        )
+
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
         env["GOLDEN_DUST_WORK_SHEET_ID"] = config.golden_dust_work_sheet_id

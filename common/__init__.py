@@ -60,3 +60,6 @@ class Config:
 
     # SeasonPass
     season_pass_jwt_secret: str = None
+
+    # Voucher
+    voucher_jwt_secret: str = None
