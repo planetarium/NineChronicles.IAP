@@ -165,7 +165,6 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     logger.info(f"Send voucher request: {receipt.uuid}")
     resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
                             MessageBody=json.dumps({
-                                "id": receipt.id,
                                 "uuid": str(receipt.uuid),
                                 "receipt_id": receipt.id,
                                 "product_id": receipt.product_id,
