@@ -35,6 +35,8 @@ on:
         required: true
       IAP_GARAGE_WEBHOOK_URL:
         required: true
+      IAP_ALERT_WEBHOOK_URL:
+        required: true
       GOLDEN_DUST_REQUEST_SHEET_ID:
         required: true
       GOLDEN_DUST_WORK_SHEET_ID:
@@ -133,6 +135,7 @@ jobs:
           APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
           IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+          IAP_ALERT_WEBHOOK_URL: ${{ secrets.IAP_ALERT_WEBHOOK_URL }}
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
@@ -163,6 +166,7 @@ jobs:
           APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
           IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+          IAP_ALERT_WEBHOOK_URL: ${{ secrets.IAP_ALERT_WEBHOOK_URL }}
           GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
