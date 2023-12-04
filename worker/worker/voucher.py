@@ -45,7 +45,7 @@ def request(sess, voucher: VoucherRequest) -> Tuple[bool, VoucherRequest]:
             "agentAddress": voucher.agent_addr,
             # "avatarAddress": voucher.avatar_addr,
             "iapUuid": str(voucher.uuid),
-            "productId": voucher.product_id,
+            "productId": str(voucher.product_id),
             "productName": voucher.product.name,
         },
     )
