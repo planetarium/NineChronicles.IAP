@@ -17,7 +17,7 @@ DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 VOUCHER_URL = os.environ.get("VOUCHER_URL")
 VOUCHER_JWT_SECRET = fetch_parameter(
     os.environ.get("REGION_NAME"),
-    f"{os.environ.get('STAGE')}_9c_IAP_SEASON_PASS_JWT_SECRET",
+    f"{os.environ.get('STAGE')}_9c_IAP_VOUCHER_JWT_SECRET",
     True
 )["Value"]
 
