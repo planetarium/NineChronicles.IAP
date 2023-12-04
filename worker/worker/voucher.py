@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from common import logger
 from common.models.voucher import VoucherRequest
 from common.utils.aws import fetch_secrets, fetch_parameter
+from common.utils.receipt import PlanetID
 from schemas.aws import SQSMessage
 
 DB_URI = os.environ.get("DB_URI")
@@ -75,6 +76,7 @@ def handle(event, context):
 
         for msg in target_message_list:
             voucher = VoucherRequest(**msg)
+            voucher.planet_id = PlanetID(voucher.planet_id.encode())
             sess.add(voucher)
             sess.commit()
             sess.refresh(voucher)
