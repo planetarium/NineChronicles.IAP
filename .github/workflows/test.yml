@@ -66,7 +66,7 @@ jobs:
 
       - name: Run test
         run: |
-          poetry run pytest tests/utils
+          poetry run pytest tests
 
   slack_notification:
     uses: ./.github/workflows/slack_message.yml

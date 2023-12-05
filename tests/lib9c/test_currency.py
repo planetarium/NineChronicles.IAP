@@ -17,7 +17,7 @@ def test_garage():
 
 def test_other():
     other = Currency.to_currency("other")
-    assert other["decimalPlaces"] == b'0'
+    assert other["decimalPlaces"] == b'\x00'
     assert other["minters"] == None
     assert other["ticker"] == "OTHER"
 
@@ -27,4 +27,4 @@ def test_serialize():
     garage = Currency.to_currency("garage")
     assert Currency.serialize(garage) == bencodex.dumps({'decimalPlaces': b'\x12', 'minters': None, 'ticker': 'GARAGE', 'totalSupplyTrackable': True})
     other = Currency.to_currency("other")
-    assert Currency.serialize(other) == bencodex.dumps({'decimalPlaces': b'0', 'minters': None, 'ticker': 'OTHER'})
+    assert Currency.serialize(other) == bencodex.dumps({'decimalPlaces': b'\x00', 'minters': None, 'ticker': 'OTHER'})
