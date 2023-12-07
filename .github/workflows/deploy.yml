@@ -45,6 +45,8 @@ on:
         required: true
       BRIDGE_DATA:
         required: true
+      REFUND_SHEET_ID:
+        required: true
 
 jobs:
   deployment:
@@ -141,6 +143,7 @@ jobs:
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
+          REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
         run: |
           source $VENV
           yarn cdk synth
@@ -171,6 +174,7 @@ jobs:
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
+          REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
         run: |
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt
