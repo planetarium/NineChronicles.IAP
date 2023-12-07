@@ -189,7 +189,7 @@ class WorkerStack(Stack):
             memory_size=256,
             timeout=cdk_core.Duration.seconds(120),
             role=role,
-            env=refund_env,
+            environment=refund_env,
             layers=[layer],
             vpc=shared_stack.vpc,
         )
