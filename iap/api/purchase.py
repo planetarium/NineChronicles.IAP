@@ -162,18 +162,18 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     )
     sess.add(receipt)
     sess.commit()
-    logger.info(f"Send voucher request: {receipt.uuid}")
-    resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
-                            MessageBody=json.dumps({
-                                "id": receipt.id,
-                                "uuid": receipt.uuid,
-                                "product_id": receipt.product_id,
-                                "product_name": receipt.product.name,
-                                "agent_addr": receipt.agent_addr,
-                                "avatar_addr": receipt.avatar_addr,
-                                "planet_id": receipt_data.planetId.decode(),
-                            }))
-    logger.info(f"Voucher message: {resp['MessageId']}")
+    # logger.info(f"Send voucher request: {receipt.uuid}")
+    # resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
+    #                         MessageBody=json.dumps({
+    #                             "id": receipt.id,
+    #                             "uuid": receipt.uuid,
+    #                             "product_id": receipt.product_id,
+    #                             "product_name": receipt.product.name,
+    #                             "agent_addr": receipt.agent_addr,
+    #                             "avatar_addr": receipt.avatar_addr,
+    #                             "planet_id": receipt_data.planetId.decode(),
+    #                         }))
+    # logger.info(f"Voucher message: {resp['MessageId']}")
     sess.refresh(receipt)
 
     if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
