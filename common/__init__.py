@@ -66,4 +66,5 @@ class Config:
     season_pass_jwt_secret: str = None
 
     # Voucher
+    voucher_url: str = None
     voucher_jwt_secret: str = None

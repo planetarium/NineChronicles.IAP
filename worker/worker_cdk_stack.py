@@ -71,6 +71,7 @@ class WorkerStack(Stack):
                     shared_stack.google_credential_arn,
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
+                    shared_stack.voucher_jwt_secret_arn,
                 ]
             )
         )
@@ -170,6 +171,8 @@ class WorkerStack(Stack):
             hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
         # IAP Voucher
+        voucher_env = deepcopy(env)
+        voucher_env["VOUCHER_URL"] = config.voucher_url
         voucher_handler = _lambda.Function(
             self, f"{config.stage}-9c-iap-voucher-handler-function",
             function_name=f"{config.stage}-9c-iap-voucher-handler",
@@ -178,7 +181,7 @@ class WorkerStack(Stack):
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="voucher.handle",
             layers=[layer],
-            environment=env,
+            environment=voucher_env,
             role=role,
             vpc=shared_stack.vpc,
             timeout=cdk_core.Duration.seconds(30),
@@ -187,6 +190,31 @@ class WorkerStack(Stack):
                 _evt_src.SqsEventSource(shared_stack.voucher_q)
             ],
         )
+
+        # Update refund sheet
+        refund_env = deepcopy(env)
+        refund_env["REFUND_SHEET_ID"] = os.environ.get("REFUND_SHEET_ID")
+        google_refund_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-refund-update-function",
+            function_name=f"{config.stage}-9c-iap-refund-update",
+            description="Refund google sheet update function",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="google_refund_tracker.handle",
+            memory_size=256,
+            timeout=cdk_core.Duration.seconds(120),
+            role=role,
+            environment=refund_env,
+            layers=[layer],
+            vpc=shared_stack.vpc,
+        )
+
+        # Everyday 01:00 UTC
+        everyday_0100_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-everyday-0100-event",
+            schedule=_events.Schedule.cron(minute="0", hour="1")  # Every day 01:00 UTC
+        )
+        everyday_0100_rule.add_target(_event_targets.LambdaFunction(google_refund_handler))
 
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
