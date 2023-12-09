@@ -157,10 +157,9 @@ def handle(event, context):
     if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
         check_garage()
 
-    with session.begin() as sess:
-        check_invalid_receipt(sess)
-        check_halt_tx(sess)
-        check_tx_failure(sess)
+    check_invalid_receipt(sess)
+    check_halt_tx(sess)
+    check_tx_failure(sess)
 
 
 if __name__ == "__main__":
