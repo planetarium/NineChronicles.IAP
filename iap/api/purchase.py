@@ -59,17 +59,21 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
         return True, "", schema
 
 
-def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
+def validate_google(sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
     client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    resp = GooglePurchaseSchema(
-        **(client.purchases().products()
-           .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
-           .execute())
-    )
-    msg = ""
-    if resp.purchaseState != GooglePurchaseState.PURCHASED:
-        return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
-    return True, msg, resp
+    try:
+        resp = GooglePurchaseSchema(
+            **(client.purchases().products()
+               .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
+               .execute())
+        )
+        if resp.purchaseState != GooglePurchaseState.PURCHASED:
+            return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
+        return True, "", resp
+
+    except Exception as e:
+        logger.warning(e)
+        return False, f"Error occurred validating google receipt: {e}", None
 
 
 def consume_google(sku: str, token: str):
