@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
@@ -44,7 +45,10 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
     }
     resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
     if resp.status_code != 200:
-        return False, f"Purchase state of this receipt is not valid: {resp.text}", None
+        time.sleep(1)
+        resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+        if resp.status_code != 200:
+            return False, f"Purchase state of this receipt is not valid: {resp.text}", None
     try:
         data = jwt.decode(resp.json()["signedTransactionInfo"], options={"verify_signature": False})
         logger.debug(data)
