@@ -232,8 +232,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     ## Test
     elif receipt_data.store == Store.TEST:
         if os.environ.get("STAGE") == "mainnet":
-            receipt.status = ReceiptStatus.INVALID
-            success, msg = False, f"{receipt.store} is not validatable store."
+            success, msg = False, f"{receipt.store} is not allowed."
         else:
             success, msg = True, "This is test"
     ## INVALID
@@ -242,6 +241,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         success, msg = False, f"{receipt.store} is not validatable store."
 
     if not success:
+        receipt.msg = msg
         receipt.status = ReceiptStatus.INVALID
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
