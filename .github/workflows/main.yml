@@ -42,12 +42,14 @@ jobs:
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+      IAP_ALERT_WEBHOOK_URL: ${{ secrets.IAP_ALERT_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
       SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
       VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
+      REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
 
   deploy_without_approval:
     # This is for development / internal deployment
@@ -67,12 +69,14 @@ jobs:
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+      IAP_ALERT_WEBHOOK_URL: ${{ secrets.IAP_ALERT_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
       SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
       VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
+      REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
 
   approval:
     runs-on: ubuntu-latest
@@ -104,9 +108,11 @@ jobs:
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       IAP_GARAGE_WEBHOOK_URL: ${{ secrets.IAP_GARAGE_WEBHOOK_URL }}
+      IAP_ALERT_WEBHOOK_URL: ${{ secrets.IAP_ALERT_WEBHOOK_URL }}
       GOLDEN_DUST_REQUEST_SHEET_ID: ${{ secrets.GOLDEN_DUST_REQUEST_SHEET_ID }}
       GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
       SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
       VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
+      REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}

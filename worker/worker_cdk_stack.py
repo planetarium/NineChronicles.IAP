@@ -93,6 +93,28 @@ class WorkerStack(Stack):
             "BRIDGE_DATA": config.bridge_data,
         }
 
+        # Cloudwatch Events
+        ## Every minute
+        minute_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-every-minute-event",
+            schedule=_events.Schedule.cron(minute="*")  # Every minute
+        )
+        # Every ten minute
+        ten_minute_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-ten-minute-event",
+            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
+        )
+        ## Every hour
+        hourly_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-hourly-event",
+            schedule=_events.Schedule.cron(minute="0")  # Every hour
+        )
+        # Everyday 01:00 UTC
+        everyday_0100_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-everyday-0100-event",
+            schedule=_events.Schedule.cron(minute="0", hour="1")  # Every day 01:00 UTC
+        )
+
         # Worker Lambda Function
         exclude_list = [".idea", ".gitignore", ]
         exclude_list.extend(COMMON_LAMBDA_EXCLUDE)
@@ -132,15 +154,12 @@ class WorkerStack(Stack):
             timeout=cdk_core.Duration.seconds(50),
             environment=env,
         )
-
-        # Every minute
-        minute_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-tracker-event",
-            schedule=_events.Schedule.cron(minute="*")  # Every minute
-        )
         minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
 
         # IAP Status Monitor
+        monitor_env = deepcopy(env)
+        monitor_env["IAP_GARAGE_WEBHOOK_URL"] = config.iap_garage_webhook_url
+        monitor_env["IAP_ALERT_WEBHOOK_URL"] = config.iap_alert_webhook_url
         status_monitor = _lambda.Function(
             self, f"{config.stage}-9c-iap-status-monitor-function",
             function_name=f"{config.stage}-9c-iap-status-monitor",
@@ -148,7 +167,7 @@ class WorkerStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_10,
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
             handler="status_monitor.handle",
-            environment=env,
+            environment=monitor_env,
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
@@ -157,14 +176,8 @@ class WorkerStack(Stack):
         )
 
         if config.stage == "mainnet":
-            minute_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
+            ten_minute_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
         else:
-            # Every hour
-            hourly_event_rule = _events.Rule(
-                self, f"{config.stage}-9c-iap-hourly-event",
-                schedule=_events.Schedule.cron(minute="0")  # Every hour
-            )
-
             hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
         # IAP Voucher
@@ -188,6 +201,25 @@ class WorkerStack(Stack):
             ],
         )
 
+        # Update refund sheet
+        refund_env = deepcopy(env)
+        refund_env["REFUND_SHEET_ID"] = os.environ.get("REFUND_SHEET_ID")
+        google_refund_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-refund-update-function",
+            function_name=f"{config.stage}-9c-iap-refund-update",
+            description="Refund google sheet update function",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="google_refund_tracker.handle",
+            memory_size=256,
+            timeout=cdk_core.Duration.seconds(120),
+            role=role,
+            environment=refund_env,
+            layers=[layer],
+            vpc=shared_stack.vpc,
+        )
+        everyday_0100_rule.add_target(_event_targets.LambdaFunction(google_refund_handler))
+
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
         env["GOLDEN_DUST_WORK_SHEET_ID"] = config.golden_dust_work_sheet_id
@@ -207,12 +239,6 @@ class WorkerStack(Stack):
             memory_size=512,
             reserved_concurrent_executions=1,
         )
-
-        # Every ten minute
-        ten_minute_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-gd-handler-event",
-            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
-        )
         ten_minute_event_rule.add_target(_event_targets.LambdaFunction(gd_handler))
 
         # Golden dust unload Tx. tracker
@@ -230,7 +256,6 @@ class WorkerStack(Stack):
             environment=env,
             memory_size=256,
         )
-
         minute_event_rule.add_target(_event_targets.LambdaFunction(gd_tracker))
 
         # Manual unload function

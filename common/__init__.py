@@ -58,6 +58,10 @@ class Config:
     golden_dust_work_sheet_id: Optional[str] = None
     form_sheet: Optional[str] = None
 
+    # Status monitor
+    iap_garage_webhook_url: str = None
+    iap_alert_webhook_url: str = None
+
     # SeasonPass
     season_pass_jwt_secret: str = None
 
