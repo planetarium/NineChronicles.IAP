@@ -226,18 +226,18 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
-    # logger.info(f"Send voucher request: {receipt.uuid}")
-    # resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
-    #                         MessageBody=json.dumps({
-    #                             "id": receipt.id,
-    #                             "uuid": receipt.uuid,
-    #                             "product_id": receipt.product_id,
-    #                             "product_name": receipt.product.name,
-    #                             "agent_addr": receipt.agent_addr,
-    #                             "avatar_addr": receipt.avatar_addr,
-    #                             "planet_id": receipt_data.planetId.decode(),
-    #                         }))
-    # logger.info(f"Voucher message: {resp['MessageId']}")
+    logger.info(f"Send voucher request: {receipt.uuid}")
+    resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
+                            MessageBody=json.dumps({
+                                "receipt_id": receipt.id,
+                                "uuid": str(receipt.uuid),
+                                "product_id": receipt.product_id,
+                                "product_name": receipt.product.name,
+                                "agent_addr": receipt.agent_addr,
+                                "avatar_addr": receipt.avatar_addr,
+                                "planet_id": receipt_data.planetId.decode(),
+                            }))
+    logger.info(f"Voucher message: {resp['MessageId']}")
 
     now = datetime.now()
     if ((product.open_timestamp and product.open_timestamp > now) or
