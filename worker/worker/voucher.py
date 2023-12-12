@@ -83,8 +83,8 @@ def handle(event, context):
             try:
                 sess.commit()
                 sess.refresh(voucher)
-            except IntegrityError:
-                logger.warning(f"Receipt {voucher.uuid} is duplicated. Skip.")
+            except Exception as e:
+                logger.error(e)
                 sess.rollback()
             else:
                 success, voucher = request(sess, voucher)
