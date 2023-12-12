@@ -25,6 +25,7 @@ FUNGIBLE_DICT = {
     "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe": "AP Potion (500000)",
     "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820": "Silver Dust (800201)",
     "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0": "Golden Dust (600201)",
+    "48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308": "Golden Meat (800202)",
 }
 
 engine = create_engine(DB_URI)
@@ -129,6 +130,7 @@ def check_garage():
             "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a",  # Hourglass (400000)
             "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe",  # AP Potion (500000)
             "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"   # Golden Dust (600201)
+            "48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308",  # Golden Meat (800202)
             "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820",  # Silver Dust (800201)
           ]
         ) {
