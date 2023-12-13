@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 
 import aws_cdk as cdk_core
 import boto3
@@ -70,6 +71,7 @@ class WorkerStack(Stack):
                     shared_stack.google_credential_arn,
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
+                    shared_stack.voucher_jwt_secret_arn,
                 ]
             )
         )
@@ -90,6 +92,28 @@ class WorkerStack(Stack):
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
         }
+
+        # Cloudwatch Events
+        ## Every minute
+        minute_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-every-minute-event",
+            schedule=_events.Schedule.cron(minute="*")  # Every minute
+        )
+        # Every ten minute
+        ten_minute_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-ten-minute-event",
+            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
+        )
+        ## Every hour
+        hourly_event_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-hourly-event",
+            schedule=_events.Schedule.cron(minute="0")  # Every hour
+        )
+        # Everyday 01:00 UTC
+        everyday_0100_rule = _events.Rule(
+            self, f"{config.stage}-9c-iap-everyday-0100-event",
+            schedule=_events.Schedule.cron(minute="0", hour="1")  # Every day 01:00 UTC
+        )
 
         # Worker Lambda Function
         exclude_list = [".idea", ".gitignore", ]
@@ -130,64 +154,71 @@ class WorkerStack(Stack):
             timeout=cdk_core.Duration.seconds(50),
             environment=env,
         )
-
-        # Every minute
-        minute_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-tracker-event",
-            schedule=_events.Schedule.cron(minute="*")  # Every minute
-        )
         minute_event_rule.add_target(_event_targets.LambdaFunction(tracker))
 
-        # Price updater Lambda function
-        # NOTE: Price is directly fetched between client and google play.
-        #  Not need to update price in IAP service.
-        # updater = _lambda.Function(
-        #     self, f"{config.stage}-9c-iap-price-updater-function",
-        #     function_name=f"{config.stage}-9c-iap-price-updater",
-        #     runtime=_lambda.Runtime.PYTHON_3_10,
-        #     description="9c IAP price updater from google/apple store",
-        #     code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-        #     handler="updater.update_prices",
-        #     layers=[layer],
-        #     role=role,
-        #     vpc=shared_stack.vpc,
-        #     timeout=cdk_core.Duration.seconds(120),
-        #     environment=env,
-        #     memory_size=192,
-        # )
-
-        # Every hour
-        # hourly_event_rule = _events.Rule(
-        #     self, f"{config.stage}-9c-iap-price-updater-event",
-        #     schedule=_events.Schedule.cron(minute="0")  # Every hour
-        # )
-        #
-        # hourly_event_rule.add_target(_event_targets.LambdaFunction(updater))
-
-        # IAP garage daily report
-        env["IAP_GARAGE_WEBHOOK_URL"] = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
-        garage_report = _lambda.Function(
-            self, f"{config.stage}-9c-iap-garage-report",
-            function_name=f"{config.stage}_9c-iap-garage-reporter",
+        # IAP Status Monitor
+        monitor_env = deepcopy(env)
+        monitor_env["IAP_GARAGE_WEBHOOK_URL"] = config.iap_garage_webhook_url
+        monitor_env["IAP_ALERT_WEBHOOK_URL"] = config.iap_alert_webhook_url
+        status_monitor = _lambda.Function(
+            self, f"{config.stage}-9c-iap-status-monitor-function",
+            function_name=f"{config.stage}-9c-iap-status-monitor",
+            description="Receipt and Tx. status monitor for Nine Chronicles",
             runtime=_lambda.Runtime.PYTHON_3_10,
-            description="Daily report of 9c IAP Garage item count",
             code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-            handler="garage_noti.noti",
+            handler="status_monitor.handle",
+            environment=monitor_env,
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            timeout=cdk_core.Duration.seconds(10),
-            environment=env,
-            memory_size=192,
+            timeout=cdk_core.Duration.seconds(300),
+            memory_size=512,
         )
 
-        # EveryDay 03:00 UTC == 12:00 KST
-        if config.stage != "internal":
-            everyday_event_rule = _events.Rule(
-                self, f"{config.stage}-9c-iap-everyday-event",
-                schedule=_events.Schedule.cron(hour="3", minute="0")  # Every day 00:00 ETC
-            )
-            everyday_event_rule.add_target(_event_targets.LambdaFunction(garage_report))
+        if config.stage == "mainnet":
+            ten_minute_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
+        else:
+            hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
+
+        # IAP Voucher
+        voucher_env = deepcopy(env)
+        voucher_env["VOUCHER_URL"] = config.voucher_url
+        voucher_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-voucher-handler-function",
+            function_name=f"{config.stage}-9c-iap-voucher-handler",
+            description="IAP voucher handler between IAP and portal",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="voucher.handle",
+            layers=[layer],
+            environment=voucher_env,
+            role=role,
+            vpc=shared_stack.vpc,
+            timeout=cdk_core.Duration.seconds(30),
+            memory_size=512,
+            events=[
+                _evt_src.SqsEventSource(shared_stack.voucher_q)
+            ],
+        )
+
+        # Update refund sheet
+        refund_env = deepcopy(env)
+        refund_env["REFUND_SHEET_ID"] = os.environ.get("REFUND_SHEET_ID")
+        google_refund_handler = _lambda.Function(
+            self, f"{config.stage}-9c-iap-refund-update-function",
+            function_name=f"{config.stage}-9c-iap-refund-update",
+            description="Refund google sheet update function",
+            runtime=_lambda.Runtime.PYTHON_3_10,
+            code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+            handler="google_refund_tracker.handle",
+            memory_size=256,
+            timeout=cdk_core.Duration.seconds(120),
+            role=role,
+            environment=refund_env,
+            layers=[layer],
+            vpc=shared_stack.vpc,
+        )
+        everyday_0100_rule.add_target(_event_targets.LambdaFunction(google_refund_handler))
 
         # Golden dust by NCG handler
         env["GOLDEN_DUST_REQUEST_SHEET_ID"] = config.golden_dust_request_sheet_id
@@ -208,12 +239,6 @@ class WorkerStack(Stack):
             memory_size=512,
             reserved_concurrent_executions=1,
         )
-
-        # Every ten minute
-        ten_minute_event_rule = _events.Rule(
-            self, f"{config.stage}-9c-iap-gd-handler-event",
-            schedule=_events.Schedule.cron(minute="*/10")  # Every ten minute
-        )
         ten_minute_event_rule.add_target(_event_targets.LambdaFunction(gd_handler))
 
         # Golden dust unload Tx. tracker
@@ -231,7 +256,6 @@ class WorkerStack(Stack):
             environment=env,
             memory_size=256,
         )
-
         minute_event_rule.add_target(_event_targets.LambdaFunction(gd_tracker))
 
         # Manual unload function

@@ -35,6 +35,7 @@ router = APIRouter(
 
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
+VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
 
 
 def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
@@ -210,7 +211,11 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         receipt.product_id = product.id
     ## Test
     elif receipt_data.store == Store.TEST:
-        success, msg = True, "This is test"
+        if os.environ.get("STAGE") == "mainnet":
+            receipt.status = ReceiptStatus.INVALID
+            success, msg = False, f"{receipt.store} is not validatable store."
+        else:
+            success, msg = True, "This is test"
     ## INVALID
     else:
         receipt.status = ReceiptStatus.UNKNOWN
@@ -221,6 +226,18 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
+    logger.info(f"Send voucher request: {receipt.uuid}")
+    resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
+                            MessageBody=json.dumps({
+                                "receipt_id": receipt.id,
+                                "uuid": str(receipt.uuid),
+                                "product_id": receipt.product_id,
+                                "product_name": receipt.product.name,
+                                "agent_addr": receipt.agent_addr,
+                                "avatar_addr": receipt.avatar_addr,
+                                "planet_id": receipt_data.planetId.decode(),
+                            }))
+    logger.info(f"Voucher message: {resp['MessageId']}")
 
     now = datetime.now()
     if ((product.open_timestamp and product.open_timestamp > now) or
