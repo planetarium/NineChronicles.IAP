@@ -49,8 +49,15 @@ class SharedStack(Stack):
         self.dlq = _sqs.Queue(self, f"{config.stage}-9c-iap-dlq")
         self.q = _sqs.Queue(
             self, f"{config.stage}-9c-iap-queue",
-            dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
-            visibility_timeout=cdk_core.Duration.seconds(120),
+            dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=15, queue=self.dlq),
+            visibility_timeout=cdk_core.Duration.seconds(20),
+        )
+
+        self.voucher_dlq = _sqs.Queue(self, f"{config.stage}-9c-iap-voucher-dlq")
+        self.voucher_q = _sqs.Queue(
+            self, f"{config.stage}-9c-iap-voucher-queue",
+            dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=10, queue=self.voucher_dlq),
+            visibility_timeout=cdk_core.Duration.seconds(30),
         )
 
         # RDS
@@ -89,7 +96,8 @@ class SharedStack(Stack):
             ("KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
             ("APPLE_CREDENTIAL", True),
-            ("SEASON_PASS_JWT_SECRET", True)
+            ("SEASON_PASS_JWT_SECRET", True),
+            ("VOUCHER_JWT_SECRET", True),
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),

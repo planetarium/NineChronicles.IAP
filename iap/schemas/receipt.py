@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict
 from uuid import UUID
 
 from pydantic import BaseModel as BaseSchema
@@ -60,10 +60,10 @@ class ApplePurchaseSchema(BaseSchema):
 
 @dataclass
 class ReceiptSchema:
-    store: Store
     data: Union[str, Dict, object]
-    agentAddress: str
-    avatarAddress: str
+    store: Optional[Store] = None
+    agentAddress: Optional[str] = None
+    avatarAddress: Optional[str] = None
     planetId: Union[str, PlanetID] = None
 
     # Google
@@ -77,6 +77,14 @@ class ReceiptSchema:
         if isinstance(self.data, str):
             self.data = json.loads(self.data)
 
+        if not self.store:
+            if "AppleAppStore" in self.data.get("Store", ""):
+                self.store = Store.APPLE
+            elif "GooglePlay" in self.data.get("Store", ""):
+                self.store = Store.GOOGLE
+            else:
+                self.store = Store.TEST
+
         if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
@@ -87,8 +95,10 @@ class ReceiptSchema:
             pass
 
         # Reformat address to starts with `0x`
-        self.agentAddress = format_addr(self.agentAddress)
-        self.avatarAddress = format_addr(self.avatarAddress)
+        if self.agentAddress:
+            self.agentAddress = format_addr(self.agentAddress)
+        if self.avatarAddress:
+            self.avatarAddress = format_addr(self.avatarAddress)
 
         if isinstance(self.planetId, str):
             self.planetId = PlanetID(bytes(self.planetId, 'utf-8'))

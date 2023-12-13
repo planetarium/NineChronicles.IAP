@@ -22,6 +22,7 @@ from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
+from iap.exceptions import ReceiptNotFoundException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
@@ -34,6 +35,7 @@ router = APIRouter(
 
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
+VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
 
 
 def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
@@ -119,6 +121,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     if prev_receipt:
         logger.debug(f"prev. receipt exists: {prev_receipt.uuid}")
         return prev_receipt
+
+    if not receipt_data.agentAddress:
+        raise ReceiptNotFoundException("", order_id)
 
     product = None
     # If prev. receipt exists, check current status and returns result
@@ -206,7 +211,11 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         receipt.product_id = product.id
     ## Test
     elif receipt_data.store == Store.TEST:
-        success, msg = True, "This is test"
+        if os.environ.get("STAGE") == "mainnet":
+            receipt.status = ReceiptStatus.INVALID
+            success, msg = False, f"{receipt.store} is not validatable store."
+        else:
+            success, msg = True, "This is test"
     ## INVALID
     else:
         receipt.status = ReceiptStatus.UNKNOWN
@@ -217,6 +226,18 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
     receipt.status = ReceiptStatus.VALID
+    logger.info(f"Send voucher request: {receipt.uuid}")
+    resp = sqs.send_message(QueueUrl=VOUCHER_SQS_URL,
+                            MessageBody=json.dumps({
+                                "receipt_id": receipt.id,
+                                "uuid": str(receipt.uuid),
+                                "product_id": receipt.product_id,
+                                "product_name": receipt.product.name,
+                                "agent_addr": receipt.agent_addr,
+                                "avatar_addr": receipt.avatar_addr,
+                                "planet_id": receipt_data.planetId.decode(),
+                            }))
+    logger.info(f"Voucher message: {resp['MessageId']}")
 
     now = datetime.now()
     if ((product.open_timestamp and product.open_timestamp > now) or
@@ -282,16 +303,16 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
             raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
-    msg = {
-        "agent_addr": receipt_data.agentAddress.lower(),
-        "avatar_addr": receipt_data.avatarAddress.lower(),
-        "product_id": product.id,
-        "uuid": str(receipt.uuid),
-        "planet_id": receipt_data.planetId.decode('utf-8'),
-    }
+        msg = {
+            "agent_addr": receipt_data.agentAddress.lower(),
+            "avatar_addr": receipt_data.avatarAddress.lower(),
+            "product_id": product.id,
+            "uuid": str(receipt.uuid),
+            "planet_id": receipt_data.planetId.decode('utf-8'),
+        }
 
-    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
-    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+        resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+        logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     sess.add(receipt)
     sess.commit()

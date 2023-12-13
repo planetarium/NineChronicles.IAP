@@ -35,7 +35,7 @@ class Category(AutoIdMixin, TimeStampMixin, Base):
     # FIXME: Update to nullable=False
     l10n_key = Column(Text, doc="L10N Key")
 
-    product_list: Mapped[List["Product"]] = relationship("Product", secondary=category_product_table)
+    product_list: Mapped[List["Product"]] = relationship("Product", secondary=category_product_table, order_by="Product.order")
 
     @property
     def path(self):
@@ -102,7 +102,8 @@ class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
             "balanceAddr": balance_address,
             "value": {
                 "currencyTicker": self.ticker,
-                "value": self.amount
+                "value": self.amount,
+                "decimalPlaces": self.decimal_places,
             }
         }
 

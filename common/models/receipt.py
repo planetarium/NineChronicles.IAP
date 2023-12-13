@@ -1,3 +1,4 @@
+from typing import Any, Dict
 import uuid
 
 from sqlalchemy import Column, Text, UUID, DateTime, Integer, ForeignKey, LargeBinary
@@ -26,7 +27,13 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     product = relationship(Product, foreign_keys=[product_id], backref=backref("purchase_list"))
     agent_addr = Column(Text, doc="9c agent address where to get FAVs")
     avatar_addr = Column(Text, doc="9c avatar's address where to get items")
+    tx = Column(Text, nullable=True, doc="Signed Tx data to be sent.")
+    nonce = Column(Integer, nullable=True, doc="Dedicated nonce for this tx.")
     tx_id = Column(Text, nullable=True, index=True, doc="Product delivering 9c transaction ID")
     tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True, doc="Transaction status")
-    planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value, doc="An identifier of planets")
+    bridged_tx_id = Column(Text, nullable=True, index=True, doc="Bridged Tx on another planet")
+    bridged_tx_status = Column(ENUM(TxStatus, create_type=False), nullable=True,
+                               doc="Transaction status on another planet")
+    planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value,
+                       doc="An identifier of planets")
     msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")

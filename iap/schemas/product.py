@@ -35,7 +35,7 @@ class FungibleAssetValueSchema(BaseSchema):
 
     @model_validator(mode="after")
     def make_ticker_to_name(self):
-        self.ticker = self.ticker.split("_")[-1]
+        self.ticker = self.ticker.split("__")[-1]
         return self
 
     class Config:

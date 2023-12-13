@@ -34,7 +34,7 @@ def handle(event, context):
         print(f"{i + 1} / {len(unload_data)} : Unload to {unload['avatar_addr']}")
         try:
             unload_from_garage = create_unload_my_garages_action_plain_value(
-                id=uuid.uuid1().hex(),
+                id=uuid.uuid1().hex,
                 fav_data=unload["fav_data"],
                 avatar_addr=unload["avatar_addr"],
                 item_data=unload["item_data"],
@@ -46,7 +46,7 @@ def handle(event, context):
                 address=account.address,
                 nonce=nonce,
                 plain_value=unload_from_garage,
-                timestamp=datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+                timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
             )
             signature = account.sign_tx(utx)
             signed_tx = append_signature_to_unsigned_tx(utx, signature)
