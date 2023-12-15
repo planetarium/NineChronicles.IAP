@@ -129,6 +129,10 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
         plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
+
+    unsigned_tx = gql.create_action("claim_items", pubkey=account.pubkey.hex(), nonce=nonce,
+                                    claim_data={}, memo=memo)
+
     signature = account.sign_tx(unsigned_tx)
     signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
     return gql.stage(signed_tx), nonce, signed_tx
