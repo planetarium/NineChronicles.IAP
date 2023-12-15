@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
@@ -44,7 +45,10 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
     }
     resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
     if resp.status_code != 200:
-        return False, f"Purchase state of this receipt is not valid: {resp.text}", None
+        time.sleep(1)
+        resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+        if resp.status_code != 200:
+            return False, f"Purchase state of this receipt is not valid: {resp.text}", None
     try:
         data = jwt.decode(resp.json()["signedTransactionInfo"], options={"verify_signature": False})
         logger.debug(data)
@@ -55,17 +59,21 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
         return True, "", schema
 
 
-def validate_google(sku: str, token: str) -> Tuple[bool, str, GooglePurchaseSchema]:
+def validate_google(sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
     client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    resp = GooglePurchaseSchema(
-        **(client.purchases().products()
-           .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
-           .execute())
-    )
-    msg = ""
-    if resp.purchaseState != GooglePurchaseState.PURCHASED:
-        return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
-    return True, msg, resp
+    try:
+        resp = GooglePurchaseSchema(
+            **(client.purchases().products()
+               .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
+               .execute())
+        )
+        if resp.purchaseState != GooglePurchaseState.PURCHASED:
+            return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
+        return True, "", resp
+
+    except Exception as e:
+        logger.warning(e)
+        return False, f"Error occurred validating google receipt: {e}", None
 
 
 def consume_google(sku: str, token: str):
@@ -212,8 +220,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     ## Test
     elif receipt_data.store == Store.TEST:
         if os.environ.get("STAGE") == "mainnet":
-            receipt.status = ReceiptStatus.INVALID
-            success, msg = False, f"{receipt.store} is not validatable store."
+            success, msg = False, f"{receipt.store} is not allowed."
         else:
             success, msg = True, "This is test"
     ## INVALID
@@ -222,6 +229,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         success, msg = False, f"{receipt.store} is not validatable store."
 
     if not success:
+        receipt.msg = msg
         receipt.status = ReceiptStatus.INVALID
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
