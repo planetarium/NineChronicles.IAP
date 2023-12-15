@@ -56,8 +56,8 @@ class SharedStack(Stack):
         self.voucher_dlq = _sqs.Queue(self, f"{config.stage}-9c-iap-voucher-dlq")
         self.voucher_q = _sqs.Queue(
             self, f"{config.stage}-9c-iap-voucher-queue",
-            dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=12, queue=self.voucher_dlq),
-            visibility_timeout=cdk_core.Duration.seconds(10)
+            dead_letter_queue=_sqs.DeadLetterQueue(max_receive_count=10, queue=self.voucher_dlq),
+            visibility_timeout=cdk_core.Duration.seconds(30),
         )
 
         # RDS
