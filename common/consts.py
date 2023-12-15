@@ -19,4 +19,10 @@ HOST_LIST = {
 
 CURRENCY_LIST = ("NCG", "CRYSTAL", "GARAGE")
 
-AVATAR_BOUND_TICKER = ("RUNE_GOLDENLEAF",)
+AVATAR_BOUND_TICKER = (
+    "RUNE_GOLDENLEAF",
+    "SOULSTONE_1001",  # D:CC Blackcat
+    "SOULSTONE_1002",  # Red Dongle
+    "SOULSTONE_1003",  # Valkyrie of Light
+    "SOULSTONE_1004",  # Lil' Fenrir
+)
