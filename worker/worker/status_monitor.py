@@ -125,7 +125,10 @@ def check_garage():
       stateQuery {
         garages(
           agentAddr: "0xCb75C84D76A6f97A2d55882Aea4436674c288673",
-          currencyTickers: ["CRYSTAL", "RUNE_GOLDENLEAF"]
+          currencyTickers: [
+            "CRYSTAL", "RUNE_GOLDENLEAF",
+            "SOULSTONE_1001", "SOULSTONE_1002", "SOULSTONE_1003", "SOULSTONE_1004",
+          ]
           fungibleItemIds: [
             "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a",  # Hourglass (400000)
             "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe",  # AP Potion (500000)
