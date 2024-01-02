@@ -146,16 +146,13 @@ def handle(event, context):
     message = SQSMessage(Records=event.get("Records", {}))
     logger.info(f"SQS Message: {message}")
 
-    sess = None
     results = []
-    try:
-        sess = scoped_session(sessionmaker(bind=engine))
-        uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
-        receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-        nonce = None
-        for i, record in enumerate(message.Records):
-            # Always 1 record in message since IAP sends one record at a time.
-            # TODO: Handle exceptions and send messages to DLQ
+    sess = scoped_session(sessionmaker(bind=engine))
+    uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
+    receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
+    nonce = None
+    for i, record in enumerate(message.Records):
+        try:
             receipt = receipt_dict.get(record.body.get("uuid"))
             logger.debug(f"UUID : {record.body.get('uuid')}")
             success, msg = False, None
@@ -191,8 +188,11 @@ def handle(event, context):
                 logger.info(json.dumps(result))
             else:
                 logger.error(json.dumps(result))
-    finally:
-        if sess is not None:
-            sess.close()
+        except Exception as e:
+            logger.error(f"Error occurred: {record.body.get('uuid')} :: {e}")
+            continue
+
+    if sess is not None:
+        sess.close()
 
     return results
