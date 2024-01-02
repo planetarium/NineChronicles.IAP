@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+import urllib.parse
 from datetime import datetime
 from typing import Tuple, List, Dict, Optional, Annotated
 from uuid import UUID
@@ -43,10 +44,11 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
     headers = {
         "Authorization": f"Bearer {get_jwt(settings.APPLE_CREDENTIAL, settings.APPLE_BUNDLE_ID, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)}"
     }
-    resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+    encoded_tx_id = urllib.parse.quote_plus(tx_id)
+    resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=encoded_tx_id), headers=headers)
     if resp.status_code != 200:
         time.sleep(1)
-        resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=tx_id), headers=headers)
+        resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=encoded_tx_id), headers=headers)
         if resp.status_code != 200:
             return False, f"Purchase state of this receipt is not valid: {resp.text}", None
     try:
@@ -54,7 +56,7 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
         logger.debug(data)
         schema = ApplePurchaseSchema(**data)
     except:
-        return False, f"Malformed apple transaction data for {tx_id}", None
+        return False, f"Malformed apple transaction data for {encoded_tx_id}", None
     else:
         return True, "", schema
 
