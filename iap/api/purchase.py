@@ -61,7 +61,7 @@ def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]
         return True, "", schema
 
 
-def validate_google(sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
+def validate_google(order_id: str,sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
     client = get_google_client(settings.GOOGLE_CREDENTIAL)
     try:
         resp = GooglePurchaseSchema(
@@ -71,6 +71,8 @@ def validate_google(sku: str, token: str) -> Tuple[bool, str, Optional[GooglePur
         )
         if resp.purchaseState != GooglePurchaseState.PURCHASED:
             return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
+        if resp.orderId != order_id:
+            return False, f"Order ID mismatch from request and token: {order_id} :: {resp.orderId}", resp
         return True, "", resp
 
     except Exception as e:
@@ -190,9 +192,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
-        success, msg, purchase = validate_google(product_id, token)
+        success, msg, purchase = validate_google(order_id, product_id, token)
         # FIXME: google API result may not include productId.
-        #  Can we get productId allways?
+        #  Can we get productId always?
         # if purchase.productId != product.google_sku:
         #     receipt.status = ReceiptStatus.INVALID
         #     raise_error(sess, receipt, ValueError(
