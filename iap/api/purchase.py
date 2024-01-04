@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
+from starlette.responses import JSONResponse
 
 from common.enums import ReceiptStatus, Store, GooglePurchaseState
 from common.models.product import Product
@@ -97,6 +98,21 @@ def raise_error(sess, receipt: Receipt, e: Exception):
     sess.commit()
     logger.error(f"[{receipt.uuid}] :: {e}")
     raise e
+
+
+@router.get("/log")
+def log_request_product(planet_id: str, agent_address: str, avatar_address: str, product_id: str,
+                        order_id: Optional[str] = "", data: Optional[str] = ""):
+    """
+    # Purchase log
+    ---
+    
+    Logs purchase request data
+    """
+    logger.info(f"[PURCHASE_LOG] {planet_id} :: {agent_address} :: {avatar_address} :: {product_id} :: {order_id}")
+    if data:
+        logger.info(data)
+    return JSONResponse(status_code=200, content=f"Order {order_id} for product {product_id} logged.")
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
