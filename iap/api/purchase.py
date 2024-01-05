@@ -1,14 +1,11 @@
 import json
 import logging
 import os
-import time
-import urllib.parse
 from datetime import datetime
-from typing import Tuple, List, Dict, Optional, Annotated
+from typing import List, Dict, Optional, Annotated
 from uuid import UUID
 
 import boto3
-import jwt
 import requests
 from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
@@ -16,10 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
-from common.enums import ReceiptStatus, Store, GooglePurchaseState
+from common.enums import ReceiptStatus, Store
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.apple import get_jwt
 from common.utils.aws import fetch_parameter
 from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
@@ -27,9 +23,11 @@ from iap import settings
 from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, GooglePurchaseSchema, ApplePurchaseSchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.common import get_order_data
+from validator.apple import validate_apple
+from validator.google import validate_google
 
 router = APIRouter(
     prefix="/purchase",
@@ -39,46 +37,6 @@ router = APIRouter(
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
 VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
-
-
-def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
-    headers = {
-        "Authorization": f"Bearer {get_jwt(settings.APPLE_CREDENTIAL, settings.APPLE_BUNDLE_ID, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)}"
-    }
-    encoded_tx_id = urllib.parse.quote_plus(tx_id)
-    resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=encoded_tx_id), headers=headers)
-    if resp.status_code != 200:
-        time.sleep(1)
-        resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=encoded_tx_id), headers=headers)
-        if resp.status_code != 200:
-            return False, f"Purchase state of this receipt is not valid: {resp.text}", None
-    try:
-        data = jwt.decode(resp.json()["signedTransactionInfo"], options={"verify_signature": False})
-        logger.debug(data)
-        schema = ApplePurchaseSchema(**data)
-    except:
-        return False, f"Malformed apple transaction data for {encoded_tx_id}", None
-    else:
-        return True, "", schema
-
-
-def validate_google(order_id: str,sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
-    client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    try:
-        resp = GooglePurchaseSchema(
-            **(client.purchases().products()
-               .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
-               .execute())
-        )
-        if resp.purchaseState != GooglePurchaseState.PURCHASED:
-            return False, f"Purchase state of this receipt is not valid: {resp.purchaseState.name}", resp
-        if resp.orderId != order_id:
-            return False, f"Order ID mismatch from request and token: {order_id} :: {resp.orderId}", resp
-        return True, "", resp
-
-    except Exception as e:
-        logger.warning(e)
-        return False, f"Error occurred validating google receipt: {e}", None
 
 
 def consume_google(sku: str, token: str):
