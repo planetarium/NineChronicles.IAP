@@ -21,22 +21,29 @@ if os.path.exists(os.path.join("iap", "settings", f"{stage}.py")):
     config = Config(environ=envs)
 else:
     config = Config(environ=os.environ)
-    db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
-    google_credential = fetch_parameter(
-        os.environ.get("REGION_NAME"),
-        f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
-        True
-    )["Value"]
-    apple_credential = fetch_parameter(
-        os.environ.get("REGION_NAME"),
-        f"{stage}_9c_IAP_APPLE_CREDENTIAL",
-        True
-    )["Value"]
-    season_pass_jwt_secret = fetch_parameter(
-        os.environ.get("REGION_NAME"),
-        f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET",
-        True
-    )["Value"]
+    if os.environ.get("SECRET_ARN"):
+        db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
+
+    if os.environ.get(f"{stage}_9c_IAP_GOOGLE_CREDENTIAL"):
+        google_credential = fetch_parameter(
+            os.environ.get("REGION_NAME"),
+            f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
+            True
+        )["Value"]
+
+    if os.environ.get(f"{stage}_9c_IAP_APPLE_CREDENTIAL"):
+        apple_credential = fetch_parameter(
+            os.environ.get("REGION_NAME"),
+            f"{stage}_9c_IAP_APPLE_CREDENTIAL",
+            True
+        )["Value"]
+
+    if os.environ.get(f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET"):
+        season_pass_jwt_secret = fetch_parameter(
+            os.environ.get("REGION_NAME"),
+            f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET",
+            True
+        )["Value"]
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
