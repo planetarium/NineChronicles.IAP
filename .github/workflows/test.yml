@@ -81,10 +81,12 @@ jobs:
           DB_URI: "postgresql://github_actions:f8bf4c09239@localhost/iap"
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
+          APPLE_VALIDATION_URL : ${{ vars.APPLE_VALIDATION_URL }}
           APPLE_CREDENTIAL: ${{ secrets.APPEL_CREDENTIAL }}
           APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPEL_ISSUER_ID }}
           APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
+          SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
         run: |
           poetry run pytest tests
 
