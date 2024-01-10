@@ -26,8 +26,8 @@ from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.common import get_order_data
-from validator.apple import validate_apple
-from validator.google import validate_google
+from iap.validator.apple import validate_apple
+from iap.validator.google import validate_google
 
 router = APIRouter(
     prefix="/purchase",

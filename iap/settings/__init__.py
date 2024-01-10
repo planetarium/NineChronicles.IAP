@@ -1,6 +1,7 @@
 import logging
 import os
 
+from botocore import errorfactory
 from starlette.config import Config
 
 from common.utils.aws import fetch_secrets, fetch_parameter
@@ -24,26 +25,32 @@ else:
     if os.environ.get("SECRET_ARN"):
         db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 
-    if os.environ.get(f"{stage}_9c_IAP_GOOGLE_CREDENTIAL"):
+    try:
         google_credential = fetch_parameter(
             os.environ.get("REGION_NAME"),
             f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
             True
         )["Value"]
+    except errorfactory.BaseClientExceptions as ParameterNotFound:
+        google_credential = ""
 
-    if os.environ.get(f"{stage}_9c_IAP_APPLE_CREDENTIAL"):
+    try:
         apple_credential = fetch_parameter(
             os.environ.get("REGION_NAME"),
             f"{stage}_9c_IAP_APPLE_CREDENTIAL",
             True
         )["Value"]
+    except errorfactory.BaseClientExceptions as ParameterNotFound:
+        apple_credential = ""
 
-    if os.environ.get(f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET"):
+    try:
         season_pass_jwt_secret = fetch_parameter(
             os.environ.get("REGION_NAME"),
             f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET",
             True
         )["Value"]
+    except errorfactory.BaseClientExceptions as ParameterNotFound:
+        season_pass_jwt_secret = ""
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
