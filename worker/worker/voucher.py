@@ -69,6 +69,10 @@ def handle(event, context):
     message = SQSMessage(Records=event.get("Records", {}))
     logger.info(f"SQS Message: {message}")
 
+    if datetime.now(tz=timezone.utc) <= datetime(2023, 12, 13, 2, 0, 0, tzinfo=timezone.utc):
+        logger.warning(f"Voucher event not started: {datetime.now(tz=timezone.utc).isoformat()}")
+        return
+
     sess = scoped_session(sessionmaker(bind=engine))
     try:
         uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid")]
