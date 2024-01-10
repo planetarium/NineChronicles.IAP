@@ -1,7 +1,7 @@
 import logging
 import os
 
-from botocore import errorfactory
+import botocore.exceptions
 from starlette.config import Config
 
 from common.utils.aws import fetch_secrets, fetch_parameter
@@ -31,7 +31,7 @@ else:
             f"{stage}_9c_IAP_GOOGLE_CREDENTIAL",
             True
         )["Value"]
-    except errorfactory.BaseClientExceptions as ParameterNotFound:
+    except botocore.exceptions.ClientError as e:
         google_credential = ""
 
     try:
@@ -40,7 +40,7 @@ else:
             f"{stage}_9c_IAP_APPLE_CREDENTIAL",
             True
         )["Value"]
-    except errorfactory.BaseClientExceptions as ParameterNotFound:
+    except botocore.exceptions.ClientError as e:
         apple_credential = ""
 
     try:
@@ -49,7 +49,7 @@ else:
             f"{stage}_9c_IAP_SEASON_PASS_JWT_SECRET",
             True
         )["Value"]
-    except errorfactory.BaseClientExceptions as ParameterNotFound:
+    except botocore.exceptions.ClientError as e:
         season_pass_jwt_secret = ""
 
 # Prepare settings
