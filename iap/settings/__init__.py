@@ -32,7 +32,7 @@ else:
             True
         )["Value"]
     except botocore.exceptions.ClientError as e:
-        google_credential = ""
+        google_credential = os.environ.get("GOOGLE_CREDENTIAL", "")
 
     try:
         apple_credential = fetch_parameter(
@@ -41,7 +41,7 @@ else:
             True
         )["Value"]
     except botocore.exceptions.ClientError as e:
-        apple_credential = ""
+        apple_credential = os.environ.get("APPLE_CREDENTIAL", "")
 
     try:
         season_pass_jwt_secret = fetch_parameter(
@@ -50,7 +50,7 @@ else:
             True
         )["Value"]
     except botocore.exceptions.ClientError as e:
-        season_pass_jwt_secret = ""
+        season_pass_jwt_secret = os.environ.get("SEASON_PASS_JWT_SECRET", "")
 
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
