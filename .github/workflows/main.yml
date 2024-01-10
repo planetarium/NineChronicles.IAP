@@ -18,6 +18,11 @@ jobs:
     with:
       environment: ${{ github.ref == 'refs/heads/main' && 'mainnet' || (startsWith(github.ref, 'refs/heads/release') && 'internal' || 'development') }}
     secrets:
+      APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
+      APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+      APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+      GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
+      SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   build_frontend:
