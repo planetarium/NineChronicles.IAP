@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 
-from common.lib9c.fungible_asset import FungibleAsset
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 
 def create_unload_my_garages_action_plain_value(id: str, fav_data: List, avatar_addr: str, item_data: List, memo: Optional[str]) -> Dict[str, Any]:
@@ -15,7 +15,7 @@ def create_unload_my_garages_action_plain_value(id: str, fav_data: List, avatar_
                 [
                     [
                         bytes.fromhex(x['balanceAddr'][2:] if x["balanceAddr"].startswith("0x") else x["balanceAddr"]),
-                        FungibleAsset.to_fungible_asset(x['value']['currencyTicker'], int(x['value']['value']), int(x['value']['decimalPlaces']))
+                        FungibleAssetValue.to_fungible_asset(x['value']['currencyTicker'], int(x['value']['value']), int(x['value']['decimalPlaces']))
                     ]
                     for x in fav_data
                 ],
