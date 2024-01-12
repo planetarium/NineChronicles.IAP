@@ -22,12 +22,12 @@ class Currency:
         self.decimal_places = decimal_places
         self.total_supply_trackable = total_supply_trackable
 
-    def __eq__(self, other:Currency):
+    def __eq__(self, other: Currency):
         return (
-            self.ticker == other.ticker and
-            self.minters == other.minters and
-            self.decimal_places == other.decimal_places and
-            self.total_supply_trackable == other.total_supply_trackable
+                self.ticker == other.ticker and
+                self.minters == other.minters and
+                self.decimal_places == other.decimal_places and
+                self.total_supply_trackable == other.total_supply_trackable
         )
 
     @classmethod
