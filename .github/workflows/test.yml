@@ -5,6 +5,16 @@ on:
         required: true
         type: string
     secrets:
+      APPLE_CREDENTIAL:
+        required: true
+      APPLE_KEY_ID:
+        required: true
+      APPLE_ISSUER_ID:
+        required: true
+      GOOGLE_CREDENTIAL:
+        required: true
+      SEASON_PASS_JWT_SECRET:
+        required: true
       SLACK_WEBHOOK_URL:
         required: true
 
@@ -65,6 +75,18 @@ jobs:
           popd
 
       - name: Run test
+        env:
+          STAGE: test
+          REGION_NAME: ${{ vars.REGION_NAME }}
+          DB_URI: "postgresql://github_actions:f8bf4c09239@localhost/iap"
+          GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
+          GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
+          APPLE_VALIDATION_URL : ${{ vars.APPLE_TEST_VALIDATION_URL }}
+          APPLE_CREDENTIAL: ${{ secrets.APPLE_CREDENTIAL }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
+          SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
         run: |
           poetry run pytest tests
 
