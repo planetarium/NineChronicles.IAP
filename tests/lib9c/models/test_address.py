@@ -18,3 +18,15 @@ def test_address(addr):
     else:
         assert address.raw == bytes.fromhex(addr)
         assert address.short_format == addr.lower()
+
+
+@pytest.mark.parametrize("addr",
+                         [
+                             "0xa5f7e0bd63AD2749D66380f36Eb33Fe0ba50A27X",  # Invalid character
+                             "a5f7e0bd63AD2749D66380f36Eb33Fe0ba50A27X",  # Invalid character
+                             "0xa5f7e0bd63AD2749D66380f36Eb33Fe0ba50A2",  # Length
+                             "a5f7e0bd63AD2749D66380f36Eb33Fe0ba50A2",  # Length
+                         ])
+def test_address_error(addr):
+    with pytest.raises(ValueError) as e:
+        Address(addr)
