@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Dict, Union, List, Optional, Any
+
+from typing import Dict, List, Optional, Any
 
 import bencodex
 
@@ -59,29 +60,3 @@ class Currency:
     @property
     def serialized_plain_value(self) -> bytes:
         return bencodex.dumps(self.plain_value)
-
-    @staticmethod
-    def to_currency_plain_value(ticker: str) -> Dict[str, Union[str, int, None]]:
-        if ticker.lower() == "crystal":
-            return {
-                "decimalPlaces": b'\x12',
-                "minters": None,
-                "ticker": "CRYSTAL",
-            }
-        elif ticker.lower() == "garage":
-            return {
-                "decimalPlaces": b'\x12',
-                "minters": None,
-                "ticker": "GARAGE",
-                "totalSupplyTrackable": True,
-            }
-        else:
-            return {
-                "decimalPlaces": b'\x00',
-                "minters": None,
-                "ticker": ticker.upper(),
-            }
-
-    @staticmethod
-    def serialize(currency: Dict[str, Union[str, int, None]]) -> bytes:
-        return bencodex.dumps(currency)

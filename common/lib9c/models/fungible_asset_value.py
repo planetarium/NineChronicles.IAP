@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Union, List, Optional, Any
+from typing import Dict, List, Optional, Any
 
 import bencodex
 
@@ -33,12 +33,3 @@ class FungibleAssetValue:
     @property
     def serialized_plain_value(self) -> bytes:
         return bencodex.dumps(self.plain_value)
-
-    @staticmethod
-    def to_fungible_asset(ticker: str, amount: int, decimal_places: int) \
-            -> List[Union[Dict[str, Union[str, int, None]], int]]:
-        return [Currency.to_currency_plain_value(ticker), amount * max(1, 10 ** decimal_places)]
-
-    @staticmethod
-    def serialize(fungible_asset: List[Union[Dict[str, Union[str, int, None]], int]]) -> bytes:
-        return bencodex.dumps([Currency.serialize(fungible_asset[0]), fungible_asset[1]])
