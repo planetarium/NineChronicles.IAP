@@ -319,8 +319,7 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     - `store` :: int : Store type in IntEnum. Please see `StoreType` Enum.
     - `agentAddress` :: str : 9c agent address of buyer.
     - `avatarAddress` :: str : 9c avatar address to get items.
-    - `data` :: str : JSON serialized string of details of receipt.
-      - product_id :: int : Purchased product ID
+    - product_id :: int : Purchased product ID
     """
     if not receipt_data.planetId:
         raise ReceiptNotFoundException("", "")
