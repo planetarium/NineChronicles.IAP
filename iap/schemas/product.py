@@ -6,10 +6,11 @@ from common.enums import ProductRarity, ProductAssetUISize
 
 
 class SimpleProductSchema(BaseSchema):
+    id: int
     name: str
     order: int
-    google_sku: str
-    apple_sku: str
+    google_sku: str = ""
+    apple_sku: str = ""
     is_free: bool
     # product_type: ProductType
     daily_limit: Optional[int] = None
