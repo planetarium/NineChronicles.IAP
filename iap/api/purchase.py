@@ -376,6 +376,20 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
         receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
         raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
 
+    # Required level
+    if product.required_level:
+        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
+        resp = requests.post(os.environ.get("HEADLESS"), json={"query": query})
+        try:
+            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+        except:
+            avatar_level = 0
+
+        if avatar_level < product.required_level:
+            receipt.status = ReceiptStatus.REQUIRED_LEVEL
+            raise_error(sess, receipt,
+                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+
     receipt.status = ReceiptStatus.VALID
     sess.add(receipt)
     sess.commit()
