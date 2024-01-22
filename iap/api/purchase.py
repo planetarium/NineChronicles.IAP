@@ -332,6 +332,7 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     )
     receipt = Receipt(
         store=receipt_data.store,
+        data="",
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
         order_id=f"FREE-{uuid4()}",
