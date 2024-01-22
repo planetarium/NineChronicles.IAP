@@ -9,7 +9,7 @@ import boto3
 import requests
 from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
@@ -319,22 +319,26 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     - `store` :: int : Store type in IntEnum. Please see `StoreType` Enum.
     - `agentAddress` :: str : 9c agent address of buyer.
     - `avatarAddress` :: str : 9c avatar address to get items.
-    - `product_id` :: int : Purchased product ID
+    - `sku` :: str : Purchased product SKU
     """
     if not receipt_data.planetId:
         raise ReceiptNotFoundException("", "")
 
-    product_id = receipt_data.product_id
     product = sess.scalar(
         select(Product)
         .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-        .where(Product.active.is_(True), Product.id == product_id)
+        .where(
+            Product.active.is_(True),
+            or_(Product.google_sku == receipt_data.sku, Product.apple_sku == receipt_data.sku)
+        )
     )
+    order_id = f"FREE-{uuid4()}"
     receipt = Receipt(
         store=receipt_data.store,
+        data={"SKU": receipt_data.sku, "OrderId": order_id},
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
-        order_id=f"FREE-{uuid4()}",
+        order_id=order_id,
         purchased_at=datetime.utcnow(),
         product_id=product.id if product is not None else None,
         planet_id=receipt_data.planetId.value,
@@ -375,6 +379,21 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
                              agent_addr=receipt.agent_addr.lower()) > product.account_limit):
         receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
         raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+
+    # Required level
+    if product.required_level:
+        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
+        try:
+            resp = requests.post(os.environ.get("HEADLESS"), json={"query": query}, timeout=1)
+            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+        except:
+            # Whether request is failed or no fitted data found
+            avatar_level = 0
+
+        if avatar_level < product.required_level:
+            receipt.status = ReceiptStatus.REQUIRED_LEVEL
+            raise_error(sess, receipt,
+                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
 
     receipt.status = ReceiptStatus.VALID
     sess.add(receipt)
