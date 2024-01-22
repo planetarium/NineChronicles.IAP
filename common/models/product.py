@@ -61,6 +61,7 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     apple_sku = Column(Text, doc="SKU ID of apple appstore")
     # product_type = Column(ENUM(ProductType), default=ProductType.SINGLE, nullable=False)
     is_free = Column(Boolean, nullable=False, default=False, doc="Flag to set this product as free")
+    required_level = Column(Integer, nullable=True, default=None, doc="Required avatar level to purchase this product")
     daily_limit = Column(Integer, nullable=True, doc="Purchase limit in 24 hours")
     weekly_limit = Column(Integer, nullable=True, doc="Purchase limit in 7 days (24 * 7 hours)")
     account_limit = Column(Integer, nullable=True, doc="Purchase limit for each account (in lifetime)")
