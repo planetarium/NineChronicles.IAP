@@ -6,7 +6,6 @@ from common.enums import ProductRarity, ProductAssetUISize
 
 
 class SimpleProductSchema(BaseSchema):
-    id: int
     name: str
     order: int
     google_sku: str = ""
@@ -18,6 +17,7 @@ class SimpleProductSchema(BaseSchema):
     account_limit: Optional[int] = None
     active: bool
     buyable: bool = True
+    required_level: Optional[int] = None
 
     class Config:
         from_attributes = True
