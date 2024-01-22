@@ -60,7 +60,7 @@ class ApplePurchaseSchema(BaseSchema):
 
 @dataclass
 class FreeReceiptSchema:
-    product_id: int
+    sku: str
     agentAddress: str
     avatarAddress: str
     store: Store
