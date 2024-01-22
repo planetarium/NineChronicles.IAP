@@ -383,7 +383,7 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     # Required level
     if product.required_level:
         query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
-        resp = requests.post(os.environ.get("HEADLESS"), json={"query": query})
+        resp = requests.post(os.environ.get("HEADLESS"), json={"query": query}, timeout=1)
         try:
             avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
         except:
