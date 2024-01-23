@@ -382,9 +382,15 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
 
     # Required level
     if product.required_level:
+        gql_url = None
+        if receipt_data.planetId in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
+            gql_url = os.environ.get("ODIN_GQL_URL")
+        elif receipt_data.planetId in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
+            gql_url = os.environ.get("HEIMDALL_GQL_URL")
+
         query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
         try:
-            resp = requests.post(os.environ.get("HEADLESS"), json={"query": query}, timeout=1)
+            resp = requests.post(gql_url, json={"query": query}, timeout=1)
             avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
         except:
             # Whether request is failed or no fitted data found
