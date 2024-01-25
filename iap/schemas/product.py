@@ -2,20 +2,22 @@ from typing import Optional, List
 
 from pydantic import BaseModel as BaseSchema, model_validator
 
-from common.enums import Currency, ProductRarity, ProductAssetUISize
+from common.enums import ProductRarity, ProductAssetUISize
 
 
 class SimpleProductSchema(BaseSchema):
     name: str
     order: int
-    google_sku: str
-    apple_sku: str
+    google_sku: str = ""
+    apple_sku: str = ""
+    is_free: bool
     # product_type: ProductType
     daily_limit: Optional[int] = None
     weekly_limit: Optional[int] = None
     account_limit: Optional[int] = None
     active: bool
     buyable: bool = True
+    required_level: Optional[int] = None
 
     class Config:
         from_attributes = True
