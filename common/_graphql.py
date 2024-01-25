@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Union, Dict, Any, Tuple, Optional
 
+import jwt
 from gql import Client
 from gql.dsl import DSLSchema, dsl_gql, DSLQuery, DSLMutation
 from gql.transport.requests import RequestsHTTPTransport
@@ -16,11 +17,21 @@ class GQL:
         self._url = url
         self.client = None
         self.ds = None
-        transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
+        transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2, headers=self.__create_header())
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
             assert self.client.schema is not None
             self.ds = DSLSchema(self.client.schema)
+
+    @staticmethod
+    def create_token() -> str:
+        return jwt.encode({
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=10),
+            "iss": "NineChronicles.IAP",
+        }, os.environ.get("HEADLESS_GQL_JWT_SECRET"))
+
+    def __create_header(self):
+        return {"Authorization": f"Bearer {self.create_token()}"}
 
     def execute(self, query: DocumentNode) -> Union[Dict[str, Any], ExecutionResult]:
         with self.client as sess:

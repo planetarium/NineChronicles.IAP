@@ -13,6 +13,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
+from common._graphql import GQL
 from common.enums import ReceiptStatus, Store
 from common.models.product import Product
 from common.models.receipt import Receipt
@@ -390,7 +391,8 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
 
         query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
         try:
-            resp = requests.post(gql_url, json={"query": query}, timeout=1)
+            resp = requests.post(gql_url, json={"query": query}, timeout=1,
+                                 header={"Authorization": f"Bearer {GQL.create_token()}"})
             avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
         except:
             # Whether request is failed or no fitted data found

@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
+from common._graphql import GQL
 from common.enums import ReceiptStatus, TxStatus
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets
@@ -143,7 +144,7 @@ def check_garage():
       }
     }"""
 
-    resp = requests.post(GQL_URL, json={"query": query})
+    resp = requests.post(GQL_URL, json={"query": query}, headers={"Authorization": f"Bearer {GQL.create_token()}"})
     data = resp.json()["data"]["stateQuery"]["garages"]
     fav_data = data["garageBalances"]
     item_data = data["fungibleItemGarages"]
