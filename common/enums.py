@@ -131,10 +131,6 @@ class ReceiptStatus(IntEnum):
         Purchase timestamp is not between target product's open/close timestamp.
         This purchase is executed in appstore, so admin should refund this purchase in manual.
 
-    - **95: `REQUIRED_LEVEL`**
-
-        Does not met required level to get this product.
-
     - **99: `UNKNOWN`**
 
         An unhandled error case. This is reserve to catch all other errors.  
@@ -149,7 +145,6 @@ class ReceiptStatus(IntEnum):
     REFUNDED_BY_BUYER = 92
     PURCHASE_LIMIT_EXCEED = 93
     TIME_LIMIT = 94
-    REQUIRED_LEVEL = 95
     UNKNOWN = 99
 
 

@@ -36,8 +36,6 @@ class Config:
     account_id: str
     region_name: str
     cdn_host: str
-    odin_gql_url: str
-    heimdall_gql_url: str
 
     # Multiplanetary
     planet_url: str
