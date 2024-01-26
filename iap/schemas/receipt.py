@@ -59,6 +59,26 @@ class ApplePurchaseSchema(BaseSchema):
 
 
 @dataclass
+class FreeReceiptSchema:
+    sku: str
+    agentAddress: str
+    avatarAddress: str
+    store: Store
+    planetId: Union[str, PlanetID]
+
+    def __post_init__(self):
+        # Reformat address to starts with `0x`
+        if self.agentAddress:
+            self.agentAddress = format_addr(self.agentAddress)
+        if self.avatarAddress:
+            self.avatarAddress = format_addr(self.avatarAddress)
+
+        # Parse planet
+        if isinstance(self.planetId, str):
+            self.planetId = PlanetID(bytes(self.planetId, 'utf-8'))
+
+
+@dataclass
 class ReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
