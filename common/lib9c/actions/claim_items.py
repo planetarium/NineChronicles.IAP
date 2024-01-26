@@ -13,12 +13,13 @@ class ClaimItems(ActionBase):
     - values: List[claim_data]
       - claimData: List[claimItem]
         - claimItem: Dict[str, Address|List[FungibleAssetValue]]
-         - valid keys: ["avatarAddress", "fungibleAssetValues"]
+          - valid keys: ["avatarAddress", "fungibleAssetValues"]
       - memo: JSON serialized string
     """
 
-    def __init__(self, *, claim_data: List[Dict[str, Address | List[FungibleAssetValue]]], memo: Optional[str] = None):
-        super().__init__("claim_items")
+    def __init__(self, *, claim_data: List[Dict[str, Address | List[FungibleAssetValue]]], memo: Optional[str] = None,
+                 _id: Optional[str] = None):
+        super().__init__("claim_items", _id)
         self._claim_data = claim_data
         self._memo = memo
 

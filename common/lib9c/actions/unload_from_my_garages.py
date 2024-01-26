@@ -18,9 +18,10 @@ class UnloadFromMyGarages(ActionBase):
         - valid keys: ["fungibleId", "count"]
       - memo: Json serialized string
     """
+
     def __init__(self, *, avatar_addr: Address, fav_data: List[Dict[str, Union[Address, FungibleAssetValue]]] = None,
-                 item_data: List[Dict[str, str | int]] = None, memo: Optional[str] = None):
-        super().__init__("unload_from_my_garages")
+                 item_data: List[Dict[str, str | int]] = None, memo: Optional[str] = None, _id: Optional[str] = None):
+        super().__init__("unload_from_my_garages", _id)
         self._avatar_addr: Address = avatar_addr
         self._fav_data = fav_data or []
         self._item_data = item_data or []
