@@ -98,6 +98,8 @@ class APIStack(Stack):
             "APPLE_KEY_ID": config.apple_key_id,
             "APPLE_ISSUER_ID": config.apple_issuer_id,
             "HEADLESS": config.headless,
+            "ODIN_GQL_URL": config.odin_gql_url,
+            "HEIMDALL_GQL_URL": config.heimdall_gql_url,
             "CDN_HOST": config.cdn_host,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
