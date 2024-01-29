@@ -117,6 +117,8 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           HEADLESS: ${{ vars.HEADLESS }}
+          ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
+          HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}

@@ -12,6 +12,7 @@ from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets
 from common.utils.receipt import PlanetID
 
+STAGE = os.environ.get("STAGE")
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
@@ -27,6 +28,17 @@ FUNGIBLE_DICT = {
     "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0": "Golden Dust (600201)",
     "48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308": "Golden Meat (800202)",
 }
+
+VIEW_ORDER = (
+    "CRYSTAL",
+    FUNGIBLE_DICT["3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a"],  # Hourglass
+    FUNGIBLE_DICT["00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe"],  # AP Potion
+    "RUNE_GOLDENLEAF",
+    FUNGIBLE_DICT["f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"],  # Golden Dust
+    FUNGIBLE_DICT["48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308"],  # Golden Meat
+    FUNGIBLE_DICT["1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820"],  # Silver Dust
+    "SOULSTONE_1001", "SOULSTONE_1002", "SOULSTONE_1003", "SOULSTONE_1004",
+)
 
 engine = create_engine(DB_URI)
 
@@ -148,13 +160,21 @@ def check_garage():
     fav_data = data["garageBalances"]
     item_data = data["fungibleItemGarages"]
 
-    msg = []
-    for fav in fav_data:
-        msg.append(create_block(f"{fav['currency']['ticker']} : {int(fav['quantity'].split('.')[0]):,}"))
-    for item in item_data:
-        msg.append(create_block(f"{FUNGIBLE_DICT[item['fungibleItemId']]} : {item['count']:,}"))
+    result_dict = {}
 
-    send_message(IAP_GARAGE_WEBHOOK_URL, "[NineChronicles.IAP] Daily Garage Report", msg)
+    for fav in fav_data:
+        result_dict[fav["currency"]["ticker"]] = fav["quantity"].split(".")[0]
+    for item in item_data:
+        result_dict[FUNGIBLE_DICT[item["fungibleItemId"]]] = item["count"]
+
+    msg = []
+    for key in VIEW_ORDER:
+        result = result_dict.pop(key)
+        msg.append(create_block(f"{key} : {int(result):,}"))
+    for key, result in result_dict.items():
+        msg.append(create_block(f"{key} : {int(result):,}"))
+
+    send_message(IAP_GARAGE_WEBHOOK_URL, f"[NineChronicles.IAP] Daily Garage Report - {STAGE}", msg)
 
 
 def handle(event, context):
