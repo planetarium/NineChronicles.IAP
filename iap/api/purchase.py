@@ -3,13 +3,13 @@ import logging
 import os
 from datetime import datetime
 from typing import List, Dict, Optional, Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import boto3
 import requests
 from fastapi import APIRouter, Depends, Query
 from googleapiclient.errors import HttpError
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
@@ -23,10 +23,10 @@ from iap import settings
 from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
-from iap.validator.common import get_order_data
 from iap.validator.apple import validate_apple
+from iap.validator.common import get_order_data
 from iap.validator.google import validate_google
 
 router = APIRouter(
@@ -303,6 +303,119 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
+
+    return receipt
+
+
+@router.post("/free", response_model=ReceiptDetailSchema)
+def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
+    """
+    # Purchase Free Product
+    ---
+
+    **Purchase free product and unload product from IAP garage to buyer.**
+
+    ### Request Body
+    - `store` :: int : Store type in IntEnum. Please see `StoreType` Enum.
+    - `agentAddress` :: str : 9c agent address of buyer.
+    - `avatarAddress` :: str : 9c avatar address to get items.
+    - `sku` :: str : Purchased product SKU
+    """
+    if not receipt_data.planetId:
+        raise ReceiptNotFoundException("", "")
+
+    product = sess.scalar(
+        select(Product)
+        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+        .where(
+            Product.active.is_(True),
+            or_(Product.google_sku == receipt_data.sku, Product.apple_sku == receipt_data.sku)
+        )
+    )
+    order_id = f"FREE-{uuid4()}"
+    receipt = Receipt(
+        store=receipt_data.store,
+        data={"SKU": receipt_data.sku, "OrderId": order_id},
+        agent_addr=receipt_data.agentAddress.lower(),
+        avatar_addr=receipt_data.avatarAddress.lower(),
+        order_id=order_id,
+        purchased_at=datetime.utcnow(),
+        product_id=product.id if product is not None else None,
+        planet_id=receipt_data.planetId.value,
+    )
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    # Validation
+    if not product:
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = f"Product {receipt_data.product_id} not exists or inactive"
+        raise_error(sess, receipt, ValueError(f"Product {receipt_data.product_id} not found or inactive"))
+
+    if not product.is_free:
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = "This product it not for free"
+        raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not for free"))
+
+    if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
+            (product.close_timestamp and product.close_timestamp < datetime.now())):
+        receipt.status = ReceiptStatus.TIME_LIMIT
+        raise_error(sess, receipt, ValueError(f"Not in product opening time"))
+
+    # Purchase Limit
+    if (product.daily_limit and
+            get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                               agent_addr=receipt.agent_addr.lower(), daily_limit=True) > product.daily_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
+    elif (product.weekly_limit and
+          get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                             agent_addr=receipt.agent_addr.lower(), weekly_limit=True) > product.weekly_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
+    elif (product.account_limit and
+          get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
+                             agent_addr=receipt.agent_addr.lower()) > product.account_limit):
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+
+    # Required level
+    if product.required_level:
+        gql_url = None
+        if receipt_data.planetId in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
+            gql_url = os.environ.get("ODIN_GQL_URL")
+        elif receipt_data.planetId in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
+            gql_url = os.environ.get("HEIMDALL_GQL_URL")
+
+        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
+        try:
+            resp = requests.post(gql_url, json={"query": query}, timeout=1)
+            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+        except:
+            # Whether request is failed or no fitted data found
+            avatar_level = 0
+
+        if avatar_level < product.required_level:
+            receipt.status = ReceiptStatus.REQUIRED_LEVEL
+            raise_error(sess, receipt,
+                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+
+    receipt.status = ReceiptStatus.VALID
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    msg = {
+        "agent_addr": receipt_data.agentAddress.lower(),
+        "avatar_addr": receipt_data.avatarAddress.lower(),
+        "product_id": product.id,
+        "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
+    }
+
+    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     return receipt
 

@@ -80,6 +80,28 @@ class GQL:
         result = self.execute(query)
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
+    def _claim_items(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        claim_data = kwargs.get("claim_data")
+        memo = kwargs.get("memo")
+
+        query = dsl_gql(
+            DSLQuery(
+                self.ds.StandaloneQuery.actionTxQuery.args(
+                    publicKey=pubkey.hex(),
+                    nonce=nonce,
+                    timestamp=ts,
+                ).select(
+                    self.ds.ActionTxQuery.claimItems.args(
+                        claimData=claim_data,
+                        memo=memo,
+                    )
+                )
+            )
+        )
+        result = self.execute(query)
+        return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
+
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
         ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
         sender = kwargs.get("sender")

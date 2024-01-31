@@ -117,7 +117,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     } for x in product.fungible_item_list]
 
     unload_from_garage = create_unload_my_garages_action_plain_value(
-        id=uuid.uuid1().hex,
+        _id=uuid.uuid1().hex,
         fav_data=fav_data,
         avatar_addr=avatar_address,
         item_data=item_data,
@@ -129,6 +129,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
         plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
     )
+
     signature = account.sign_tx(unsigned_tx)
     signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
     return gql.stage(signed_tx), nonce, signed_tx
