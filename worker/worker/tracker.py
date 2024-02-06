@@ -33,10 +33,10 @@ def process(tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
                 client.ds.TransactionHeadlessQuery.transactionResult.args(
                     txId=tx_id
                 ).select(
-                    client.ds.TxResultType.txStatus,
-                    client.ds.TxResultType.blockIndex,
-                    client.ds.TxResultType.blockHash,
-                    client.ds.TxResultType.exceptionNames,
+                    client.ds.TxResult.txStatus,
+                    client.ds.TxResult.blockIndex,
+                    client.ds.TxResult.blockHash,
+                    client.ds.TxResult.exceptionNames,
                 )
             )
         )

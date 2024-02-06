@@ -375,10 +375,10 @@ def track_tx(event, context):
                     client.ds.TransactionHeadlessQuery.transactionResult.args(
                         txId=tx[0]
                     ).select(
-                        client.ds.TxResultType.txStatus,
-                        client.ds.TxResultType.blockIndex,
-                        client.ds.TxResultType.blockHash,
-                        client.ds.TxResultType.exceptionNames,
+                        client.ds.TxResult.txStatus,
+                        client.ds.TxResult.blockIndex,
+                        client.ds.TxResult.blockHash,
+                        client.ds.TxResult.exceptionNames,
                     )
                 )
             )
