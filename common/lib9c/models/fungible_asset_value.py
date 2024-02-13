@@ -20,7 +20,7 @@ class FungibleAssetValue:
     def from_raw_data(
             cls,
             ticker: str, decimal_places: int, minters: Optional[List[str]] = None, total_supply_trackable: bool = False,
-            amount: Decimal = Decimal('0')
+            amount: Decimal = Decimal("0")
     ):
         return cls(
             Currency(ticker, decimal_places, minters, total_supply_trackable),
