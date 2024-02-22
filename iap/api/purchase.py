@@ -73,6 +73,44 @@ def log_request_product(planet_id: str, agent_address: str, avatar_address: str,
     return JSONResponse(status_code=200, content=f"Order {order_id} for product {product_id} logged.")
 
 
+def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
+    if product.required_level:
+        gql_url = None
+        if receipt.planet_id in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
+            gql_url = os.environ.get("ODIN_GQL_URL")
+        elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
+            gql_url = os.environ.get("HEIMDALL_GQL_URL")
+
+        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
+        try:
+            resp = requests.post(gql_url, json={"query": query}, timeout=1)
+            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+        except:
+            # Whether request is failed or no fitted data found
+            avatar_level = 0
+
+        if avatar_level < product.required_level:
+            receipt.status = ReceiptStatus.REQUIRED_LEVEL
+            raise_error(sess, receipt,
+                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+    return receipt
+
+
+def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: str, limit: int,
+                         use_avatar: bool = False) -> Receipt:
+    purchase_count = get_purchase_count(
+        sess, product.id, planet_id=PlanetID(receipt.planet_id),
+        agent_addr=receipt.agent_addr if not use_avatar else None,
+        avatar_addr=receipt.avatar_addr if use_avatar else None,
+        daily_limit=limit_type == "daily", weekly_limit=limit_type == "weekly"
+    )
+    if purchase_count > limit:
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError(f"{limit_type.capitalize()} purchase limit exceeded."))
+
+    return receipt
+
+
 @router.post("/request", response_model=ReceiptDetailSchema)
 def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     """
