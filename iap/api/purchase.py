@@ -269,6 +269,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
+    receipt = check_required_level(sess, receipt, product)
+
     # Check purchase limit
     # FIXME: Can we get season pass product without magic string?
     if "SeasonPass" in product.name:
