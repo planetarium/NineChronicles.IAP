@@ -73,6 +73,44 @@ def log_request_product(planet_id: str, agent_address: str, avatar_address: str,
     return JSONResponse(status_code=200, content=f"Order {order_id} for product {product_id} logged.")
 
 
+def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
+    if product.required_level:
+        gql_url = None
+        if receipt.planet_id in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
+            gql_url = os.environ.get("ODIN_GQL_URL")
+        elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
+            gql_url = os.environ.get("HEIMDALL_GQL_URL")
+
+        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
+        try:
+            resp = requests.post(gql_url, json={"query": query}, timeout=1)
+            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+        except:
+            # Whether request is failed or no fitted data found
+            avatar_level = 0
+
+        if avatar_level < product.required_level:
+            receipt.status = ReceiptStatus.REQUIRED_LEVEL
+            raise_error(sess, receipt,
+                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+    return receipt
+
+
+def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: str, limit: int,
+                         use_avatar: bool = False) -> Receipt:
+    purchase_count = get_purchase_count(
+        sess, product.id, planet_id=PlanetID(receipt.planet_id),
+        agent_addr=receipt.agent_addr if not use_avatar else None,
+        avatar_addr=receipt.avatar_addr if use_avatar else None,
+        daily_limit=limit_type == "daily", weekly_limit=limit_type == "weekly"
+    )
+    if purchase_count > limit:
+        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        raise_error(sess, receipt, ValueError(f"{limit_type.capitalize()} purchase limit exceeded."))
+
+    return receipt
+
+
 @router.post("/request", response_model=ReceiptDetailSchema)
 def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     """
@@ -231,15 +269,13 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
+    receipt = check_required_level(sess, receipt, product)
+
     # Check purchase limit
     # FIXME: Can we get season pass product without magic string?
     if "SeasonPass" in product.name:
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
-        if (product.account_limit and
-                get_purchase_count(sess, product.id, planet_id=receipt_data.planetId,
-                                   avatar_addr=receipt.avatar_addr.lower()) > product.account_limit):
-            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-            raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+        receipt = check_purchase_limit(sess, product, receipt, limit_type="account", limit=product.account_limit, use_avatar=True)
 
         prefix, body = product.google_sku.split("seasonpass")
         try:
@@ -273,21 +309,12 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             logging.error(msg)
             raise_error(sess, receipt, Exception(msg))
     else:
-        if (product.daily_limit and
-                get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                   agent_addr=receipt.agent_addr.lower(), daily_limit=True) > product.daily_limit):
-            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-            raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
-        elif (product.weekly_limit and
-              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                 agent_addr=receipt.agent_addr.lower(), weekly_limit=True) > product.weekly_limit):
-            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-            raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
-        elif (product.account_limit and
-              get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                                 agent_addr=receipt.agent_addr.lower()) > product.account_limit):
-            receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-            raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+        if product.daily_limit:
+            receipt = check_purchase_limit(sess, receipt, product, "daily", product.daily_limit)
+        if product.weekly_limit:
+            receipt = check_purchase_limit(sess, receipt, product, "weekly", product.weekly_limit)
+        if product.account_limit:
+            receipt = check_purchase_limit(sess, receipt, product, "account", product.account_limit)
 
         msg = {
             "agent_addr": receipt_data.agentAddress.lower(),
@@ -364,42 +391,15 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
     # Purchase Limit
-    if (product.daily_limit and
-            get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                               agent_addr=receipt.agent_addr.lower(), daily_limit=True) > product.daily_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Daily purchase limit exceeded."))
-    elif (product.weekly_limit and
-          get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                             agent_addr=receipt.agent_addr.lower(), weekly_limit=True) > product.weekly_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Weekly purchase limit exceeded."))
-    elif (product.account_limit and
-          get_purchase_count(sess, product.id, planet_id=PlanetID(receipt.planet_id),
-                             agent_addr=receipt.agent_addr.lower()) > product.account_limit):
-        receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-        raise_error(sess, receipt, ValueError("Account purchase limit exceeded."))
+    if product.daily_limit:
+        receipt = check_purchase_limit(sess, product, receipt, limit_type="daily", limit=product.daily_limit)
+    if product.weekly_limit:
+        receipt = check_purchase_limit(sess, product, receipt, limit_type="weekly", limit=product.weekly_limit)
+    if product.account_limit:
+        receipt = check_purchase_limit(sess, product, receipt, limit_type="account", limit=product.account_limit)
 
     # Required level
-    if product.required_level:
-        gql_url = None
-        if receipt_data.planetId in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
-            gql_url = os.environ.get("ODIN_GQL_URL")
-        elif receipt_data.planetId in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
-            gql_url = os.environ.get("HEIMDALL_GQL_URL")
-
-        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt_data.avatarAddress}") {{ level}} }} }}"""
-        try:
-            resp = requests.post(gql_url, json={"query": query}, timeout=1)
-            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
-        except:
-            # Whether request is failed or no fitted data found
-            avatar_level = 0
-
-        if avatar_level < product.required_level:
-            receipt.status = ReceiptStatus.REQUIRED_LEVEL
-            raise_error(sess, receipt,
-                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+    receipt = check_required_level(sess, receipt, product)
 
     receipt.status = ReceiptStatus.VALID
     sess.add(receipt)
