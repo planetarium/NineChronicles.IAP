@@ -13,7 +13,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 
 from common import logger
 from iap.exceptions import ReceiptNotFoundException
-from . import api, views, settings
+from . import api, settings
 
 __VERSION__ = "0.1.0"
 

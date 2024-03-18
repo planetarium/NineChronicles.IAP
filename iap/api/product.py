@@ -3,7 +3,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload, contains_eager
+from sqlalchemy.orm import joinedload
 
 from common.models.product import Product, Category
 from common.utils.address import format_addr
