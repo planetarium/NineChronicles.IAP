@@ -1,7 +1,8 @@
 import os.path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from debug_toolbar.middleware import DebugToolbarMiddleware
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from mangum import Mangum
 from pydantic.v1.error_wrappers import _display_error_type_and_ctx
@@ -12,7 +13,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 
 from common import logger
 from iap.exceptions import ReceiptNotFoundException
-from . import api, settings
+from . import api, views, settings
 
 __VERSION__ = "0.1.0"
 
@@ -24,6 +25,12 @@ app = FastAPI(
     version=__VERSION__,
     debug=settings.DEBUG,
 )
+
+if settings.DEBUG:
+    app.add_middleware(
+        DebugToolbarMiddleware,
+        panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"],
+    )
 
 
 @app.middleware("http")
