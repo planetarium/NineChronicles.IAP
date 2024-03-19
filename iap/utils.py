@@ -4,6 +4,7 @@ from typing import Optional
 
 import jwt
 from sqlalchemy import func, Date, cast, select
+from sqlalchemy.sql.functions import count
 
 from common import logger
 from common.enums import ReceiptStatus
@@ -15,9 +16,12 @@ from iap import settings
 
 def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optional[Product] = None,
                          use_avatar: bool = False) -> defaultdict:
-    stmt = select(Receipt).where(
-        Receipt.planet_id == planet_id,
-        Receipt.status.in_((ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID))
+    stmt = (
+        select(Receipt.product_id, count(Receipt.id).label("purchase_count"), cast(Receipt.purchased_at, Date).label("date"))
+        .where(
+            Receipt.planet_id == planet_id,
+            Receipt.status.in_((ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID))
+        )
     )
     if product is not None:
         stmt = stmt.where(Receipt.product_id == product.id)
@@ -25,7 +29,8 @@ def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optio
         stmt = stmt.where(Receipt.avatar_addr == address)
     else:
         stmt = stmt.where(Receipt.agent_addr == address)
-    receipt_list = sess.scalars(stmt).fetchall()
+    stmt = stmt.group_by("date", Receipt.product_id)
+    receipt_list = sess.execute(stmt).fetchall()
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
     daily_limit = datetime.datetime.utcnow().date()
@@ -33,12 +38,12 @@ def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optio
                     datetime.timedelta(days=(datetime.datetime.utcnow().date().isoweekday()) % 7)
                     ).date()
     for receipt in receipt_list:
-        if receipt.purchased_at.date() >= daily_limit:
-            receipt_dict["daily"][receipt.product_id] += 1
-        if receipt.purchased_at.date() >= weekly_limit:
-            receipt_dict["weekly"][receipt.product_id] += 1
+        if receipt.date >= daily_limit:
+            receipt_dict["daily"][receipt.product_id] += receipt.purchase_count
+        if receipt.date >= weekly_limit:
+            receipt_dict["weekly"][receipt.product_id] += receipt.purchase_count
         else:
-            receipt_dict["account"][receipt.product_id] += 1
+            receipt_dict["account"][receipt.product_id] += receipt.purchase_count
 
     return receipt_dict
 

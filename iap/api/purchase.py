@@ -24,7 +24,7 @@ from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema
-from iap.utils import create_season_pass_jwt, get_purchase_count, get_purchase_history
+from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
 from iap.validator.google import validate_google
