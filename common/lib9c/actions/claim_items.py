@@ -16,10 +16,11 @@ class ClaimItems(ActionBase):
           - valid keys: ["avatarAddress", "fungibleAssetValues"]
       - memo: JSON serialized string
     """
+    TYPE_ID: str = "claim_items"
 
     def __init__(self, *, claim_data: List[Dict[str, Address | List[FungibleAssetValue]]], memo: Optional[str] = None,
                  _id: Optional[str] = None):
-        super().__init__("claim_items", _id)
+        super().__init__(self.TYPE_ID, _id)
         self._claim_data = claim_data
         self._memo = memo
 
