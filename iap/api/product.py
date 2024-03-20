@@ -10,7 +10,7 @@ from common.utils.address import format_addr
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
-from iap.schemas.product import CategorySchema, ProductSchema
+from iap.schemas.product import CategorySchema, ProductSchema, SimpleProductSchema
 from iap.utils import get_purchase_history
 
 router = APIRouter(
@@ -71,3 +71,8 @@ def product_list(agent_addr: str, planet_id: str = "", sess=Depends(session)):
         category_schema_list.append(cat_schema)
 
     return category_schema_list
+
+
+@router.get("/all", response_model=List[SimpleProductSchema])
+def all_product_list(sess=Depends(session)):
+    return sess.scalars(select(Product)).fetchall()
