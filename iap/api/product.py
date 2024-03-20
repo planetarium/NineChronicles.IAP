@@ -34,7 +34,6 @@ def product_list(agent_addr: str, planet_id: str = "", sess=Depends(session)):
             joinedload(Category.product_list).joinedload(Product.fungible_item_list),
         )
         .where(Category.active.is_(True))
-        .order_by(Category.order)
     ).unique().fetchall()
 
     category_schema_list = []
