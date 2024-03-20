@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends
+from fastapi_cache.decorator import cache
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
@@ -73,5 +74,6 @@ def product_list(agent_addr: str, planet_id: str = "", sess=Depends(session)):
 
 
 @router.get("/all", response_model=List[SimpleProductSchema])
+@cache(expire=3600)
 def all_product_list(sess=Depends(session)):
     return sess.scalars(select(Product)).fetchall()
