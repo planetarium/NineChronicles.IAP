@@ -51,7 +51,7 @@ class Currency:
         value = {
             "ticker": self.ticker,
             "decimalPlaces": chr(self.decimal_places).encode(),
-            "minters": [x.short_format for x in self.minters] if self.minters else None
+            "minters": [x.raw for x in self.minters] if self.minters else None
         }
         if self.total_supply_trackable:
             value["totalSupplyTrackable"] = True
