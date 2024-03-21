@@ -91,8 +91,9 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
 
         if avatar_level < product.required_level:
             receipt.status = ReceiptStatus.REQUIRED_LEVEL
-            raise_error(sess, receipt,
-                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+            msg = f"Avatar level {avatar_level} does not met required level {product.required_level}"
+            receipt.msg = msg
+            raise_error(sess, receipt, ValueError(msg))
     return receipt
 
 
@@ -275,7 +276,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # FIXME: Can we get season pass product without magic string?
     if "SeasonPass" in product.name:
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
-        receipt = check_purchase_limit(sess, product, receipt, limit_type="account", limit=product.account_limit, use_avatar=True)
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="account", limit=product.account_limit,
+                                       use_avatar=True)
 
         prefix, body = product.google_sku.split("seasonpass")
         try:
@@ -392,11 +394,11 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
 
     # Purchase Limit
     if product.daily_limit:
-        receipt = check_purchase_limit(sess, product, receipt, limit_type="daily", limit=product.daily_limit)
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="daily", limit=product.daily_limit)
     if product.weekly_limit:
-        receipt = check_purchase_limit(sess, product, receipt, limit_type="weekly", limit=product.weekly_limit)
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="weekly", limit=product.weekly_limit)
     if product.account_limit:
-        receipt = check_purchase_limit(sess, product, receipt, limit_type="account", limit=product.account_limit)
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="account", limit=product.account_limit)
 
     # Required level
     receipt = check_required_level(sess, receipt, product)
