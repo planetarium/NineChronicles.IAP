@@ -1,8 +1,11 @@
 import os.path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
+from debug_toolbar.middleware import DebugToolbarMiddleware
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError, HTTPException
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 from mangum import Mangum
 from pydantic.v1.error_wrappers import _display_error_type_and_ctx
 from starlette.requests import Request
@@ -24,6 +27,17 @@ app = FastAPI(
     version=__VERSION__,
     debug=settings.DEBUG,
 )
+
+if settings.DEBUG:
+    app.add_middleware(
+        DebugToolbarMiddleware,
+        panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"],
+    )
+
+
+@app.on_event("startup")
+async def startup():
+    FastAPICache.init(InMemoryBackend())
 
 
 @app.middleware("http")

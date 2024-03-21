@@ -9,21 +9,22 @@ readme = "README.md"
 # Main, Common
 python = "^3.10"
 psycopg2-binary = "^2.9.7"
-sqlalchemy = "^2.0.20"
+sqlalchemy = "^2.0.28"
 requests = "^2.31.0"
-google-api-python-client = "^2.99.0"
-gql = { extras = ["requests"], version = "^3.4.1" }
+google-api-python-client = "^2.122.0"
+gql = { extras = ["requests"], version = "^3.5.0" }
 eth-utils = "^2.2.0"
-pycryptodome = "^3.18.0"
+pycryptodome = "^3.20.0"
 eth-account = "^0.9.0"
-pydantic="^2.3.0"
+pydantic="^2.6.4"
 bencodex = "^1.0.1"
 pyjwt = "^2.8.0"
+fastapi-cache2 = "^0.2.1"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API
-cryptography = "^41.0.4"
-fastapi = "^0.103.1"
+cryptography = "^41.0.7"
+fastapi = "^0.110.0"
 uvicorn = "^0.23.2"
 mangum = "^0.17.0"
 
@@ -31,17 +32,18 @@ mangum = "^0.17.0"
 # IAP Worker
 pyasn1 = "^0.5.0"
 hexbytes = "^0.3.1"
-google-auth-oauthlib = "^1.1.0"
+google-auth-oauthlib = "^1.2.0"
 
 [tool.poetry.group.dev.dependencies]
 # Only for development
 boto3 = "^1.28.46"
-ipython = "^8.13.1"
-pytest = "^7.3.1"
-alembic = "^1.12.0"
-aws-cdk-lib = "2.96.2"
+ipython = "^8.22.2"
+pytest = "^7.4.4"
+alembic = "^1.13.1"
+aws-cdk-lib = "2.133.0"
 constructs = "^10.2.70"
-python-dotenv = "^1.0.0"
+python-dotenv = "^1.0.1"
+fastapi-debug-toolbar = "^0.6.2"
 
 [build-system]
 requires = ["poetry-core"]
