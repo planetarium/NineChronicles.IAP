@@ -110,10 +110,10 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
         # Final check
         if cached_data.level < product.required_level:
             receipt.status = ReceiptStatus.REQUIRED_LEVEL
-            raise_error(
-                sess, receipt,
-                ValueError(f"Avatar level {cached_data.level} does not met required level {product.required_level}")
-            )
+            msg = f"Avatar level {avatar_level} does not met required level {product.required_level}"
+            receipt.msg = msg
+            raise_error(sess, receipt, ValueError(msg))
+
     return receipt
 
 
