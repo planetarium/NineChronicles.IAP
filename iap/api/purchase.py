@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 import boto3
 import requests
 from fastapi import APIRouter, Depends, Query
-from googleapiclient.errors import HttpError
 from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
@@ -18,7 +17,6 @@ from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
 from common.utils.aws import fetch_parameter
-from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
@@ -28,7 +26,7 @@ from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptS
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
-from iap.validator.google import validate_google
+from iap.validator.google import validate_google, consume_google
 
 router = APIRouter(
     prefix="/purchase",
@@ -38,18 +36,6 @@ router = APIRouter(
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
 VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
-
-
-def consume_google(sku: str, token: str):
-    client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    try:
-        resp = client.purchases().products().consume(
-            packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token
-        )
-        logger.debug(resp)
-    except HttpError as e:
-        logger.error(e)
-        raise e
 
 
 def raise_error(sess, receipt: Receipt, e: Exception):
@@ -232,8 +218,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         #     receipt.status = ReceiptStatus.INVALID
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
-        # NOTE: Consume can be executed only by purchase owner.
-        # consume_google(product_id, token)
+        if success:
+            consume_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(order_id)
