@@ -13,8 +13,9 @@ from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql"):
+    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql", jwt_secret: str = None):
         self._url = url
+        self.__jwt_secret = jwt_secret
         self.client = None
         self.ds = None
         transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2, headers=self.__create_header())
@@ -23,12 +24,13 @@ class GQL:
             assert self.client.schema is not None
             self.ds = DSLSchema(self.client.schema)
 
-    @staticmethod
-    def create_token() -> str:
+    def create_token(self) -> str:
+        iat = datetime.datetime.utcnow()
         return jwt.encode({
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=10),
+            "iat": iat,
+            "exp": iat + datetime.timedelta(minutes=1),
             "iss": "NineChronicles.IAP",
-        }, os.environ.get("HEADLESS_GQL_JWT_SECRET"))
+        }, self.__jwt_secret)
 
     def __create_header(self):
         return {"Authorization": f"Bearer {self.create_token()}"}
