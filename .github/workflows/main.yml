@@ -59,8 +59,8 @@ jobs:
       HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
 
   deploy_without_approval:
-    # This is for development / internal deployment
-    if: ${{ github.ref == 'refs/heads/development' || github.ref == 'refs/heads/internal' || startsWith(github.ref, 'refs/heads/release') }}
+    # This is for internal deployment
+    if: ${{ github.ref == 'refs/heads/internal' || startsWith(github.ref, 'refs/heads/release') }}
     needs: [ "test", "build_frontend", "synth" ]
     uses: ./.github/workflows/deploy.yml
     with:
