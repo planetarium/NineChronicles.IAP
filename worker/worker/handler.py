@@ -3,12 +3,10 @@ import datetime
 import json
 import logging
 import os
-import traceback
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
-import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 

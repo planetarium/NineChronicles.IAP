@@ -1,9 +1,8 @@
 import os.path
 
 import uvicorn
-from debug_toolbar.middleware import DebugToolbarMiddleware
 from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from mangum import Mangum
@@ -29,6 +28,8 @@ app = FastAPI(
 )
 
 if settings.DEBUG:
+    from debug_toolbar.middleware import DebugToolbarMiddleware
+
     app.add_middleware(
         DebugToolbarMiddleware,
         panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"],

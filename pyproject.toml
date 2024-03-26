@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ninechronicles-iap"
-version = "0.5.2"
+version = "0.12.0"
 description = "NineChronicles In-app Purchase Service"
 authors = ["hyeon <hyeon+iap@planetariumhq.com>"]
 readme = "README.md"
