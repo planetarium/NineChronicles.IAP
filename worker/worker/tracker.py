@@ -11,7 +11,7 @@ from common import logger
 from common._graphql import GQL
 from common.enums import TxStatus
 from common.models.receipt import Receipt
-from common.utils.aws import fetch_secrets
+from common.utils.aws import fetch_secrets, fetch_parameter
 from common.utils.receipt import PlanetID
 
 DB_URI = os.environ.get("DB_URI")
@@ -19,6 +19,11 @@ db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRE
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
 BLOCK_LIMIT = 50
 
@@ -26,7 +31,7 @@ engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
 def process(tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
-    client = GQL(GQL_URL)
+    client = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(

@@ -103,6 +103,7 @@ class APIStack(Stack):
             "CDN_HOST": config.cdn_host,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
+            "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,
         }
 
         # Lambda Function

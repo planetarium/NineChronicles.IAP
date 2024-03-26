@@ -38,6 +38,7 @@ class Config:
     cdn_host: str
     odin_gql_url: str
     heimdall_gql_url: str
+    headless_gql_jwt_secret: str
 
     # Multiplanetary
     planet_url: str

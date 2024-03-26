@@ -3,12 +3,10 @@ import datetime
 import json
 import logging
 import os
-import traceback
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
-import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 
@@ -19,7 +17,7 @@ from common.enums import TxStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.actions import create_unload_my_garages_action_plain_value
-from common.utils.aws import fetch_secrets, fetch_kms_key_id
+from common.utils.aws import fetch_secrets, fetch_kms_key_id, fetch_parameter
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
@@ -28,6 +26,11 @@ db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRE
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
@@ -90,7 +93,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL(GQL_URL)
+    gql = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
