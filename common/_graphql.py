@@ -65,7 +65,7 @@ class GQL:
         return resp["transaction"]["nextTxNonce"]
 
     def _unload_from_garage(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         fav_data = kwargs.get("fav_data")
         avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
@@ -94,7 +94,7 @@ class GQL:
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
     def _claim_items(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         claim_data = kwargs.get("claim_data")
         memo = kwargs.get("memo")
 
@@ -116,7 +116,7 @@ class GQL:
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         sender = kwargs.get("sender")
         recipient = kwargs.get("recipient")
         currency = kwargs.get("currency")
