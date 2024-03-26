@@ -1,8 +1,10 @@
 import os.path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 from mangum import Mangum
 from pydantic.v1.error_wrappers import _display_error_type_and_ctx
 from starlette.requests import Request
@@ -12,7 +14,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 
 from common import logger
 from iap.exceptions import ReceiptNotFoundException
-from . import api, settings
+from . import api, views, settings
 
 __VERSION__ = "0.1.0"
 
@@ -24,6 +26,19 @@ app = FastAPI(
     version=__VERSION__,
     debug=settings.DEBUG,
 )
+
+if settings.DEBUG:
+    from debug_toolbar.middleware import DebugToolbarMiddleware
+
+    app.add_middleware(
+        DebugToolbarMiddleware,
+        panels=["debug_toolbar.panels.sqlalchemy.SQLAlchemyPanel"],
+    )
+
+
+@app.on_event("startup")
+async def startup():
+    FastAPICache.init(InMemoryBackend())
 
 
 @app.middleware("http")
@@ -106,25 +121,9 @@ def favicon():
     return "iap/frontend/build/favicon.png"
 
 
-@app.get("/", response_class=FileResponse, tags=["View"], summary="Index page")
-@app.get(
-    "/{page}", response_class=FileResponse, tags=["View"], summary="Opens pages provided name",
-    description="""Frontend pages are controlled by Svelte.  
-If you access to any page other than index directly from browser, this function will find right page to show.  
-
-Available page list:
-- box
-"""
-)
-def view_page(page: str = "index"):
-    # NOTICE: Set html name matches to path.
-    if os.path.isfile(f"iap/frontend/build/{page}.html"):
-        return f"iap/frontend/build/{page}.html"
-    raise HTTPException(status_code=404, detail=f"Page Not Found: /{page}")
-
-
 app.include_router(api.router)
-app.mount("/_app", StaticFiles(directory="iap/frontend/build/_app"), name="static")
+app.include_router(views.router)
+app.mount("/views/_app", StaticFiles(directory="iap/frontend/build/_app"), name="static")
 
 handler = Mangum(app)
 

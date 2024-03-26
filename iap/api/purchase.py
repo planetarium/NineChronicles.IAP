@@ -8,7 +8,6 @@ from uuid import UUID, uuid4
 import boto3
 import requests
 from fastapi import APIRouter, Depends, Query
-from googleapiclient.errors import HttpError
 from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
@@ -16,8 +15,8 @@ from starlette.responses import JSONResponse
 from common.enums import ReceiptStatus, Store
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.models.user import AvatarLevel
 from common.utils.aws import fetch_parameter
-from common.utils.google import get_google_client
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
@@ -27,7 +26,7 @@ from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptS
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
-from iap.validator.google import validate_google
+from iap.validator.google import validate_google, consume_google
 
 router = APIRouter(
     prefix="/purchase",
@@ -37,18 +36,6 @@ router = APIRouter(
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
 VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
-
-
-def consume_google(sku: str, token: str):
-    client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    try:
-        resp = client.purchases().products().consume(
-            packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token
-        )
-        logger.debug(resp)
-    except HttpError as e:
-        logger.error(e)
-        raise e
 
 
 def raise_error(sess, receipt: Receipt, e: Exception):
@@ -75,24 +62,44 @@ def log_request_product(planet_id: str, agent_address: str, avatar_address: str,
 
 def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
     if product.required_level:
-        gql_url = None
-        if receipt.planet_id in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
-            gql_url = os.environ.get("ODIN_GQL_URL")
-        elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
-            gql_url = os.environ.get("HEIMDALL_GQL_URL")
+        cached_data = sess.scalar(select(AvatarLevel).where(
+            AvatarLevel.avatar_addr == receipt.avatar_addr,
+            AvatarLevel.planet_id == receipt.planet_id)
+        )
+        if not cached_data:
+            cached_data = AvatarLevel(
+                agent_addr=receipt.agent_addr,
+                avatar_addr=receipt.avatar_addr,
+                planet_id=receipt.planet_id,
+                level=-1
+            )
 
-        query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
-        try:
-            resp = requests.post(gql_url, json={"query": query}, timeout=1)
-            avatar_level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
-        except:
-            # Whether request is failed or no fitted data found
-            avatar_level = 0
+        # Fetch and update current level
+        if cached_data.level < product.required_level:
+            gql_url = None
+            if receipt.planet_id in (PlanetID.ODIN, PlanetID.ODIN_INTERNAL):
+                gql_url = os.environ.get("ODIN_GQL_URL")
+            elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
+                gql_url = os.environ.get("HEIMDALL_GQL_URL")
 
-        if avatar_level < product.required_level:
+            query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
+            try:
+                resp = requests.post(gql_url, json={"query": query}, timeout=1)
+                cached_data.level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
+            except:
+                # Whether request is failed or no fitted data found
+                pass
+
+        # NOTE: Do not commit here to prevent unintended data save during process
+        sess.add(cached_data)
+
+        # Final check
+        if cached_data.level < product.required_level:
             receipt.status = ReceiptStatus.REQUIRED_LEVEL
-            raise_error(sess, receipt,
-                        ValueError(f"Avatar level {avatar_level} does not met required level {product.required_level}"))
+            msg = f"Avatar level {cached_data.level} does not met required level {product.required_level}"
+            receipt.msg = msg
+            raise_error(sess, receipt, ValueError(msg))
+
     return receipt
 
 
@@ -211,8 +218,8 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         #     receipt.status = ReceiptStatus.INVALID
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
-        # NOTE: Consume can be executed only by purchase owner.
-        # consume_google(product_id, token)
+        if success:
+            consume_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(order_id)
