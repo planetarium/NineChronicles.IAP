@@ -29,7 +29,7 @@ class GQL:
         return jwt.encode({
             "iat": iat,
             "exp": iat + datetime.timedelta(minutes=1),
-            "iss": "NineChronicles.IAP",
+            "iss": "planetariumhq.com"
         }, self.__jwt_secret)
 
     def __create_header(self):
