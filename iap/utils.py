@@ -42,8 +42,7 @@ def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optio
             receipt_dict["daily"][receipt.product_id] += receipt.purchase_count
         if receipt.date >= weekly_limit:
             receipt_dict["weekly"][receipt.product_id] += receipt.purchase_count
-        else:
-            receipt_dict["account"][receipt.product_id] += receipt.purchase_count
+        receipt_dict["account"][receipt.product_id] += receipt.purchase_count
 
     return receipt_dict
 
