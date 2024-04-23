@@ -34,6 +34,7 @@ def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optio
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
     daily_limit = datetime.datetime.utcnow().date()
+    # Weekday 0 == Sunday
     weekly_limit = (datetime.datetime.utcnow() -
                     datetime.timedelta(days=(datetime.datetime.utcnow().date().isoweekday()) % 7)
                     ).date()
