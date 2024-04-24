@@ -6,7 +6,7 @@ import alembic
 import pytest
 from alembic.config import Config
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker, scoped_session, make_transient
 
 from common.models.product import Product
 from common.models.receipt import Receipt
@@ -39,6 +39,7 @@ def session(setup_alembic):
 def add_product(sess, product_list: List[Product]):
     try:
         for product in product_list:
+            make_transient(product)
             sess.add(product)
         sess.commit()
         for p in product_list:
