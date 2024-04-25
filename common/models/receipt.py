@@ -17,6 +17,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     order_id = Column(Text, nullable=False, doc="Play store / Appstore IAP receipt id")
     uuid = Column(UUID(as_uuid=True), nullable=False, index=True, default=uuid.uuid4,
                   doc="Internal uuid for management")
+    package_name = Column(Text, nullable=False, doc="Package name where the receipt came from")
     data = Column(JSONB, nullable=False, doc="Full IAP receipt data")
     status = Column(
         ENUM(ReceiptStatus, create_type=False), nullable=False, default=ReceiptStatus.INIT,
