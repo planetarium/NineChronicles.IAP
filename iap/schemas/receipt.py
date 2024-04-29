@@ -82,6 +82,7 @@ class FreeReceiptSchema:
 class ReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
+    packageName: str = None
     agentAddress: Optional[str] = None
     avatarAddress: Optional[str] = None
     planetId: Union[str, PlanetID] = None

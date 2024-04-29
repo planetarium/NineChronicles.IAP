@@ -18,12 +18,13 @@ def consume_google(sku: str, token: str):
         logger.error(e)
 
 
-def validate_google(order_id: str, sku: str, token: str) -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
+def validate_google(package_name: str, order_id: str, sku: str, token: str) \
+        -> Tuple[bool, str, Optional[GooglePurchaseSchema]]:
     client = get_google_client(settings.GOOGLE_CREDENTIAL)
     try:
         resp = GooglePurchaseSchema(
             **(client.purchases().products()
-               .get(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
+               .get(packageName=package_name, productId=sku, token=token)
                .execute())
         )
         if resp.purchaseState != GooglePurchaseState.PURCHASED:

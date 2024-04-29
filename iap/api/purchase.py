@@ -183,6 +183,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # Save incoming data first
     receipt = Receipt(
         store=receipt_data.store,
+        package_name=receipt_data.packageName,
         data=receipt_data.data,
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
@@ -211,7 +212,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
-        success, msg, purchase = validate_google(order_id, product_id, token)
+        success, msg, purchase = validate_google(receipt.package_name, order_id, product_id, token)
         # FIXME: google API result may not include productId.
         #  Can we get productId always?
         # if purchase.productId != product.google_sku:
