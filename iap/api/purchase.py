@@ -26,7 +26,7 @@ from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptS
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
-from iap.validator.google import validate_google, consume_google
+from iap.validator.google import validate_google, ack_google
 
 router = APIRouter(
     prefix="/purchase",
@@ -219,7 +219,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         if success:
-            consume_google(product_id, token)
+            ack_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(order_id)
