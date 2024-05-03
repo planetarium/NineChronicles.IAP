@@ -14,7 +14,7 @@ router = APIRouter(
 
 CDN_HOST_DICT = {
     "com.planetariumlabs.ninechroniclesmobile": os.environ.get("CDN_HOST", "http://localhost"),
-    "com.planetariumlabs.ninek": os.environ.get("CDN_HOST_K", "http://localhost"),
+    "com.planetariumlabs.ninechroniclesmobliek": os.environ.get("CDN_HOST_K", "http://localhost"),
 }
 
 
