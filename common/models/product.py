@@ -59,6 +59,7 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     order = Column(Integer, nullable=False, default=-1, doc="Display order in client. Ascending sort.")
     google_sku = Column(Text, doc="SKU ID of google play store")
     apple_sku = Column(Text, doc="SKU ID of apple appstore")
+    apple_sku_k = Column(Text, doc="SKU ID of apple appstore for 9c-K")
     # product_type = Column(ENUM(ProductType), default=ProductType.SINGLE, nullable=False)
     is_free = Column(Boolean, nullable=False, default=False, doc="Flag to set this product as free")
     required_level = Column(Integer, nullable=True, default=None, doc="Required avatar level to purchase this product")
