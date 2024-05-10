@@ -1,11 +1,12 @@
 from datetime import datetime
-from typing import List
+from typing import List, Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from fastapi_cache.decorator import cache
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from common.enums import PackageName
 from common.models.product import Product, Category
 from common.utils.address import format_addr
 from common.utils.receipt import PlanetID
@@ -21,7 +22,9 @@ router = APIRouter(
 
 
 @router.get("", response_model=List[CategorySchema])
-def product_list(agent_addr: str, planet_id: str = "", sess=Depends(session)):
+def product_list(x_iap_packagename: Annotated[PackageName | None, Header()],
+                 agent_addr: str, planet_id: str = "", sess=Depends(session),
+                 ):
     if not planet_id:
         planet_id = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
     else:
@@ -44,6 +47,11 @@ def product_list(agent_addr: str, planet_id: str = "", sess=Depends(session)):
         schema_dict = {}
         for product in category.product_list:
             schema = ProductSchema.model_validate(product)
+
+            # Change Apple SKU for K
+            if x_iap_packagename == PackageName.NINE_CHRONICLES_K:
+                schema.apple_sku = product.apple_sku_k
+
             if (not product.active or
                     ((product.open_timestamp and product.open_timestamp > datetime.now()) or
                      (product.close_timestamp and product.close_timestamp <= datetime.now()))
