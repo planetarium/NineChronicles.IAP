@@ -101,6 +101,7 @@ class APIStack(Stack):
             "ODIN_GQL_URL": config.odin_gql_url,
             "HEIMDALL_GQL_URL": config.heimdall_gql_url,
             "CDN_HOST": config.cdn_host,
+            "CDN_HOST_K": config.cdn_host_k,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
         }
