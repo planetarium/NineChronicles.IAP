@@ -7,12 +7,12 @@ from uuid import UUID, uuid4
 
 import boto3
 import requests
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
-from common.enums import ReceiptStatus, Store
+from common.enums import ReceiptStatus, Store, PackageName
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
@@ -119,7 +119,9 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
-def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
+def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
+                    receipt_data: ReceiptSchema, sess=Depends(session)
+                    ):
     """
     # Purchase Request
     ---
@@ -183,6 +185,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # Save incoming data first
     receipt = Receipt(
         store=receipt_data.store,
+        package_name=receipt_data.packageName,
         data=receipt_data.data,
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
@@ -211,7 +214,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
-        success, msg, purchase = validate_google(order_id, product_id, token)
+        success, msg, purchase = validate_google(receipt.package_name, order_id, product_id, token)
         # FIXME: google API result may not include productId.
         #  Can we get productId always?
         # if purchase.productId != product.google_sku:
@@ -229,11 +232,19 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             receipt.data = data
             receipt.purchased_at = purchase.originalPurchaseDate
             # Get product from validation result and check product existence.
-            product = sess.scalar(
-                select(Product)
-                .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-                .where(Product.active.is_(True), Product.apple_sku == purchase.productId)
-            )
+            stmt = (select(Product)
+                    .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+                    .where(Product.active.is_(True))
+                    )
+
+            if x_iap_packagename == PackageName.NINE_CHRONICLES_M:
+                stmt = stmt.where(Product.apple_sku == purchase.productId)
+            elif x_iap_packagename == PackageName.NINE_CHRONICLES_K:
+                stmt = stmt.where(Product.apple_sku_k == purchase.productId)
+            else:
+                raise_error(sess, receipt, ValueError(f"{x_iap_packagename} is not valid package name."))
+            product = sess.scalar(stmt)
+
         if not product:
             receipt.status = ReceiptStatus.INVALID
             raise_error(sess, receipt,

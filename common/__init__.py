@@ -36,6 +36,7 @@ class Config:
     account_id: str
     region_name: str
     cdn_host: str
+    cdn_host_k: str
     odin_gql_url: str
     heimdall_gql_url: str
 

@@ -5,6 +5,15 @@ from enum import Enum, IntEnum
 #  Mismatch can lead frontend error
 
 
+class PackageName(Enum):
+    """
+    # PackageName
+    ---
+    """
+    NINE_CHRONICLES_M = "com.planetariumlabs.ninechroniclesmobile"
+    NINE_CHRONICLES_K = "com.planetariumlabs.ninechroniclesmobilek"
+
+
 class Currency(Enum):
     """
     # Currency
