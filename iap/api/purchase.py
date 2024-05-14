@@ -185,7 +185,7 @@ def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
     # Save incoming data first
     receipt = Receipt(
         store=receipt_data.store,
-        package_name=x_iap_packagename,
+        package_name=x_iap_packagename.value,
         data=receipt_data.data,
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
