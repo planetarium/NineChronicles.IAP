@@ -16,7 +16,7 @@ class SimpleProductSchema(BaseSchema):
     weekly_limit: Optional[int] = None
     account_limit: Optional[int] = None
     active: bool
-    buyable: bool = True
+    buyable: bool = False
     required_level: Optional[int] = None
 
     class Config:

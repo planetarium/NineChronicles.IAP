@@ -101,6 +101,7 @@ class APIStack(Stack):
             "ODIN_GQL_URL": config.odin_gql_url,
             "HEIMDALL_GQL_URL": config.heimdall_gql_url,
             "CDN_HOST": config.cdn_host,
+            "CDN_HOST_K": config.cdn_host_k,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
         }
@@ -121,9 +122,9 @@ class APIStack(Stack):
             role=role,
             vpc=shared_stack.vpc,
             security_groups=[shared_stack.rds_security_group],
-            timeout=cdk_core.Duration.seconds(10),
+            timeout=cdk_core.Duration.seconds(30),
             environment=env,
-            memory_size=256,
+            memory_size=512,
         )
 
         # ACM & Custom Domain
