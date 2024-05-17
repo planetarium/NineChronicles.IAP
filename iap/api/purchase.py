@@ -225,7 +225,7 @@ def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
             ack_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        success, msg, purchase = validate_apple(order_id)
+        success, msg, purchase = validate_apple(receipt.package_name, order_id)
         if success:
             data = receipt_data.data.copy()
             data.update(**purchase.json_data)
