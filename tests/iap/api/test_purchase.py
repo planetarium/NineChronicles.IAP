@@ -4,7 +4,10 @@ from iap.validator.apple import validate_apple
 from iap.validator.google import validate_google
 
 # Both purchases are test purchase.
-TEST_APPLE_ORDER_ID = '2000000458219693'
+TEST_APPLE_ORDER_DATA = {
+    'packageName': 'com.planetariumlabs.ninechroniclesmobile',
+    "orderId": '2000000458219693'
+}
 TEST_GOOGLE_ORDER_DATA = {
     'packageName': 'com.planetariumlabs.ninechroniclesmobile',
     'orderId': 'GPA.3392-3387-9900-22421',
@@ -15,13 +18,13 @@ TEST_GOOGLE_FAKE_ORDER_ID = "FKE.1234-1234-1234-00000"
 
 
 def test_apple_verify_success():
-    success, message, data = validate_apple(TEST_APPLE_ORDER_ID)
+    success, message, data = validate_apple(TEST_APPLE_ORDER_DATA["packageName"], TEST_APPLE_ORDER_DATA["orderId"])
     assert success is True
 
 
-@pytest.mark.parametrize("order_id", [f"{TEST_APPLE_ORDER_ID}#1", f"{TEST_APPLE_ORDER_ID}&1"])
+@pytest.mark.parametrize("order_id", [f"{TEST_APPLE_ORDER_DATA['orderId']}#1", f"{TEST_APPLE_ORDER_DATA['orderId']}&1"])
 def test_apple_verify_failure_with_fragment(order_id):
-    success, message, data = validate_apple(order_id)
+    success, message, data = validate_apple(TEST_APPLE_ORDER_DATA["packageName"], order_id)
     assert success is False
 
 

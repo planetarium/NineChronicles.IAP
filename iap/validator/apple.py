@@ -11,9 +11,9 @@ from iap import settings
 from iap.schemas.receipt import ApplePurchaseSchema
 
 
-def validate_apple(tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
+def validate_apple(package_name: str, tx_id: str) -> Tuple[bool, str, Optional[ApplePurchaseSchema]]:
     headers = {
-        "Authorization": f"Bearer {get_jwt(settings.APPLE_CREDENTIAL, settings.APPLE_BUNDLE_ID, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)}"
+        "Authorization": f"Bearer {get_jwt(settings.APPLE_CREDENTIAL, package_name, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)}"
     }
     encoded_tx_id = urllib.parse.quote_plus(tx_id)
     resp = requests.get(settings.APPLE_VALIDATION_URL.format(transactionId=encoded_tx_id), headers=headers)
