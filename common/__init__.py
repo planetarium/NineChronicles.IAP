@@ -40,10 +40,6 @@ class Config:
     odin_gql_url: str
     heimdall_gql_url: str
 
-    # Multiplanetary
-    planet_url: str
-    bridge_data: str
-
     google_package_name: str
     apple_bundle_id: str
 
@@ -57,9 +53,6 @@ class Config:
 
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
-    golden_dust_request_sheet_id: Optional[str] = None
-    golden_dust_work_sheet_id: Optional[str] = None
-    form_sheet: Optional[str] = None
 
     # Status monitor
     iap_garage_webhook_url: str = None
