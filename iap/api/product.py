@@ -22,8 +22,9 @@ router = APIRouter(
 
 
 @router.get("", response_model=List[CategorySchema])
-def product_list(x_iap_packagename: Annotated[PackageName | None, Header()],
-                 agent_addr: str, planet_id: str = "", sess=Depends(session),
+def product_list(agent_addr: str,
+                 x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                 planet_id: str = "", sess=Depends(session),
                  ):
     if not planet_id:
         planet_id = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
