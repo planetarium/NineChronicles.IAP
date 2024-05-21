@@ -119,8 +119,9 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
-def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
-                    receipt_data: ReceiptSchema, sess=Depends(session)
+def request_product(receipt_data: ReceiptSchema,
+                    x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                    sess=Depends(session)
                     ):
     """
     # Purchase Request
