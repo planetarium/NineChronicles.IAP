@@ -355,7 +355,9 @@ def request_product(receipt_data: ReceiptSchema,
 
 
 @router.post("/free", response_model=ReceiptDetailSchema)
-def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
+def free_product(receipt_data: FreeReceiptSchema,
+                 x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                 sess=Depends(session)):
     """
     # Purchase Free Product
     ---
@@ -382,6 +384,7 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     order_id = f"FREE-{uuid4()}"
     receipt = Receipt(
         store=receipt_data.store,
+        package_name=x_iap_packagename.value,
         data={"SKU": receipt_data.sku, "OrderId": order_id},
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
