@@ -119,8 +119,9 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
-def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
-                    receipt_data: ReceiptSchema, sess=Depends(session)
+def request_product(receipt_data: ReceiptSchema,
+                    x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                    sess=Depends(session)
                     ):
     """
     # Purchase Request
@@ -185,7 +186,7 @@ def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
     # Save incoming data first
     receipt = Receipt(
         store=receipt_data.store,
-        package_name=x_iap_packagename,
+        package_name=x_iap_packagename.value,
         data=receipt_data.data,
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
@@ -225,7 +226,7 @@ def request_product(x_iap_packagename: Annotated[PackageName | None, Header()],
             ack_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        success, msg, purchase = validate_apple(order_id)
+        success, msg, purchase = validate_apple(receipt.package_name, order_id)
         if success:
             data = receipt_data.data.copy()
             data.update(**purchase.json_data)

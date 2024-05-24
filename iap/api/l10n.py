@@ -21,7 +21,7 @@ CDN_HOST_DICT = {
 
 
 @router.get("", response_model=L10NSchema)
-def l10n_list(x_iap_packagename: Annotated[PackageName | None, Header()]):
+def l10n_list(x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M):
     host = CDN_HOST_DICT.get(x_iap_packagename)
     if not host:
         msg = f"No CDN host for package {x_iap_packagename}"
