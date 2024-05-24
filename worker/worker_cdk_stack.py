@@ -275,3 +275,19 @@ class WorkerStack(Stack):
                 environment=env,
                 memory_size=512,
             )
+
+            lambda_warmer = _lambda.Function(
+                self, f"{config.stage}-9c-iap-lambda-warmer",
+                function_name=f"{config.stage}-9c-iap-lambda-warmer",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Warm lambda instance to response fast",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="lambda_warmer.heat",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(10),
+                environment=env,
+                memory_size=128,
+            )
+            minute_event_rule.add_target(_event_targets.LambdaFunction(lambda_warmer))
