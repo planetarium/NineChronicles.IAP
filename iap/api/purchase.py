@@ -7,12 +7,12 @@ from uuid import UUID, uuid4
 
 import boto3
 import requests
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
-from common.enums import ReceiptStatus, Store
+from common.enums import ReceiptStatus, Store, PackageName
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
@@ -119,7 +119,10 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
-def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
+def request_product(receipt_data: ReceiptSchema,
+                    x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                    sess=Depends(session)
+                    ):
     """
     # Purchase Request
     ---
@@ -183,6 +186,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
     # Save incoming data first
     receipt = Receipt(
         store=receipt_data.store,
+        package_name=x_iap_packagename.value,
         data=receipt_data.data,
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
@@ -211,7 +215,7 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             raise_error(sess, receipt,
                         ValueError("Invalid Receipt: Both productId and purchaseToken must be present en receipt data"))
 
-        success, msg, purchase = validate_google(order_id, product_id, token)
+        success, msg, purchase = validate_google(receipt.package_name, order_id, product_id, token)
         # FIXME: google API result may not include productId.
         #  Can we get productId always?
         # if purchase.productId != product.google_sku:
@@ -222,18 +226,26 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
             ack_google(product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
-        success, msg, purchase = validate_apple(order_id)
+        success, msg, purchase = validate_apple(receipt.package_name, order_id)
         if success:
             data = receipt_data.data.copy()
             data.update(**purchase.json_data)
             receipt.data = data
             receipt.purchased_at = purchase.originalPurchaseDate
             # Get product from validation result and check product existence.
-            product = sess.scalar(
-                select(Product)
-                .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
-                .where(Product.active.is_(True), Product.apple_sku == purchase.productId)
-            )
+            stmt = (select(Product)
+                    .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+                    .where(Product.active.is_(True))
+                    )
+
+            if x_iap_packagename == PackageName.NINE_CHRONICLES_M:
+                stmt = stmt.where(Product.apple_sku == purchase.productId)
+            elif x_iap_packagename == PackageName.NINE_CHRONICLES_K:
+                stmt = stmt.where(Product.apple_sku_k == purchase.productId)
+            else:
+                raise_error(sess, receipt, ValueError(f"{x_iap_packagename} is not valid package name."))
+            product = sess.scalar(stmt)
+
         if not product:
             receipt.status = ReceiptStatus.INVALID
             raise_error(sess, receipt,
@@ -343,7 +355,9 @@ def request_product(receipt_data: ReceiptSchema, sess=Depends(session)):
 
 
 @router.post("/free", response_model=ReceiptDetailSchema)
-def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
+def free_product(receipt_data: FreeReceiptSchema,
+                 x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                 sess=Depends(session)):
     """
     # Purchase Free Product
     ---
@@ -364,12 +378,17 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
         .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
         .where(
             Product.active.is_(True),
-            or_(Product.google_sku == receipt_data.sku, Product.apple_sku == receipt_data.sku)
+            or_(
+                Product.google_sku == receipt_data.sku,
+                Product.apple_sku == receipt_data.sku,
+                Product.apple_sku_k == receipt_data.sku
+            )
         )
     )
     order_id = f"FREE-{uuid4()}"
     receipt = Receipt(
         store=receipt_data.store,
+        package_name=x_iap_packagename.value,
         data={"SKU": receipt_data.sku, "OrderId": order_id},
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
@@ -385,8 +404,8 @@ def free_product(receipt_data: FreeReceiptSchema, sess=Depends(session)):
     # Validation
     if not product:
         receipt.status = ReceiptStatus.INVALID
-        receipt.msg = f"Product {receipt_data.product_id} not exists or inactive"
-        raise_error(sess, receipt, ValueError(f"Product {receipt_data.product_id} not found or inactive"))
+        receipt.msg = f"Product {receipt_data.sku} not exists or inactive"
+        raise_error(sess, receipt, ValueError(f"Product {receipt_data.sku} not found or inactive"))
 
     if not product.is_free:
         receipt.status = ReceiptStatus.INVALID

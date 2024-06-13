@@ -135,6 +135,7 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          CDN_HOST_K: ${{ vars.CDN_HOST_K }}
           PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
