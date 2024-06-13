@@ -24,6 +24,7 @@ jobs:
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
       SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+      HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   build_frontend:
