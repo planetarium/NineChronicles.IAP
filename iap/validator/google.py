@@ -1,29 +1,18 @@
 from typing import Tuple, Optional
 
 from common import logger
-from common.enums import GooglePurchaseState
+from common.enums import GooglePurchaseState, PackageName
 from common.utils.google import get_google_client
 from iap import settings
 from iap.schemas.receipt import GooglePurchaseSchema
 
 
-def ack_google(sku: str, token: str):
+def ack_google(package_name: PackageName, sku: str, token: str):
     client = get_google_client(settings.GOOGLE_CREDENTIAL)
     try:
         (client.purchases().products()
-         .acknowledge(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
-         .execute()
-         )
-    except Exception as e:
-        logger.error(e)
-
-def consume_google(sku: str, token: str):
-    client = get_google_client(settings.GOOGLE_CREDENTIAL)
-    try:
-        (client.purchases().products()
-         .consume(packageName=settings.GOOGLE_PACKAGE_NAME, productId=sku, token=token)
-         .execute()
-         )
+         .acknowledge(packageName=package_name.value, productId=sku, token=token)
+         .execute())
     except Exception as e:
         logger.error(e)
 
