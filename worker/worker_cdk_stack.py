@@ -72,6 +72,7 @@ class WorkerStack(Stack):
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
                     shared_stack.voucher_jwt_secret_arn,
+                    shared_stack.headless_gql_jwt_secret_arn,
                 ]
             )
         )
@@ -91,6 +92,7 @@ class WorkerStack(Stack):
             "HEADLESS": config.headless,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
+            "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,
         }
 
         # Cloudwatch Events
