@@ -223,7 +223,7 @@ def request_product(receipt_data: ReceiptSchema,
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         if success:
-            ack_google(product_id, token)
+            ack_google(x_iap_packagename, product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(receipt.package_name, order_id)
