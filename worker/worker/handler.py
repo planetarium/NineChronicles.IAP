@@ -3,7 +3,6 @@ import datetime
 import json
 import logging
 import os
-import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
@@ -14,10 +13,12 @@ from common import logger
 from common._crypto import Account
 from common._graphql import GQL
 from common.enums import TxStatus
+from common.lib9c.actions.claim_items import ClaimItems
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.actions import create_unload_my_garages_action_plain_value
-from common.utils.aws import fetch_secrets, fetch_kms_key_id, fetch_parameter
+from common.utils.aws import fetch_parameter
+from common.utils.aws import fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
@@ -53,6 +54,25 @@ planet_dict = {
         "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
         "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
     },
+    PlanetID.IDUN_INTERNAL: {
+        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
+        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
+    },
+}
+
+ITEM_TOKEN_DICT = {
+    "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a":
+        {"ticker": "Item_NT_400000", "decimal_places": 0},
+    "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe":
+        {"ticker": "Item_NT_500000", "decimal_places": 0},
+    "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0":
+        {"ticker": "Item_NT_600201", "decimal_places": 0},
+    "08f566bb43570aad34c1790901f824dd5609db880afebd5382fcec054203d92a":
+        {"ticker": "Item_NT_600202", "decimal_places": 0},
+    "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820":
+        {"ticker": "Item_NT_800201", "decimal_places": 0},
+    "CRYSTAL": {"ticker": "FAV__CRYSTAL", "decimal_places": 18},
+    "RUNE_GOLDENLEAF": {"ticker": "FAV__RUNE_GOLDENLEAF", "decimal_places": 0},
 }
 
 
@@ -104,33 +124,37 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
 
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
-    agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
     memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
-    # Through bridge
-    if planet_id != CURRENT_PLANET:
-        agent_address = planet_dict[planet_id]["agent"]
-        avatar_address = planet_dict[planet_id]["avatar"]
-        memo = json.dumps([message.body.get("agent_addr"), message.body.get("avatar_addr"), memo])
-    fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
 
-    item_data = [{
-        "fungibleId": x.fungible_item_id,
-        "count": x.amount
-    } for x in product.fungible_item_list]
+    claim_data = []
+    for item in product.fungible_item_list:
+        if item.fungible_item_id in ITEM_TOKEN_DICT:
+            data = ITEM_TOKEN_DICT[item.fungible_item_id]
+            claim_data.append(FungibleAssetValue.from_raw_data(
+                ticker=data["ticker"], decimal_places=data["decimal_places"], amount=item.amount)
+            )
+        else:
+            claim_data.append(FungibleAssetValue.from_raw_data(
+                ticker=item.fungible_item_id, decimal_places=0, amount=item.amount
+            ))
+    for fav in product.fav_list:
+        if fav.ticker in ITEM_TOKEN_DICT:
+            data = ITEM_TOKEN_DICT[fav.ticker]
+            claim_data.append(FungibleAssetValue.from_raw_data(
+                ticker=data["ticker"], decimal_places=data["decimal_places"], amount=fav.amount)
+            )
+        else:
+            claim_data.append(FungibleAssetValue.from_raw_data(
+                ticker=fav.ticker, decimal_places=fav.decimal_places, amount=fav.amount
+            ))
 
-    unload_from_garage = create_unload_my_garages_action_plain_value(
-        _id=uuid.uuid1().hex,
-        fav_data=fav_data,
-        avatar_addr=avatar_address,
-        item_data=item_data,
-        memo=memo
-    )
+    action = ClaimItems(claim_data=[{"avatarAddress": avatar_address, "fungibleAssetValues": claim_data}], memo=memo)
 
     unsigned_tx = create_unsigned_tx(
-        planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
+        planet_id=planet_id,
         public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
-        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
+        plain_value=action.plain_value, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=7)
     )
 
     signature = account.sign_tx(unsigned_tx)
