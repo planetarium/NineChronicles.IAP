@@ -5,10 +5,20 @@ from enum import IntEnum
 from typing import Optional
 
 from common import logger
+from common.enums import PackageName
 from common.utils.aws import fetch_parameter
 from common.utils.google import get_google_client, Spreadsheet
 
-GOOGLE_PACKAGE_NAME = os.environ.get("GOOGLE_PACKAGE_NAME")
+GOOGLE_PACKAGE_DICT = {
+    PackageName.NINE_CHRONICLES_M: {
+        "app_name": "9c M",
+        "sheet_name": "Google",
+    },
+    PackageName.NINE_CHRONICLES_K: {
+        "app_name": "9c K",
+        "sheet_name": "Google_K"
+    },
+}
 GOOGLE_CREDENTIAL = fetch_parameter(
     os.environ.get("REGION_NAME"),
     f"{os.environ.get('STAGE')}_9c_IAP_GOOGLE_CREDENTIAL", True
@@ -56,25 +66,29 @@ class RefundData:
 def handle(event, context):
     client = get_google_client(GOOGLE_CREDENTIAL)
     sheet = Spreadsheet(GOOGLE_CREDENTIAL, SHEET_ID)
-    prev_data = sheet.get_values("Google!A2:B").get("values", [])
-    prev_order_id = set([x[1] for x in prev_data])
-    last_num = int(prev_data[-1][0]) + 1 if prev_data else 1
-    logger.info(f"{len(prev_data)} refunded data are present.")
-    voided_list = client.purchases().voidedpurchases().list(packageName=GOOGLE_PACKAGE_NAME).execute()
-    voided_list = sorted([RefundData(**x) for x in voided_list["voidedPurchases"]], key=lambda x: x.voidedTimeMillis)
 
-    new_data = []
-    index = last_num
-    for void in voided_list:
-        if void.orderId in prev_order_id:
-            continue
-        new_data.append(
-            [index, void.orderId, void.purchaseTime.isoformat(), void.voidedTime.isoformat(), void.voidedSource.name,
-             void.voidedReason.name])
-        index += 1
+    for package_name, data in GOOGLE_PACKAGE_DICT.items():
+        prev_data = sheet.get_values(f"{data['sheet_name']}!A2:B").get("values", [])
+        prev_order_id = set([x[1] for x in prev_data])
+        last_num = int(prev_data[-1][0]) + 1 if prev_data else 1
+        logger.info(f"{len(prev_data)} refunded data are present in {data['app_name']}")
+        voided_list = client.purchases().voidedpurchases().list(packageName=package_name.value).execute()
+        voided_list = sorted([RefundData(**x) for x in voided_list["voidedPurchases"]],
+                             key=lambda x: x.voidedTimeMillis)
 
-    sheet.set_values(f"Google!A{last_num + 1}:F", new_data)
-    logger.info(f"{len(new_data)} Refunds are added")
+        new_data = []
+        index = last_num
+        for void in voided_list:
+            if void.orderId in prev_order_id:
+                continue
+            new_data.append(
+                [index, void.orderId, void.purchaseTime.isoformat(), void.voidedTime.isoformat(),
+                 void.voidedSource.name,
+                 void.voidedReason.name])
+            index += 1
+
+        sheet.set_values(f"{data['sheet_name']}!A{last_num + 1}:F", new_data)
+        logger.info(f"{len(new_data)} Refunds are added to {data['app_name']}")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ class SimpleProductSchema(BaseSchema):
     order: int
     google_sku: str = ""
     apple_sku: str = ""
+    apple_sku_k: str = ""
     is_free: bool
     # product_type: ProductType
     daily_limit: Optional[int] = None

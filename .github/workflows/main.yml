@@ -24,6 +24,7 @@ jobs:
       APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
       SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
+      HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   build_frontend:
@@ -56,6 +57,7 @@ jobs:
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+      HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
 
   deploy_without_approval:
     # This is for internal deployment
@@ -83,6 +85,7 @@ jobs:
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+      HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
 
   approval:
     runs-on: ubuntu-latest
@@ -122,3 +125,4 @@ jobs:
       VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
       BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+      HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}

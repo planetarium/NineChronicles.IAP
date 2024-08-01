@@ -7,9 +7,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
+from common._graphql import GQL
 from common.enums import ReceiptStatus, TxStatus
 from common.models.receipt import Receipt
-from common.utils.aws import fetch_secrets
+from common.utils.aws import fetch_parameter, fetch_secrets
 from common.utils.receipt import PlanetID
 
 STAGE = os.environ.get("STAGE")
@@ -20,6 +21,11 @@ CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else Plan
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 IAP_ALERT_WEBHOOK_URL = os.environ.get("IAP_ALERT_WEBHOOK_URL")
 IAP_GARAGE_WEBHOOK_URL = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
 FUNGIBLE_DICT = {
     "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a": "Hourglass (400000)",
@@ -135,6 +141,7 @@ def check_no_tx(sess):
 
 def check_garage():
     """Report IAP Garage stock"""
+    gql = GQL(jwt_secret=HEADLESS_GQL_JWT_SECRET)
     query = """{
       stateQuery {
         garages(
@@ -158,7 +165,7 @@ def check_garage():
       }
     }"""
 
-    resp = requests.post(GQL_URL, json={"query": query})
+    resp = requests.post(GQL_URL, json={"query": query}, headers={"Authorization": f"Bearer {gql.create_token()}"})
     data = resp.json()["data"]["stateQuery"]["garages"]
     fav_data = data["garageBalances"]
     item_data = data["fungibleItemGarages"]

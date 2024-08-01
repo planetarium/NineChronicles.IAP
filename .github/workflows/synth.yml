@@ -46,6 +46,8 @@ on:
         required: true
       REFUND_SHEET_ID:
         required: true
+      HEADLESS_GQL_JWT_SECRET:
+        required: true
 
 jobs:
   synth:
@@ -140,6 +142,7 @@ jobs:
           VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
           REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+          HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
         run: |
           source $VENV
           yarn cdk synth

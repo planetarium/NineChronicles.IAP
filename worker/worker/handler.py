@@ -13,11 +13,11 @@ from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 from common import logger
 from common._crypto import Account
 from common._graphql import GQL
-from common.enums import TxStatus
+from common.enums import TxStatus, PackageName
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.actions import create_unload_my_garages_action_plain_value
-from common.utils.aws import fetch_secrets, fetch_kms_key_id
+from common.utils.aws import fetch_secrets, fetch_kms_key_id, fetch_parameter
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
@@ -26,6 +26,11 @@ db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRE
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
@@ -88,7 +93,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL(GQL_URL)
+    gql = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
@@ -101,7 +106,12 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
-    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
+    package_name = PackageName(message.body.get("package_name"))
+    memo = json.dumps({"iap":
+                           {"g_sku": product.google_sku,
+                            "a_sku": product.apple_sku_k if package_name == PackageName.NINE_CHRONICLES_K
+                            else product.apple_sku}
+                       })
     # Through bridge
     if planet_id != CURRENT_PLANET:
         agent_address = planet_dict[planet_id]["agent"]

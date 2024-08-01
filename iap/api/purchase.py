@@ -223,7 +223,7 @@ def request_product(receipt_data: ReceiptSchema,
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         if success:
-            ack_google(product_id, token)
+            ack_google(x_iap_packagename, product_id, token)
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         success, msg, purchase = validate_apple(receipt.package_name, order_id)
@@ -279,6 +279,7 @@ def request_product(receipt_data: ReceiptSchema,
                                 "agent_addr": receipt.agent_addr,
                                 "avatar_addr": receipt.avatar_addr,
                                 "planet_id": receipt_data.planetId.decode(),
+                                "package_name": receipt.package_name,
                             }))
     logger.info(f"Voucher message: {resp['MessageId']}")
 
@@ -378,7 +379,11 @@ def free_product(receipt_data: FreeReceiptSchema,
         .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
         .where(
             Product.active.is_(True),
-            or_(Product.google_sku == receipt_data.sku, Product.apple_sku == receipt_data.sku)
+            or_(
+                Product.google_sku == receipt_data.sku,
+                Product.apple_sku == receipt_data.sku,
+                Product.apple_sku_k == receipt_data.sku
+            )
         )
     )
     order_id = f"FREE-{uuid4()}"
@@ -400,8 +405,8 @@ def free_product(receipt_data: FreeReceiptSchema,
     # Validation
     if not product:
         receipt.status = ReceiptStatus.INVALID
-        receipt.msg = f"Product {receipt_data.product_id} not exists or inactive"
-        raise_error(sess, receipt, ValueError(f"Product {receipt_data.product_id} not found or inactive"))
+        receipt.msg = f"Product {receipt_data.sku} not exists or inactive"
+        raise_error(sess, receipt, ValueError(f"Product {receipt_data.sku} not found or inactive"))
 
     if not product.is_free:
         receipt.status = ReceiptStatus.INVALID
