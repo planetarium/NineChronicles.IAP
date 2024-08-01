@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 from common import logger
 from common._crypto import Account
 from common._graphql import GQL
-from common.enums import TxStatus
+from common.enums import TxStatus, PackageName
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.actions import create_unload_my_garages_action_plain_value
@@ -106,7 +106,12 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     agent_address = message.body.get("agent_addr")
     avatar_address = message.body.get("avatar_addr")
-    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
+    package_name = PackageName(message.body.get("package_name"))
+    memo = json.dumps({"iap":
+                           {"g_sku": product.google_sku,
+                            "a_sku": product.apple_sku_k if package_name == PackageName.NINE_CHRONICLES_K
+                            else product.apple_sku}
+                       })
     # Through bridge
     if planet_id != CURRENT_PLANET:
         agent_address = planet_dict[planet_id]["agent"]

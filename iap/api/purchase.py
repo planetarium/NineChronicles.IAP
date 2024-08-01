@@ -279,6 +279,7 @@ def request_product(receipt_data: ReceiptSchema,
                                 "agent_addr": receipt.agent_addr,
                                 "avatar_addr": receipt.avatar_addr,
                                 "planet_id": receipt_data.planetId.decode(),
+                                "package_name": receipt.package_name,
                             }))
     logger.info(f"Voucher message: {resp['MessageId']}")
 
