@@ -15,6 +15,7 @@ from common._graphql import GQL
 from common.consts import GQL_DICT
 from common.enums import TxStatus, PackageName
 from common.lib9c.actions.claim_items import ClaimItems
+from common.lib9c.models.address import Address
 from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 from common.models.product import Product
 from common.models.receipt import Receipt
@@ -100,7 +101,7 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     )
 
     package_name = PackageName(message.body.get("package_name"))
-    avatar_address = message.body.get("avatar_addr")
+    avatar_address = Address(message.body.get("avatar_addr"))
     memo = json.dumps({"iap":
                            {"g_sku": product.google_sku,
                             "a_sku": product.apple_sku_k if package_name == PackageName.NINE_CHRONICLES_K
