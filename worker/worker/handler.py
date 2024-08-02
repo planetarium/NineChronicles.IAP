@@ -13,13 +13,12 @@ from common import logger
 from common._crypto import Account
 from common._graphql import GQL
 from common.consts import GQL_DICT
-from common.enums import TxStatus
+from common.enums import TxStatus, PackageName
 from common.lib9c.actions.claim_items import ClaimItems
 from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.aws import fetch_parameter
-from common.utils.aws import fetch_secrets, fetch_kms_key_id
+from common.utils.aws import fetch_parameter, fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
@@ -100,8 +99,13 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         .where(Product.id == message.body.get("product_id"))
     )
 
+    package_name = PackageName(message.body.get("package_name"))
     avatar_address = message.body.get("avatar_addr")
-    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
+    memo = json.dumps({"iap":
+                           {"g_sku": product.google_sku,
+                            "a_sku": product.apple_sku_k if package_name == PackageName.NINE_CHRONICLES_K
+                            else product.apple_sku}
+                       })
 
     claim_data = []
     for item in product.fungible_item_list:
