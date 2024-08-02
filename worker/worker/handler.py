@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 from common import logger
 from common._crypto import Account
 from common._graphql import GQL
+from common.consts import GQL_DICT
 from common.enums import TxStatus
 from common.lib9c.actions.claim_items import ClaimItems
 from common.lib9c.models.fungible_asset_value import FungibleAssetValue
@@ -26,7 +27,6 @@ DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     os.environ.get("REGION_NAME"),
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
@@ -34,31 +34,6 @@ HEADLESS_GQL_JWT_SECRET = fetch_parameter(
 )["Value"]
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
-
-planet_dict = {
-    # Mainnet
-    PlanetID.ODIN: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    PlanetID.HEIMDALL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    # Internal
-    PlanetID.ODIN_INTERNAL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    PlanetID.HEIMDALL_INTERNAL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    PlanetID.IDUN_INTERNAL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-}
 
 ITEM_TOKEN_DICT = {
     "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a":
@@ -113,7 +88,9 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
+    planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
+
+    gql = GQL(GQL_DICT[planet_id], HEADLESS_GQL_JWT_SECRET)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
@@ -123,7 +100,6 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         .where(Product.id == message.body.get("product_id"))
     )
 
-    planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
     avatar_address = message.body.get("avatar_addr")
     memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
 
