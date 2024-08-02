@@ -1,5 +1,7 @@
 import os
 
+from common.utils.receipt import PlanetID
+
 HOST_LIST = {
     "development": [
         os.environ.get("HEADLESS", "http://localhost")
@@ -29,3 +31,10 @@ AVATAR_BOUND_TICKER = (
     "SOULSTONE_1003",  # Valkyrie of Light
     "SOULSTONE_1004",  # Lil' Fenrir
 )
+
+GQL_DICT = {
+    PlanetID.ODIN: os.environ.get("ODIN_GQL_URL"),
+    PlanetID.ODIN_INTERNAL: os.environ.get("ODIN_GQL_URL"),
+    PlanetID.HEIMDALL: os.environ.get("HEIMDALL_GQL_URL"),
+    PlanetID.HEIMDALL_INTERNAL: os.environ.get("HEIMDALL_GQL_URL"),
+}
