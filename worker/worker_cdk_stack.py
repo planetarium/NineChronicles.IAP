@@ -92,6 +92,7 @@ class WorkerStack(Stack):
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
             "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,
+            "SQS_URL": shared_stack.q.queue_url,
         }
 
         # Cloudwatch Events

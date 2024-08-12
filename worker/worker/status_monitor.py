@@ -1,7 +1,10 @@
+import json
 import os
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
 
+import boto3
 import requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -9,6 +12,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from common import logger
 from common._graphql import GQL
 from common.enums import ReceiptStatus, TxStatus
+from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_parameter, fetch_secrets
 from common.utils.receipt import PlanetID
@@ -26,6 +30,8 @@ HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
     True
 )["Value"]
+REGION_NAME = os.environ.get("REGION_NAME")
+SQS_URL = os.environ.get("SQS_URL")
 
 FUNGIBLE_DICT = {
     "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a": "Hourglass (400000)",
@@ -187,6 +193,35 @@ def check_garage():
     send_message(IAP_GARAGE_WEBHOOK_URL, f"[NineChronicles.IAP] Daily Garage Report - {STAGE}", msg)
 
 
+def retry_missing_purchase(sess):
+    """
+    Auto retry missed purchases.
+    Tx. missing can be occurred by several reasons:
+      - JWT node issue can cause error
+    """
+    sqs = boto3.client("sqs", region_name=REGION_NAME)
+    missing_list = sess.scalars(select(Receipt).where(
+        Receipt.status == ReceiptStatus.VALID,
+        Receipt.tx_status.is_(None),
+        Receipt.created_at >= datetime(2024, 1, 1, tzinfo=timezone.utc),
+        Receipt.created_at < datetime.now(tz=timezone.utc) - timedelta(minutes=5),
+        Receipt.product_id.not_in(
+            select(Product.id).where(Product.google_sku.like('g_pkg_season%'))
+        )
+    )).fetchall()
+    logger.info(f"Found {len(missing_list)} Tx. missed purchases. Retry...")
+    for missing in missing_list:
+        msg = {
+            "uuid": str(missing.uuid),
+            "agent_addr": missing.agent_addr,
+            "avatar_addr": missing.avatar_addr,
+            "product_id": missing.product_id,
+            "planet_id": missing.planet_id.decode("utf-8"),
+        }
+        sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+        time.sleep(0.5)
+
+
 def handle(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
     if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
@@ -207,3 +242,4 @@ if __name__ == "__main__":
     check_invalid_receipt(sess)
     check_halt_tx(sess)
     check_tx_failure(sess)
+    retry_missing_purchase(sess)
