@@ -279,7 +279,6 @@ def request_product(receipt_data: ReceiptSchema,
                                 "agent_addr": receipt.agent_addr,
                                 "avatar_addr": receipt.avatar_addr,
                                 "planet_id": receipt_data.planetId.decode(),
-                                "package_name": receipt.package_name,
                             }))
     logger.info(f"Voucher message: {resp['MessageId']}")
 
@@ -343,6 +342,7 @@ def request_product(receipt_data: ReceiptSchema,
             "product_id": product.id,
             "uuid": str(receipt.uuid),
             "planet_id": receipt_data.planetId.decode('utf-8'),
+            "package_name": receipt.package_name,
         }
 
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
