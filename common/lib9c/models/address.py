@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+
 
 class Address:
     def __init__(self, addr: str):
@@ -19,6 +22,15 @@ class Address:
     @property
     def short_format(self):
         return self.raw.hex()
+
+    def derive(self, key: str) -> Address:
+        return Address(
+            hmac.new(
+                key.encode("utf-8"),
+                self.raw,
+                digestmod=hashlib.sha1
+            ).hexdigest()
+        )
 
     def __eq__(self, other: Address):
         return self.raw == other.raw
