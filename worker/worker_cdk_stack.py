@@ -278,6 +278,21 @@ class WorkerStack(Stack):
                 memory_size=512,
             )
 
+            token_issuer = _lambda.Function(
+                self, f"{config.stage}-9c-iap-token-issue-function",
+                function_name=f"{config.stage}-9c-iap-issue-token",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute IssueTokensFromGarage action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="issue_tokens.issue",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
             lambda_warmer = _lambda.Function(
                 self, f"{config.stage}-9c-iap-lambda-warmer",
                 function_name=f"{config.stage}-9c-iap-lambda-warmer",
