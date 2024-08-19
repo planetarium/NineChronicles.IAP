@@ -24,6 +24,7 @@ from common.utils.transaction import create_unsigned_tx, append_signature_to_uns
 NONCE = 0
 PLANET_ID = PlanetID.XXX
 GQL_URL = "https://example.com/graphql"  # Use Odin/Heimdall GQL host
+USE_ADHOC = True
 # to here
 
 HEADLESS_GQL_JWT_SECRET = fetch_parameter(
@@ -37,7 +38,7 @@ DICT_HEADER = ("ticker", "decimal_places", "fungible_id", "item_id", "amount")
 def issue(event, context):
     spec_list = []
     gql = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
-    account = Account(fetch_kms_key_id(os.environ.get("STAGE"), os.environ.get("REGION_NAME")))
+    account = Account(fetch_kms_key_id(os.environ.get("STAGE"), os.environ.get("REGION_NAME"), adhoc=USE_ADHOC))
 
     for data in event:
         data = dict(zip(DICT_HEADER, data))

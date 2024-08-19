@@ -18,6 +18,8 @@ on:
         required: true
       KMS_KEY_ID:
         required: true
+      ADHOC_KMS_KEY_ID:
+        required: true
       GOOGLE_CREDENTIAL:
         required: true
       APPLE_CREDENTIAL:
@@ -122,6 +124,7 @@ jobs:
           ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
           HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          ADHOC_KMS_KEY_ID: ${{ secrets.ADHOC_KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
           APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
