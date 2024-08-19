@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 from common.lib9c.actions import ActionBase
-from lib9c.models.fungible_asset_value import FungibleAssetValue
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 
 class FavIssueSpec:
