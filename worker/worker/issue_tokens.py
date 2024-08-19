@@ -8,6 +8,7 @@ import datetime
 import os
 from decimal import Decimal
 
+from common import logger
 from common._crypto import Account
 from common._graphql import GQL
 from common.consts import ITEM_FUNGIBLE_ID_DICT
@@ -30,7 +31,7 @@ HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
     True
 )["Value"]
-DICT_HEADER = {"ticker", "decimal_places", "fungible_id", "item_id", "amount"}
+DICT_HEADER = ("ticker", "decimal_places", "fungible_id", "item_id", "amount")
 
 
 def issue(event, context):
@@ -56,4 +57,8 @@ def issue(event, context):
     )
     signature = account.sign_tx(utx)
     signed_tx = append_signature_to_unsigned_tx(utx, signature)
-    return gql.stage(signed_tx), NONCE, signed_tx
+    success, message, tx_id = gql.stage(signed_tx)
+
+    logger.info(f"{success}::'{message}'::{tx_id} with nonce {NONCE}")
+    logger.debug(signed_tx.hex())
+    return success, message, tx_id, NONCE, signed_tx.hex()
