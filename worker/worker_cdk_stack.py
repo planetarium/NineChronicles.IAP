@@ -64,6 +64,14 @@ class WorkerStack(Stack):
                 resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
             )
         )
+        resp = ssm.get_parameter(Name=f"{config.stage}_9c_IAP_ADHOC_KMS_KEY_ID", WithDecryption=True)
+        kms_key_id = resp["Parameter"]["Value"]
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["kms:GetPublicKey", "kms:Sign"],
+                resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
+            )
+        )
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions=["ssm:GetParameter"],
