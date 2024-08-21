@@ -306,6 +306,21 @@ class WorkerStack(Stack):
                 memory_size=256,
             )
 
+            asset_transporter = _lambda.Function(
+                self, f"{config.stage}-9c-iap-assets-transfer-function",
+                function_name=f"{config.stage}-9c-iap-transfer-assets",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute TransferAssets action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.transfer_assets.transfer",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
             lambda_warmer = _lambda.Function(
                 self, f"{config.stage}-9c-iap-lambda-warmer",
                 function_name=f"{config.stage}-9c-iap-lambda-warmer",
