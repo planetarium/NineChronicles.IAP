@@ -15,7 +15,7 @@ def create_unsigned_tx(planet_id: PlanetID, public_key: str, address: str, nonce
         # Genesis block hash
         b"g": get_genesis_block_hash(planet_id),
         # GasLimit (see also GasLimit list section below)
-        b"l": 1,
+        b"l": 4,
         # MaxGasPrice (see also Mead section for the currency spec)
         b"m": [
             {"decimalPlaces": b"\x12", "minters": None, "ticker": "Mead"},
