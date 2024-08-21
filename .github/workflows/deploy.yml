@@ -24,7 +24,7 @@ on:
         required: true
       KMS_KEY_ID:
         required: true
-      ADHOC_KEY_ID:
+      ADHOC_KMS_KEY_ID:
         required: true
       GOOGLE_CREDENTIAL:
         required: true
