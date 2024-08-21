@@ -2,9 +2,9 @@ from decimal import Decimal
 
 import pytest
 
+from common.lib9c.actions.transfer_assets import TransferAssets
 from common.lib9c.models.address import Address
 from common.lib9c.models.fungible_asset_value import FungibleAssetValue
-from lib9c.actions.transfer_assets import TransferAssets
 
 TEST_SENDER_ADDRESS = "0xDbF4c6d0D7C74D390fADae680f2144D885c878df"
 TEST_RECIPIENT_ADDRESS_1 = "0x49D5FcEB955800B2c532D6319E803c7D80f817Af"
