@@ -440,6 +440,7 @@ def free_product(receipt_data: FreeReceiptSchema,
         "product_id": product.id,
         "uuid": str(receipt.uuid),
         "planet_id": receipt_data.planetId.decode('utf-8'),
+        "package_name": receipt.package_name,
     }
 
     resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
