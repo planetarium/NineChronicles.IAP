@@ -58,6 +58,7 @@ class Config:
 
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
+    adhoc_kms_key_id: Optional[str] = None
     golden_dust_request_sheet_id: Optional[str] = None
     golden_dust_work_sheet_id: Optional[str] = None
     form_sheet: Optional[str] = None
