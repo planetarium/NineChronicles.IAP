@@ -90,6 +90,8 @@ class WorkerStack(Stack):
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "HEADLESS": config.headless,
+            "ODIN_GQL_URL": config.odin_gql_url,
+            "HEIMDALL_GQL_URL": config.heimdall_gql_url,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
             "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,

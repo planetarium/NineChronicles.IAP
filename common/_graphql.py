@@ -13,7 +13,8 @@ from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql", jwt_secret: str = None):
+    def __init__(self, url: str, jwt_secret: str = None):
+        assert url is not None
         self._url = url
         self.__jwt_secret = jwt_secret
         self.client = None
