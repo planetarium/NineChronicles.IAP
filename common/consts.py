@@ -1,5 +1,7 @@
 import os
 
+from common.utils.receipt import PlanetID
+
 HOST_LIST = {
     "development": [
         os.environ.get("HEADLESS", "http://localhost")
@@ -39,4 +41,11 @@ ITEM_FUNGIBLE_ID_DICT = {
     "800201": "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820",
     "CRYSTAL": "FAV__CRYSTAL",
     "RUNE_GOLDENLEAF": "FAV__RUNE_GOLDENLEAF",
+}
+
+GQL_DICT = {
+    PlanetID.ODIN: os.environ.get("ODIN_GQL_URL"),
+    PlanetID.ODIN_INTERNAL: os.environ.get("ODIN_GQL_URL"),
+    PlanetID.HEIMDALL: os.environ.get("HEIMDALL_GQL_URL"),
+    PlanetID.HEIMDALL_INTERNAL: os.environ.get("HEIMDALL_GQL_URL"),
 }
