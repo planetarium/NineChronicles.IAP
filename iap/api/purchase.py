@@ -299,7 +299,7 @@ def request_product(receipt_data: ReceiptSchema,
 
         prefix, body = product.google_sku.split("seasonpass")
         try:
-            season = int("".join([x for x in body if x.isnumeric()]))
+            season = int("".join([x for x in body if x.isdigit()]))
         except:
             season = 0
         season_pass_host = fetch_parameter(
