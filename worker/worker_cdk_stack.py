@@ -191,8 +191,8 @@ class WorkerStack(Stack):
         if config.stage == "mainnet":
             ten_minute_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
         # If you want to test monitor in internal, uncomment following statement
-        # else:
-        #     hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
+        else:
+            hourly_event_rule.add_target(_event_targets.LambdaFunction(status_monitor))
 
         # IAP Voucher
         voucher_env = deepcopy(env)
