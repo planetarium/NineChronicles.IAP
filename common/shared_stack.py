@@ -94,6 +94,7 @@ class SharedStack(Stack):
         # SecureStrings in Parameter Store
         PARAMETER_LIST = (
             ("KMS_KEY_ID", True),
+            ("ADHOC_KMS_KEY_ID", True),
             ("GOOGLE_CREDENTIAL", True),
             ("APPLE_CREDENTIAL", True),
             ("SEASON_PASS_JWT_SECRET", True),

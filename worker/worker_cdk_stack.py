@@ -64,6 +64,14 @@ class WorkerStack(Stack):
                 resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
             )
         )
+        resp = ssm.get_parameter(Name=f"{config.stage}_9c_IAP_ADHOC_KMS_KEY_ID", WithDecryption=True)
+        kms_key_id = resp["Parameter"]["Value"]
+        role.add_to_policy(
+            _iam.PolicyStatement(
+                actions=["kms:GetPublicKey", "kms:Sign"],
+                resources=[f"arn:aws:kms:{config.region_name}:{config.account_id}:key/{kms_key_id}"]
+            )
+        )
         role.add_to_policy(
             _iam.PolicyStatement(
                 actions=["ssm:GetParameter"],
@@ -71,6 +79,7 @@ class WorkerStack(Stack):
                     shared_stack.google_credential_arn,
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
+                    shared_stack.adhoc_kms_key_id_arn,
                     shared_stack.voucher_jwt_secret_arn,
                     shared_stack.headless_gql_jwt_secret_arn,
                 ]
@@ -90,6 +99,8 @@ class WorkerStack(Stack):
                       f"/iap",
             "GOOGLE_PACKAGE_NAME": config.google_package_name,
             "HEADLESS": config.headless,
+            "ODIN_GQL_URL": config.odin_gql_url,
+            "HEIMDALL_GQL_URL": config.heimdall_gql_url,
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
             "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,
@@ -287,6 +298,21 @@ class WorkerStack(Stack):
                 description=f"Execute IssueTokensFromGarage action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
                 handler="issue_tokens.issue",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
+            asset_transporter = _lambda.Function(
+                self, f"{config.stage}-9c-iap-assets-transfer-function",
+                function_name=f"{config.stage}-9c-iap-transfer-assets",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute TransferAssets action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.transfer_assets.transfer",
                 layers=[layer],
                 role=role,
                 vpc=shared_stack.vpc,
