@@ -163,7 +163,7 @@ class WorkerStack(Stack):
             layers=[layer],
             role=role,
             vpc=shared_stack.vpc,
-            memory_size=256,
+            memory_size=1024 if config.stage == "mainnet" else 256,
             timeout=cdk_core.Duration.seconds(50),
             environment=env,
         )
