@@ -112,6 +112,7 @@ def check_tx_failure(sess):
 def check_halt_tx(sess):
     """Notify when STAGED|INVALID tx over 5min."""
     tx_halt_receipt_list = sess.scalars(select(Receipt).where(
+        Receipt.status == ReceiptStatus.VALID,
         Receipt.tx_status.in_([TxStatus.INVALID, TxStatus.STAGED]),
         Receipt.created_at <= (datetime.now(tz=timezone.utc) - timedelta(minutes=5)),
     )).fetchall()
