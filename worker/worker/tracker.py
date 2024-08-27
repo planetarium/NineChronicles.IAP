@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from common import logger
 from common._graphql import GQL
 from common.consts import GQL_DICT
-from common.enums import TxStatus
+from common.enums import TxStatus, ReceiptStatus
 from common.models.receipt import Receipt
 from common.utils.aws import fetch_secrets, fetch_parameter
 
@@ -64,6 +64,7 @@ def track_tx(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(
         select(Receipt).where(
+            Receipt.status == ReceiptStatus.VALID,
             Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
         ).order_by(Receipt.id).limit(LIMIT)
     ).fetchall()
