@@ -21,10 +21,13 @@ def fetch_secrets(region: str, secret_arn: str) -> Dict:
     return json.loads(resp["SecretString"])
 
 
-def fetch_kms_key_id(stage: str, region: str) -> Optional[str]:
+def fetch_kms_key_id(stage: str, region: str, adhoc: bool = False) -> Optional[str]:
     client = boto3.client("ssm", region_name=region)
     try:
-        return client.get_parameter(Name=f"{stage}_9c_IAP_KMS_KEY_ID", WithDecryption=True)["Parameter"]["Value"]
+        return client.get_parameter(
+            Name=f"{stage}_9c_IAP{'_ADHOC' if adhoc else ''}_KMS_KEY_ID",
+            WithDecryption=True
+        )["Parameter"]["Value"]
     except Exception as e:
         logger.error(e)
         return None

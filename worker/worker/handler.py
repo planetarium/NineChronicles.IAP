@@ -3,7 +3,6 @@ import datetime
 import json
 import logging
 import os
-import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
@@ -13,11 +12,14 @@ from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
 from common import logger
 from common._crypto import Account
 from common._graphql import GQL
-from common.enums import TxStatus
+from common.consts import GQL_DICT
+from common.enums import TxStatus, PackageName
+from common.lib9c.actions.claim_items import ClaimItems
+from common.lib9c.models.address import Address
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.actions import create_unload_my_garages_action_plain_value
-from common.utils.aws import fetch_secrets, fetch_kms_key_id, fetch_parameter
+from common.utils.aws import fetch_parameter, fetch_secrets, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
 
@@ -25,7 +27,6 @@ DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
 CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
 HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     os.environ.get("REGION_NAME"),
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
@@ -33,27 +34,6 @@ HEADLESS_GQL_JWT_SECRET = fetch_parameter(
 )["Value"]
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
-
-planet_dict = {
-    # Mainnet
-    PlanetID.ODIN: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    PlanetID.HEIMDALL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    # Internal
-    PlanetID.ODIN_INTERNAL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-    PlanetID.HEIMDALL_INTERNAL: {
-        "agent": "0x1c2ae97380CFB4F732049e454F6D9A25D4967c6f",
-        "avatar": "0x41aEFE4cdDFb57C9dFfd490e17e571705c593dDc"
-    },
-}
 
 
 @dataclass
@@ -93,7 +73,9 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     region_name = os.environ.get("REGION_NAME", "us-east-2")
     logging.debug(f"STAGE: {stage} || REGION: {region_name}")
     account = Account(fetch_kms_key_id(stage, region_name))
-    gql = GQL(GQL_URL, HEADLESS_GQL_JWT_SECRET)
+    planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
+
+    gql = GQL(GQL_DICT[planet_id], HEADLESS_GQL_JWT_SECRET)
     if not nonce:
         nonce = gql.get_next_nonce(account.address)
 
@@ -103,34 +85,30 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
         .where(Product.id == message.body.get("product_id"))
     )
 
-    planet_id: PlanetID = PlanetID(bytes(message.body["planet_id"], 'utf-8'))
-    agent_address = message.body.get("agent_addr")
-    avatar_address = message.body.get("avatar_addr")
-    memo = json.dumps({"iap": {"g_sku": product.google_sku, "a_sku": product.apple_sku}})
-    # Through bridge
-    if planet_id != CURRENT_PLANET:
-        agent_address = planet_dict[planet_id]["agent"]
-        avatar_address = planet_dict[planet_id]["avatar"]
-        memo = json.dumps([message.body.get("agent_addr"), message.body.get("avatar_addr"), memo])
-    fav_data = [x.to_fav_data(agent_address=agent_address, avatar_address=avatar_address) for x in product.fav_list]
+    package_name = PackageName(message.body.get("package_name"))
+    avatar_address = Address(message.body.get("avatar_addr"))
+    memo = json.dumps({"iap":
+                           {"g_sku": product.google_sku,
+                            "a_sku": product.apple_sku_k if package_name == PackageName.NINE_CHRONICLES_K
+                            else product.apple_sku}
+                       })
 
-    item_data = [{
-        "fungibleId": x.fungible_item_id,
-        "count": x.amount
-    } for x in product.fungible_item_list]
+    claim_data = []
+    for item in product.fungible_item_list:
+        claim_data.append(FungibleAssetValue.from_raw_data(
+            ticker=item.fungible_item_id, decimal_places=0, amount=item.amount
+        ))
+    for fav in product.fav_list:
+        claim_data.append(FungibleAssetValue.from_raw_data(
+            ticker=fav.ticker, decimal_places=fav.decimal_places, amount=fav.amount
+        ))
 
-    unload_from_garage = create_unload_my_garages_action_plain_value(
-        _id=uuid.uuid1().hex,
-        fav_data=fav_data,
-        avatar_addr=avatar_address,
-        item_data=item_data,
-        memo=memo
-    )
+    action = ClaimItems(claim_data=[{"avatarAddress": avatar_address, "fungibleAssetValues": claim_data}], memo=memo)
 
     unsigned_tx = create_unsigned_tx(
-        planet_id=PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL,
+        planet_id=planet_id,
         public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
-        plain_value=unload_from_garage, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=1)
+        plain_value=action.plain_value, timestamp=datetime.datetime.utcnow() + datetime.timedelta(days=7)
     )
 
     signature = account.sign_tx(unsigned_tx)

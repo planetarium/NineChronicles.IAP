@@ -299,7 +299,7 @@ def request_product(receipt_data: ReceiptSchema,
 
         prefix, body = product.google_sku.split("seasonpass")
         try:
-            season = int(body[-1])
+            season = int("".join([x for x in body if x.isdigit()]))
         except:
             season = 0
         season_pass_host = fetch_parameter(
@@ -310,14 +310,15 @@ def request_product(receipt_data: ReceiptSchema,
                       for x in product.fungible_item_list]
         claim_list.extend([{"ticker": x.ticker, "amount": x.amount, "decimal_places": x.decimal_places}
                            for x in product.fav_list])
+        season_pass_type = "".join([x for x in body if x.isalpha()])
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
                                  "planet_id": receipt_data.planetId.value.decode("utf-8"),
                                  "agent_addr": receipt.agent_addr.lower(),
                                  "avatar_addr": receipt.avatar_addr.lower(),
                                  "season_id": int(season),
-                                 "is_premium": True if (not body[:-1] or "all" in body) else False,
-                                 "is_premium_plus": "plus" in body or "all" in body,
+                                 "is_premium": season_pass_type in ("", "all"),
+                                 "is_premium_plus": season_pass_type in ("plus", "all"),
                                  "g_sku": product.google_sku, "a_sku": product.apple_sku,
                                  # SeasonPass only uses claims
                                  "reward_list": claim_list,
@@ -342,6 +343,7 @@ def request_product(receipt_data: ReceiptSchema,
             "product_id": product.id,
             "uuid": str(receipt.uuid),
             "planet_id": receipt_data.planetId.decode('utf-8'),
+            "package_name": receipt.package_name,
         }
 
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
@@ -439,6 +441,7 @@ def free_product(receipt_data: FreeReceiptSchema,
         "product_id": product.id,
         "uuid": str(receipt.uuid),
         "planet_id": receipt_data.planetId.decode('utf-8'),
+        "package_name": receipt.package_name,
     }
 
     resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
