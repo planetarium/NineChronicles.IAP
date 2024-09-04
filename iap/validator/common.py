@@ -2,10 +2,10 @@ from datetime import datetime
 from typing import Tuple, Union
 
 from common.enums import Store
-from iap.schemas.receipt import ReceiptSchema
+from iap.schemas.receipt import ReceiptSchema, PurchaseRetrySchema
 
 
-def get_order_data(receipt_data: ReceiptSchema) -> Tuple[str, Union[str, int], datetime]:
+def get_order_data(receipt_data: Union[ReceiptSchema, PurchaseRetrySchema]) -> Tuple[str, Union[str, int], datetime]:
     """
     Returns order_id, product_id, purchased_at from receipt data by store
     :param receipt_data:

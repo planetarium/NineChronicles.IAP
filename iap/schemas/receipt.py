@@ -79,6 +79,12 @@ class FreeReceiptSchema:
 
 
 @dataclass
+class PurchaseRetrySchema:
+    data: Union[str, Dict, object]
+    store: Optional[Store] = None
+
+
+@dataclass
 class ReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
