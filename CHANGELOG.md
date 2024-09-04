@@ -1,5 +1,11 @@
 # CHANGELOG of NineChronicles.IAP
 
+## 1.14.0 (2024-06-28)
+
+### Bugfix
+
+- Use proper package name for ACK google purchase
+
 ## 0.12.0 (2024-03-27)
 
 ### Feature
