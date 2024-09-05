@@ -83,12 +83,12 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
                 gql_url = os.environ.get("HEIMDALL_GQL_URL")
 
             query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
+            resp = None
             try:
                 resp = requests.post(gql_url, json={"query": query}, timeout=1)
                 cached_data.level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
-            except:
-                # Whether request is failed or no fitted data found
-                pass
+            except Exception as e:
+                logger.error(f"{resp.status_code} :: {resp.text}" if resp else e)
 
         # NOTE: Do not commit here to prevent unintended data save during process
         sess.add(cached_data)
