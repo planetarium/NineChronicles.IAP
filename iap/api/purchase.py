@@ -20,9 +20,9 @@ from common.utils.aws import fetch_parameter
 from common.utils.receipt import PlanetID
 from iap import settings
 from iap.dependencies import session
-from iap.exceptions import ReceiptNotFoundException
+from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
@@ -116,6 +116,55 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
         raise_error(sess, receipt, ValueError(f"{limit_type.capitalize()} purchase limit exceeded."))
 
     return receipt
+
+
+@router.post("/retry", response_model=ReceiptDetailSchema)
+def retry_product(receipt_data: SimpleReceiptSchema,
+                  x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                  sess=Depends(session)
+                  ):
+    """
+    # Purchase retry
+    ---
+
+    ** Retry from client's pending IAP purchase data.**
+    """
+    order_id, product_id, purchased_at = get_order_data(receipt_data)
+    prev_receipt = sess.scalar(
+        select(Receipt).where(Receipt.store == receipt_data.store, Receipt.order_id == order_id)
+    )
+
+    # Cannot handle missing receipt
+    if not prev_receipt:
+        raise ReceiptNotFoundException("", order_id)
+
+    # Already handled
+    if prev_receipt.tx_status is not None:
+        logger.info(f"[Retry] {order_id} has already been handled :: {prev_receipt.uuid}")
+        return prev_receipt
+
+    # Insufficient user data
+    empty_data = []
+    if not prev_receipt.planet_id:
+        empty_data.append("planet_id")
+    if not prev_receipt.agent_addr:
+        empty_data.append("agent_addr")
+    if not prev_receipt.avatar_addr:
+        empty_data.append("avatar_addr")
+
+    if empty_data:
+        raise InsufficientUserDataException(prev_receipt.uuid, order_id, empty_data)
+
+    # Can do retry
+    receipt_schema = ReceiptSchema(
+        data=receipt_data.data,
+        store=receipt_data.store,
+        agentAddress=prev_receipt.agent_addr,
+        avatarAddress=prev_receipt.avatar_addr,
+        planetId=prev_receipt.planet_id
+    )
+    return request_product(receipt_schema, x_iap_packagename=x_iap_packagename)
+
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
