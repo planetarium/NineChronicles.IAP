@@ -22,7 +22,7 @@ from iap import settings
 from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, PurchaseRetrySchema
+from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
 from iap.utils import create_season_pass_jwt, get_purchase_count
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
@@ -83,12 +83,12 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
                 gql_url = os.environ.get("HEIMDALL_GQL_URL")
 
             query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
+            resp = None
             try:
                 resp = requests.post(gql_url, json={"query": query}, timeout=1)
                 cached_data.level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
-            except:
-                # Whether request is failed or no fitted data found
-                pass
+            except Exception as e:
+                logger.error(f"{resp.status_code} :: {resp.text}" if resp else e)
 
         # NOTE: Do not commit here to prevent unintended data save during process
         sess.add(cached_data)
@@ -119,7 +119,7 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
 
 
 @router.post("/retry", response_model=ReceiptDetailSchema)
-def retry_product(receipt_data: PurchaseRetrySchema,
+def retry_product(receipt_data: SimpleReceiptSchema,
                   x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
                   sess=Depends(session)
                   ):
