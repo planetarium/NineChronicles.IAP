@@ -78,21 +78,16 @@ class ProductType(Enum):
     """
     # ProductType
     ---
-    Product type is the flag to specify IAP product type.
+    Flag to represent the type of product.
+    User can buy product via eligible type according to product type.
 
-    - **`SINGLE`**
-
-        `SINGLE` type product has just one fungible item.  
-        `SINGLE` type product has no limitation to buy.
-
-    - **`PACKAGE`**
-
-        `PACKAGE` type product has multiple fungible items in it.  
-        `PACKAGE` type product has daily/weekly limitation to buy.  
-        If all limitation is exhausted, the package will be locked before next period.
+    - **`IAP`** : Can buy this through IAP store
+    - **`FREE`** : Can buy this freely
+    - **`MILEAGE`** : Can buy this product with mileage
     """
-    SINGLE = "SINGLE"
-    PKG = "PACKAGE"
+    IAP = "IAP"
+    FREE = "FREE"
+    MILEAGE = "MILEAGE"
 
 
 class ReceiptStatus(IntEnum):
