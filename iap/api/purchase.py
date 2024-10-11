@@ -12,7 +12,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload, Session
 from starlette.responses import JSONResponse
 
-from common.enums import ReceiptStatus, Store, PackageName
+from common.enums import ReceiptStatus, Store, PackageName, ProductType
 from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
@@ -473,7 +473,7 @@ def free_product(receipt_data: FreeReceiptSchema,
         receipt.msg = f"Product {receipt_data.sku} not exists or inactive"
         raise_error(sess, receipt, ValueError(f"Product {receipt_data.sku} not found or inactive"))
 
-    if not product.is_free:
+    if product.product_type != ProductType.FREE:
         receipt.status = ReceiptStatus.INVALID
         receipt.msg = "This product it not for free"
         raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not for free"))
