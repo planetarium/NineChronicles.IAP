@@ -9,10 +9,11 @@ import boto3
 import requests
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, Session
 from starlette.responses import JSONResponse
 
 from common.enums import ReceiptStatus, Store, PackageName
+from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
@@ -118,6 +119,19 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
     return receipt
 
 
+def update_mileage(sess: Session, receipt: Receipt) -> Receipt:
+    target_mileage = sess.scalar(
+        select(Mileage).where(Mileage.planet_id == receipt.planet_id, Mileage.agent_addr == receipt.agent_addr))
+    if not target_mileage:
+        target_mileage = Mileage(planet_id=receipt.planet_id, agent_addr=receipt.agent_addr)
+
+    target_mileage.mileage += receipt.mileage_change
+    receipt.mileage = target_mileage.mileage
+    sess.add(target_mileage)
+    sess.add(receipt)
+    return receipt
+
+
 @router.post("/retry", response_model=ReceiptDetailSchema)
 def retry_product(receipt_data: SimpleReceiptSchema,
                   x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
@@ -164,7 +178,6 @@ def retry_product(receipt_data: SimpleReceiptSchema,
         planetId=prev_receipt.planet_id
     )
     return request_product(receipt_schema, x_iap_packagename=x_iap_packagename)
-
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
@@ -398,6 +411,8 @@ def request_product(receipt_data: ReceiptSchema,
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
         logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
+    receipt.mileage_change = product.mileage
+    receipt = update_mileage(sess, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -480,6 +495,8 @@ def free_product(receipt_data: FreeReceiptSchema,
     receipt = check_required_level(sess, receipt, product)
 
     receipt.status = ReceiptStatus.VALID
+    receipt.mileage = product.mileage
+    receipt = update_mileage(sess, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
