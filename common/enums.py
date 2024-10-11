@@ -139,6 +139,10 @@ class ReceiptStatus(IntEnum):
 
         Does not met required level to get this product.
 
+    - **96: `NOT_ENOUGH_MILEAGE`**
+
+        Not enough mileage to purchase this product
+
     - **99: `UNKNOWN`**
 
         An unhandled error case. This is reserve to catch all other errors.  
@@ -154,6 +158,7 @@ class ReceiptStatus(IntEnum):
     PURCHASE_LIMIT_EXCEED = 93
     TIME_LIMIT = 94
     REQUIRED_LEVEL = 95
+    NOT_ENOUGH_MILEAGE = 96
     UNKNOWN = 99
 
 
