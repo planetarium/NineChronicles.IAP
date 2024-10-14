@@ -18,7 +18,8 @@ from models.mileage import Mileage
 def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optional[Product] = None,
                          use_avatar: bool = False) -> defaultdict:
     stmt = (
-        select(Receipt.product_id, count(Receipt.id).label("purchase_count"), cast(Receipt.purchased_at, Date).label("date"))
+        select(Receipt.product_id, count(Receipt.id).label("purchase_count"),
+               cast(Receipt.purchased_at, Date).label("date"))
         .where(
             Receipt.planet_id == planet_id,
             Receipt.status.in_((ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID))
