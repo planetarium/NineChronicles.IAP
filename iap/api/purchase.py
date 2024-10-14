@@ -24,7 +24,7 @@ from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
-from iap.utils import create_season_pass_jwt, get_purchase_count
+from iap.utils import create_season_pass_jwt, get_purchase_count, update_mileage, get_mileage
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
 from iap.validator.google import validate_google, ack_google
@@ -398,8 +398,7 @@ def request_product(receipt_data: ReceiptSchema,
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
         logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
-    receipt.mileage_change = product.mileage
-    receipt = update_mileage(sess, receipt)
+    receipt = update_mileage(sess, product, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -482,8 +481,7 @@ def free_product(receipt_data: FreeReceiptSchema,
     receipt = check_required_level(sess, receipt, product)
 
     receipt.status = ReceiptStatus.VALID
-    receipt.mileage = product.mileage
-    receipt = update_mileage(sess, receipt)
+    receipt = update_mileage(sess, product, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -566,20 +564,17 @@ def mileage_product(receipt_data: FreeReceiptSchema,
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
-    target = sess.scalar(
-        select(Mileage).where(
-            Mileage.planet_id == receipt.planet_id,
-            Mileage.agent_addr == receipt.agent_addr
-        )
-    )
-    if not target:
-        target = Mileage(planet_id=receipt.planet_id, agent_addr=receipt.agent_addr)
+    # Fetch and validate mileage
+    target_mileage = get_mileage(sess, receipt_data.planetId, receipt_data.agentAddress)
 
-    if target.mileage < product.mileage_price:
+    if target_mileage.mileage < product.mileage_price:
         receipt.status = ReceiptStatus.NOT_ENOUGH_MILEAGE
-        msg = f"{target.mileage} is not enough to buy product {product.id}: {product.mileage_price} required"
+        msg = f"{target_mileage.mileage} is not enough to buy product {product.id}: {product.mileage_price} required"
         receipt.msg = msg
         raise_error(sess, receipt, ValueError(msg))
+
+    # Required level
+    receipt = check_required_level(sess, receipt, product)
 
     # Purchase Limit
     if product.daily_limit:
@@ -589,13 +584,10 @@ def mileage_product(receipt_data: FreeReceiptSchema,
     if product.account_limit:
         receipt = check_purchase_limit(sess, receipt, product, limit_type="account", limit=product.account_limit)
 
-    # Required level
-    receipt = check_required_level(sess, receipt, product)
-
+    # Handle mileage
+    target_mileage.mileage -= product.mileage_price
+    receipt = update_mileage(sess, product, receipt, target_mileage)
     receipt.status = ReceiptStatus.VALID
-    receipt.mileage = product.mileage
-    receipt = update_mileage(sess, receipt)
-    sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
 
