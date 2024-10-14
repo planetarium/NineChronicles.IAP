@@ -119,19 +119,6 @@ def check_purchase_limit(sess, receipt: Receipt, product: Product, limit_type: s
     return receipt
 
 
-def update_mileage(sess: Session, receipt: Receipt) -> Receipt:
-    target_mileage = sess.scalar(
-        select(Mileage).where(Mileage.planet_id == receipt.planet_id, Mileage.agent_addr == receipt.agent_addr))
-    if not target_mileage:
-        target_mileage = Mileage(planet_id=receipt.planet_id, agent_addr=receipt.agent_addr)
-
-    target_mileage.mileage += receipt.mileage_change
-    receipt.mileage = target_mileage.mileage
-    sess.add(target_mileage)
-    sess.add(receipt)
-    return receipt
-
-
 @router.post("/retry", response_model=ReceiptDetailSchema)
 def retry_product(receipt_data: SimpleReceiptSchema,
                   x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
