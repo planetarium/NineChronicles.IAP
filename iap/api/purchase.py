@@ -24,7 +24,7 @@ from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
-from iap.utils import create_season_pass_jwt, get_purchase_count, update_mileage, get_mileage
+from iap.utils import create_season_pass_jwt, get_purchase_count, upsert_mileage, get_mileage
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
 from iap.validator.google import validate_google, ack_google
@@ -398,7 +398,7 @@ def request_product(receipt_data: ReceiptSchema,
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
         logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
-    receipt = update_mileage(sess, product, receipt)
+    receipt = upsert_mileage(sess, product, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -481,7 +481,7 @@ def free_product(receipt_data: FreeReceiptSchema,
     receipt = check_required_level(sess, receipt, product)
 
     receipt.status = ReceiptStatus.VALID
-    receipt = update_mileage(sess, product, receipt)
+    receipt = upsert_mileage(sess, product, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -586,7 +586,7 @@ def mileage_product(receipt_data: FreeReceiptSchema,
 
     # Handle mileage
     target_mileage.mileage -= product.mileage_price
-    receipt = update_mileage(sess, product, receipt, target_mileage)
+    receipt = upsert_mileage(sess, product, receipt, target_mileage)
     receipt.status = ReceiptStatus.VALID
     sess.commit()
     sess.refresh(receipt)

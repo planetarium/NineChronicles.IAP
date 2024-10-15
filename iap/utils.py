@@ -116,9 +116,9 @@ def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
     return mileage
 
 
-def update_mileage(sess, product: Product, receipt: Receipt, mileage: Optional[Mileage] = None) -> Receipt:
+def upsert_mileage(sess, product: Product, receipt: Receipt, mileage: Optional[Mileage] = None) -> Receipt:
     """
-    Update mileage from purchase.
+    Update or create mileage from purchase.
     NOTE: This function only create and store mileage from purchase.
         If you want to deal with "mileage purchase", please do it yourself and store new mileage with this function.
 
