@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import relationship, Mapped
 
 from common.consts import AVATAR_BOUND_TICKER
-from common.enums import Store, ProductAssetUISize, ProductRarity
+from common.enums import Store, ProductAssetUISize, ProductRarity, ProductType
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
 
 category_product_table = Table(
@@ -52,15 +52,12 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     - Current timestamp < `close_timestamp`
     """
     __tablename__ = "product"
-    # FIXME: Update to nullable=False
-    # category_id = Column(Integer, ForeignKey("category.id"))
-    # category: Mapped["Category"] = relationship("Category", foreign_keys=[category_id])
     name = Column(Text, nullable=False)
     order = Column(Integer, nullable=False, default=-1, doc="Display order in client. Ascending sort.")
     google_sku = Column(Text, doc="SKU ID of google play store")
     apple_sku = Column(Text, doc="SKU ID of apple appstore")
-    # product_type = Column(ENUM(ProductType), default=ProductType.SINGLE, nullable=False)
-    is_free = Column(Boolean, nullable=False, default=False, doc="Flag to set this product as free")
+    apple_sku_k = Column(Text, doc="SKU ID of apple appstore for 9c-K")
+    product_type = Column(ENUM(ProductType), default=ProductType.IAP, nullable=False)
     required_level = Column(Integer, nullable=True, default=None, doc="Required avatar level to purchase this product")
     daily_limit = Column(Integer, nullable=True, doc="Purchase limit in 24 hours")
     weekly_limit = Column(Integer, nullable=True, doc="Purchase limit in 7 days (24 * 7 hours)")
@@ -71,6 +68,8 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
                             doc="Open timestamp of this product. If null, it's already opened.")
     close_timestamp = Column(DateTime, nullable=True,
                              doc="Close timestamp of this product. If null, it'll be opened forever.")
+    mileage = Column(Integer, nullable=False, default=0, server_default='0', doc="Mileage to buyer for purchacing this product")
+    mileage_price = Column(Integer, nullable=True, doc="Mileage price to buy this product. Only meaningful for `MILEAGE` type product.")
 
     # For Assets
     rarity = Column(ENUM(ProductRarity, create_type=False), nullable=False, default=ProductRarity.NORMAL,

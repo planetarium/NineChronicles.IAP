@@ -24,6 +24,8 @@ on:
         required: true
       KMS_KEY_ID:
         required: true
+      ADHOC_KMS_KEY_ID:
+        required: true
       GOOGLE_CREDENTIAL:
         required: true
       APPLE_CREDENTIAL:
@@ -50,6 +52,8 @@ on:
       BRIDGE_DATA:
         required: true
       REFUND_SHEET_ID:
+        required: true
+      HEADLESS_GQL_JWT_SECRET:
         required: true
 
 jobs:
@@ -133,6 +137,7 @@ jobs:
           ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
           HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          ADHOC_KMS_KEY_ID: ${{ secrets.ADHOC_KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
           APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
@@ -146,12 +151,14 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          CDN_HOST_K: ${{ vars.CDN_HOST_K }}
           PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
           VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
           REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+          HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
         run: |
           source $VENV
           yarn cdk synth
@@ -168,6 +175,7 @@ jobs:
           ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
           HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          ADHOC_KMS_KEY_ID: ${{ secrets.ADHOC_KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
           GOOGLE_PACKAGE_NAME: ${{ vars.GOOGLE_PACKAGE_NAME }}
           APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
@@ -181,12 +189,14 @@ jobs:
           GOLDEN_DUST_WORK_SHEET_ID: ${{ secrets.GOLDEN_DUST_WORK_SHEET_ID }}
           FORM_SHEET: ${{ vars.FORM_SHEET }}
           CDN_HOST: ${{ vars.CDN_HOST }}
+          CDN_HOST_K: ${{ vars.CDN_HOST_K }}
           PLANET_URL: ${{ vars.PLANET_URL }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           VOUCHER_URL: ${{ secrets.VOUCHER_URL }}
           VOUCHER_JWT_SECRET: ${{ secrets.VOUCHER_JWT_SECRET }}
           BRIDGE_DATA: ${{ secrets.BRIDGE_DATA }}
           REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
+          HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
         run: |
           source $VENV
           yarn cdk deploy --all --require-approval never -O output.txt

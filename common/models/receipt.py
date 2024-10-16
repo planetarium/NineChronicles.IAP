@@ -1,4 +1,3 @@
-from typing import Any, Dict
 import uuid
 
 from sqlalchemy import Column, Text, UUID, DateTime, Integer, ForeignKey, LargeBinary
@@ -17,6 +16,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     order_id = Column(Text, nullable=False, doc="Play store / Appstore IAP receipt id")
     uuid = Column(UUID(as_uuid=True), nullable=False, index=True, default=uuid.uuid4,
                   doc="Internal uuid for management")
+    package_name = Column(Text, nullable=False, doc="Package name where the receipt came from")
     data = Column(JSONB, nullable=False, doc="Full IAP receipt data")
     status = Column(
         ENUM(ReceiptStatus, create_type=False), nullable=False, default=ReceiptStatus.INIT,
@@ -36,4 +36,8 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
                                doc="Transaction status on another planet")
     planet_id = Column(LargeBinary(length=12), nullable=False, default=PlanetID.ODIN.value,
                        doc="An identifier of planets")
+    mileage_change = Column(Integer, nullable=False, default=0, server_default='0',
+                            doc='Mileage change by this purchase')
+    mileage_result = Column(Integer, nullable=False, default=0, server_default='0',
+                            doc='Result mileage after applying this purchase')
     msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")

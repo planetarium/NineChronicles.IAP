@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Union, Dict, Any, Tuple, Optional
 
+import jwt
 from gql import Client
 from gql.dsl import DSLSchema, dsl_gql, DSLQuery, DSLMutation
 from gql.transport.requests import RequestsHTTPTransport
@@ -12,15 +13,28 @@ from common.consts import CURRENCY_LIST
 
 
 class GQL:
-    def __init__(self, url: str = f"{os.environ.get('HEADLESS')}/graphql"):
+    def __init__(self, url: str, jwt_secret: str = None):
+        assert url is not None
         self._url = url
+        self.__jwt_secret = jwt_secret
         self.client = None
         self.ds = None
-        transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2)
+        transport = RequestsHTTPTransport(url=self._url, verify=True, retries=2, headers=self.__create_header())
         self.client = Client(transport=transport, fetch_schema_from_transport=True)
         with self.client as _:
             assert self.client.schema is not None
             self.ds = DSLSchema(self.client.schema)
+
+    def create_token(self) -> str:
+        iat = datetime.datetime.utcnow()
+        return jwt.encode({
+            "iat": iat,
+            "exp": iat + datetime.timedelta(minutes=1),
+            "iss": "planetariumhq.com"
+        }, self.__jwt_secret)
+
+    def __create_header(self):
+        return {"Authorization": f"Bearer {self.create_token()}"}
 
     def execute(self, query: DocumentNode) -> Union[Dict[str, Any], ExecutionResult]:
         with self.client as sess:
@@ -52,7 +66,7 @@ class GQL:
         return resp["transaction"]["nextTxNonce"]
 
     def _unload_from_garage(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         fav_data = kwargs.get("fav_data")
         avatar_addr = kwargs.get("avatar_addr")
         item_data = kwargs.get("item_data")
@@ -81,7 +95,7 @@ class GQL:
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
     def _claim_items(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         claim_data = kwargs.get("claim_data")
         memo = kwargs.get("memo")
 
@@ -103,7 +117,7 @@ class GQL:
         return bytes.fromhex(result["actionTxQuery"]["unloadFromMyGarages"])
 
     def _transfer_asset(self, pubkey: bytes, nonce: int, **kwargs) -> bytes:
-        ts = kwargs.get("timestamp", (datetime.datetime.utcnow()+datetime.timedelta(days=1)).isoformat())
+        ts = kwargs.get("timestamp", (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat())
         sender = kwargs.get("sender")
         recipient = kwargs.get("recipient")
         currency = kwargs.get("currency")

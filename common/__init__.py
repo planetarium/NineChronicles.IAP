@@ -36,8 +36,10 @@ class Config:
     account_id: str
     region_name: str
     cdn_host: str
+    cdn_host_k: str
     odin_gql_url: str
     heimdall_gql_url: str
+    headless_gql_jwt_secret: str
 
     # Multiplanetary
     planet_url: str
@@ -56,6 +58,7 @@ class Config:
 
     headless: str = "http://localhost"
     kms_key_id: Optional[str] = None
+    adhoc_kms_key_id: Optional[str] = None
     golden_dust_request_sheet_id: Optional[str] = None
     golden_dust_work_sheet_id: Optional[str] = None
     form_sheet: Optional[str] = None

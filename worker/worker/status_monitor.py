@@ -7,38 +7,26 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
+from common._graphql import GQL
+from common.consts import GQL_DICT
 from common.enums import ReceiptStatus, TxStatus
 from common.models.receipt import Receipt
-from common.utils.aws import fetch_secrets
+from common.utils.aws import fetch_parameter, fetch_secrets
 from common.utils.receipt import PlanetID
 
 STAGE = os.environ.get("STAGE")
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
-CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+PLANET_LIST = (PlanetID.ODIN, PlanetID.HEIMDALL) if STAGE == "mainnet" \
+    else (PlanetID.ODIN_INTERNAL, PlanetID.HEIMDALL_INTERNAL)
 IAP_ALERT_WEBHOOK_URL = os.environ.get("IAP_ALERT_WEBHOOK_URL")
 IAP_GARAGE_WEBHOOK_URL = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
-
-FUNGIBLE_DICT = {
-    "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a": "Hourglass (400000)",
-    "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe": "AP Potion (500000)",
-    "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820": "Silver Dust (800201)",
-    "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0": "Golden Dust (600201)",
-    "48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308": "Golden Meat (800202)",
-}
-
-VIEW_ORDER = (
-    "CRYSTAL",
-    FUNGIBLE_DICT["3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a"],  # Hourglass
-    FUNGIBLE_DICT["00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe"],  # AP Potion
-    "RUNE_GOLDENLEAF",
-    FUNGIBLE_DICT["f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"],  # Golden Dust
-    FUNGIBLE_DICT["48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308"],  # Golden Meat
-    FUNGIBLE_DICT["1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820"],  # Silver Dust
-    "SOULSTONE_1001", "SOULSTONE_1002", "SOULSTONE_1003", "SOULSTONE_1004",
-)
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
 engine = create_engine(DB_URI)
 
@@ -103,6 +91,7 @@ def check_tx_failure(sess):
 def check_halt_tx(sess):
     """Notify when STAGED|INVALID tx over 5min."""
     tx_halt_receipt_list = sess.scalars(select(Receipt).where(
+        Receipt.status == ReceiptStatus.VALID,
         Receipt.tx_status.in_([TxStatus.INVALID, TxStatus.STAGED]),
         Receipt.created_at <= (datetime.now(tz=timezone.utc) - timedelta(minutes=5)),
     )).fetchall()
@@ -131,56 +120,73 @@ def check_no_tx(sess):
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] No Tx. Create Receipt Report", msg)
 
 
-def check_garage():
+def check_token_balance(planet: PlanetID):
     """Report IAP Garage stock"""
-    query = """{
-      stateQuery {
-        garages(
-          agentAddr: "0xCb75C84D76A6f97A2d55882Aea4436674c288673",
-          currencyTickers: [
-            "CRYSTAL", "RUNE_GOLDENLEAF",
-            "SOULSTONE_1001", "SOULSTONE_1002", "SOULSTONE_1003", "SOULSTONE_1004",
-          ]
-          fungibleItemIds: [
-            "3991e04dd808dc0bc24b21f5adb7bf1997312f8700daf1334bf34936e8a0813a",  # Hourglass (400000)
-            "00dfffe23964af9b284d121dae476571b7836b8d9e2e5f510d92a840fecc64fe",  # AP Potion (500000)
-            "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"   # Golden Dust (600201)
-            "48e50ecd6d1aa2689fd349c1f0611e6cc1e9c4c74ec4de9d4637ec7b78617308",  # Golden Meat (800202)
-            "1a755098a2bc0659a063107df62e2ff9b3cdaba34d96b79519f504b996f53820",  # Silver Dust (800201)
-          ]
-        ) {
-          garageBalances { currency { ticker minters decimalPlaces } quantity }
-          fungibleItemGarages { fungibleItemId item {itemSubType} count }
-        }
-      }
-    }"""
+    url = GQL_DICT[planet]
+    gql = GQL(url, jwt_secret=HEADLESS_GQL_JWT_SECRET)
+    query = """
+query balanceQuery(
+  $address: Address! = "0xCb75C84D76A6f97A2d55882Aea4436674c288673"
+) {
+  stateQuery {
+    CriRune: balance (
+      address: $address,
+      currency: {ticker: "FAV__RUNESTONE_CRI", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    EmeraldDust: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_600203", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    Crystal: balance (
+      address: $address,
+      currency: {ticker: "FAV__CRYSTAL", decimalPlaces: 18, minters: [], }
+    ) { currency {ticker} quantity }
+    hourglass: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_400000", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    APPotion: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_500000", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    GoldenLeafRune: balance (
+      address: $address,
+      currency: {ticker: "FAV__RUNE_GOLDENLEAF", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    GoldenDust: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_600201", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    RubyDust: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_600202", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    SilverDust: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_800201", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+  }
+}"""
 
-    resp = requests.post(GQL_URL, json={"query": query})
-    data = resp.json()["data"]["stateQuery"]["garages"]
-    fav_data = data["garageBalances"]
-    item_data = data["fungibleItemGarages"]
-
-    result_dict = {}
-
-    for fav in fav_data:
-        result_dict[fav["currency"]["ticker"]] = fav["quantity"].split(".")[0]
-    for item in item_data:
-        result_dict[FUNGIBLE_DICT[item["fungibleItemId"]]] = item["count"]
+    resp = requests.post(url, json={"query": query}, headers={"Authorization": f"Bearer {gql.create_token()}"})
+    data = resp.json()["data"]["stateQuery"]
 
     msg = []
-    for key in VIEW_ORDER:
-        result = result_dict.pop(key)
-        msg.append(create_block(f"{key} : {int(result):,}"))
-    for key, result in result_dict.items():
-        msg.append(create_block(f"{key} : {int(result):,}"))
+    for name, balance in data.items():
+        msg.append(create_block(f"*{name}* (`{balance['currency']['ticker']}`) : {int(balance['quantity']):,}"))
 
-    send_message(IAP_GARAGE_WEBHOOK_URL, f"[NineChronicles.IAP] Daily Garage Report - {STAGE}", msg)
+    send_message(
+        IAP_GARAGE_WEBHOOK_URL,
+        f"[NineChronicles.IAP] Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
+        msg
+    )
 
 
 def handle(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
     if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
-        check_garage()
+        for planet_id in PLANET_LIST:
+            check_token_balance(planet_id)
 
     try:
         check_invalid_receipt(sess)
@@ -193,7 +199,8 @@ def handle(event, context):
 
 if __name__ == "__main__":
     sess = scoped_session(sessionmaker(bind=engine))
-    check_garage()
+    for planet_id in PLANET_LIST:
+        check_token_balance(planet_id)
     check_invalid_receipt(sess)
     check_halt_tx(sess)
     check_tx_failure(sess)

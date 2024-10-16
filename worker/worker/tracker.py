@@ -9,24 +9,28 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
 from common._graphql import GQL
-from common.enums import TxStatus
+from common.consts import GQL_DICT
+from common.enums import TxStatus, ReceiptStatus
 from common.models.receipt import Receipt
-from common.utils.aws import fetch_secrets
-from common.utils.receipt import PlanetID
+from common.utils.aws import fetch_secrets, fetch_parameter
 
+STAGE = os.environ.get("STAGE")
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
-CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
-GQL_URL = f"{os.environ.get('HEADLESS')}/graphql"
+HEADLESS_GQL_JWT_SECRET = fetch_parameter(
+    os.environ.get("REGION_NAME"),
+    f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
+    True
+)["Value"]
 
-BLOCK_LIMIT = 50
+LIMIT = 200
 
 engine = create_engine(DB_URI, pool_size=5, max_overflow=5)
 
 
-def process(tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
-    client = GQL(GQL_URL)
+def process(url: str, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
+    client = GQL(url, HEADLESS_GQL_JWT_SECRET)
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(
@@ -60,18 +64,19 @@ def track_tx(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
     receipt_list = sess.scalars(
         select(Receipt).where(
+            Receipt.status == ReceiptStatus.VALID,
             Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
-        ).order_by(Receipt.id).limit(BLOCK_LIMIT)
+        ).order_by(Receipt.id).limit(LIMIT)
     ).fetchall()
+
     result = defaultdict(list)
     for receipt in receipt_list:
-        tx_id, tx_status, msg = process(receipt.tx_id)
+        tx_id, tx_status, msg = process(GQL_DICT[receipt.planet_id], receipt.tx_id)
         result[tx_status.name].append(tx_id)
         receipt.tx_status = tx_status
         if msg:
             receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
-    # update_iap_garage(sess, planet_dict[PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL])
     sess.commit()
 
     logger.info(f"{len(receipt_list)} transactions are found to track status")

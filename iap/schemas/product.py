@@ -10,13 +10,14 @@ class SimpleProductSchema(BaseSchema):
     order: int
     google_sku: str = ""
     apple_sku: str = ""
+    apple_sku_k: str = ""
     is_free: bool
     # product_type: ProductType
     daily_limit: Optional[int] = None
     weekly_limit: Optional[int] = None
     account_limit: Optional[int] = None
     active: bool
-    buyable: bool = True
+    buyable: bool = False
     required_level: Optional[int] = None
 
     class Config:

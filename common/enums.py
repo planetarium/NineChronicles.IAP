@@ -5,6 +5,15 @@ from enum import Enum, IntEnum
 #  Mismatch can lead frontend error
 
 
+class PackageName(Enum):
+    """
+    # PackageName
+    ---
+    """
+    NINE_CHRONICLES_M = "com.planetariumlabs.ninechroniclesmobile"
+    NINE_CHRONICLES_K = "com.planetariumlabs.ninechroniclesmobilek"
+
+
 class Currency(Enum):
     """
     # Currency
@@ -69,21 +78,16 @@ class ProductType(Enum):
     """
     # ProductType
     ---
-    Product type is the flag to specify IAP product type.
+    Flag to represent the type of product.
+    User can buy product via eligible type according to product type.
 
-    - **`SINGLE`**
-
-        `SINGLE` type product has just one fungible item.  
-        `SINGLE` type product has no limitation to buy.
-
-    - **`PACKAGE`**
-
-        `PACKAGE` type product has multiple fungible items in it.  
-        `PACKAGE` type product has daily/weekly limitation to buy.  
-        If all limitation is exhausted, the package will be locked before next period.
+    - **`IAP`** : Can buy this through IAP store
+    - **`FREE`** : Can buy this freely
+    - **`MILEAGE`** : Can buy this product with mileage
     """
-    SINGLE = "SINGLE"
-    PKG = "PACKAGE"
+    IAP = "IAP"
+    FREE = "FREE"
+    MILEAGE = "MILEAGE"
 
 
 class ReceiptStatus(IntEnum):
@@ -135,6 +139,10 @@ class ReceiptStatus(IntEnum):
 
         Does not met required level to get this product.
 
+    - **96: `NOT_ENOUGH_MILEAGE`**
+
+        Not enough mileage to purchase this product
+
     - **99: `UNKNOWN`**
 
         An unhandled error case. This is reserve to catch all other errors.  
@@ -150,6 +158,7 @@ class ReceiptStatus(IntEnum):
     PURCHASE_LIMIT_EXCEED = 93
     TIME_LIMIT = 94
     REQUIRED_LEVEL = 95
+    NOT_ENOUGH_MILEAGE = 96
     UNKNOWN = 99
 
 

@@ -79,12 +79,9 @@ class FreeReceiptSchema:
 
 
 @dataclass
-class ReceiptSchema:
+class SimpleReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
-    agentAddress: Optional[str] = None
-    avatarAddress: Optional[str] = None
-    planetId: Union[str, PlanetID] = None
 
     # Google
     payload: Optional[Dict] = None
@@ -113,6 +110,16 @@ class ReceiptSchema:
         elif self.store == Store.TEST:
             # No further action
             pass
+
+
+@dataclass
+class ReceiptSchema(SimpleReceiptSchema):
+    agentAddress: Optional[str] = None
+    avatarAddress: Optional[str] = None
+    planetId: Union[str, PlanetID] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
         # Reformat address to starts with `0x`
         if self.agentAddress:
@@ -150,6 +157,7 @@ class ReceiptDetailSchema(BaseSchema):
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
     planet_id: PlanetID
+    mileage: int
 
     class Config:
         from_attributes = True

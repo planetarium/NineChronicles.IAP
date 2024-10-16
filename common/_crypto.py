@@ -144,6 +144,8 @@ class Account:
         return der_encode(seq)
 
 
+
+# Deprecated
 def derive_address(address: Union[str, bytes], key: Union[str, bytes], get_byte: bool = False) -> Union[bytes, str]:
     """
     Derive given address using key.

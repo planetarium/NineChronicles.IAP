@@ -1,6 +1,7 @@
 __all__ = [
-    "garage",
+    "mileage",
     "receipt",
     "product",
     "voucher",
+    "user",
 ]
