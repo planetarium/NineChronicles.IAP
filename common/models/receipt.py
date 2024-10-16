@@ -38,6 +38,6 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
                        doc="An identifier of planets")
     mileage_change = Column(Integer, nullable=False, default=0, server_default='0',
                             doc='Mileage change by this purchase')
-    mileage = Column(Integer, nullable=False, default=0, server_default='0',
-                     doc='Result mileage after applying this purchase')
+    mileage_result = Column(Integer, nullable=False, default=0, server_default='0',
+                            doc='Result mileage after applying this purchase')
     msg = Column(Text, nullable=True, doc="Any error message while doing action. Please append, Do not replace.")
