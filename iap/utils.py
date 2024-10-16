@@ -12,12 +12,14 @@ from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.receipt import PlanetID
 from iap import settings
+from models.mileage import Mileage
 
 
 def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optional[Product] = None,
                          use_avatar: bool = False) -> defaultdict:
     stmt = (
-        select(Receipt.product_id, count(Receipt.id).label("purchase_count"), cast(Receipt.purchased_at, Date).label("date"))
+        select(Receipt.product_id, count(Receipt.id).label("purchase_count"),
+               cast(Receipt.purchased_at, Date).label("date"))
         .where(
             Receipt.planet_id == planet_id,
             Receipt.status.in_((ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID))
@@ -95,3 +97,42 @@ def create_season_pass_jwt() -> str:
         "exp": now + datetime.timedelta(minutes=10),
         "aud": "SeasonPass",
     }, settings.SEASON_PASS_JWT_SECRET, algorithm="HS256")
+
+
+def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
+    """
+    Read or create Mileage instance from DB.
+    If no valid Mileage instance found, create new one.
+
+    :param sess: SQLAlchemy session to use DB.
+    :param planet_id: PlanetID of target agent.
+    :param agent_addr: Address of target agent.
+    :return: Found/created Mileage instance.
+    """
+    mileage = sess.scalar(select(Mileage).where(Mileage.planet_id == planet_id, Mileage.agent_addr == agent_addr))
+    if not mileage:
+        mileage = Mileage(planet_id=planet_id, agent_addr=agent_addr)
+        sess.add(mileage)
+    return mileage
+
+
+def upsert_mileage(sess, product: Product, receipt: Receipt, mileage: Optional[Mileage] = None) -> Receipt:
+    """
+    Update or create mileage from purchase.
+    NOTE: This function only create and store mileage from purchase.
+        If you want to deal with "mileage purchase", please do it yourself and store new mileage with this function.
+
+    :param sess: SQLAlchemy session to use DB.
+    :param product: Product to purchase.
+    :param receipt: Receipt to write history.
+    :param mileage: Target mileage instance to store mileage data.
+    :return: Updated receipt instance.
+    """
+    if mileage is None:
+        mileage = get_mileage(sess, PlanetID(receipt.planet_id), receipt.agent_addr)
+    mileage.mileage += (product.mileage or 0)
+    receipt.mileage_change = (product.mileage or 0) - (product.mileage_price or 0)
+    receipt.mileage_result = mileage.mileage
+    sess.add(mileage)
+    sess.add(receipt)
+    return receipt

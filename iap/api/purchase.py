@@ -9,10 +9,11 @@ import boto3
 import requests
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, Session
 from starlette.responses import JSONResponse
 
-from common.enums import ReceiptStatus, Store, PackageName
+from common.enums import ReceiptStatus, Store, PackageName, ProductType
+from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
@@ -23,7 +24,7 @@ from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
 from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
-from iap.utils import create_season_pass_jwt, get_purchase_count
+from iap.utils import create_season_pass_jwt, get_purchase_count, upsert_mileage, get_mileage
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
 from iap.validator.google import validate_google, ack_google
@@ -164,7 +165,6 @@ def retry_product(receipt_data: SimpleReceiptSchema,
         planetId=prev_receipt.planet_id
     )
     return request_product(receipt_schema, x_iap_packagename=x_iap_packagename)
-
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
@@ -398,6 +398,7 @@ def request_product(receipt_data: ReceiptSchema,
         resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
         logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
+    receipt = upsert_mileage(sess, product, receipt)
     sess.add(receipt)
     sess.commit()
     sess.refresh(receipt)
@@ -458,7 +459,7 @@ def free_product(receipt_data: FreeReceiptSchema,
         receipt.msg = f"Product {receipt_data.sku} not exists or inactive"
         raise_error(sess, receipt, ValueError(f"Product {receipt_data.sku} not found or inactive"))
 
-    if not product.is_free:
+    if product.product_type != ProductType.FREE:
         receipt.status = ReceiptStatus.INVALID
         receipt.msg = "This product it not for free"
         raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not for free"))
@@ -480,7 +481,113 @@ def free_product(receipt_data: FreeReceiptSchema,
     receipt = check_required_level(sess, receipt, product)
 
     receipt.status = ReceiptStatus.VALID
+    receipt = upsert_mileage(sess, product, receipt)
     sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    msg = {
+        "agent_addr": receipt_data.agentAddress.lower(),
+        "avatar_addr": receipt_data.avatarAddress.lower(),
+        "product_id": product.id,
+        "uuid": str(receipt.uuid),
+        "planet_id": receipt_data.planetId.decode('utf-8'),
+        "package_name": receipt.package_name,
+    }
+
+    resp = sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+    logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
+
+    return receipt
+
+
+@router.post("/mileage", response_model=ReceiptDetailSchema)
+def mileage_product(receipt_data: FreeReceiptSchema,
+                    x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
+                    sess=Depends(session)):
+    """
+    # Purchase Mileage Product
+    ---
+
+    **Purchase mileage product and unload product from IAP garage to buyer.**
+
+    ### Request Body
+    - `store` :: int : Store type in IntEnum. Please see `StoreType` Enum.
+    - `agentAddress` :: str : 9c agent address of buyer.
+    - `avatarAddress` :: str : 9c avatar address to get items.
+    - `sku` :: str : Purchased product SKU
+    """
+    if not receipt_data.planetId:
+        raise ReceiptNotFoundException("", "")
+
+    product = sess.scalar(
+        select(Product)
+        .options(joinedload(Product.fav_list)).options(joinedload(Product.fungible_item_list))
+        .where(
+            Product.active.is_(True),
+            or_(
+                Product.google_sku == receipt_data.sku,
+                Product.apple_sku == receipt_data.sku,
+                Product.apple_sku_k == receipt_data.sku
+            )
+        )
+    )
+    order_id = f"MILE-{uuid4()}"
+    receipt = Receipt(
+        store=receipt_data.store,
+        package_name=x_iap_packagename.value,
+        data={"SKU": receipt_data.sku, "OrderId": order_id},
+        agent_addr=receipt_data.agentAddress.lower(),
+        avatar_addr=receipt_data.avatarAddress.lower(),
+        order_id=order_id,
+        purchased_at=datetime.utcnow(),
+        product_id=product.id if product is not None else None,
+        planet_id=receipt_data.planetId.value,
+    )
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    # Validation
+    if not product:
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = f"Product {receipt_data.sku} not exists or inactive"
+        raise_error(sess, receipt, ValueError(f"Product {receipt_data.sku} not found or inactive"))
+
+    if product.product_type != ProductType.MILEAGE:
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = "This product it not for free"
+        raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not mileage product"))
+
+    if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
+            (product.close_timestamp and product.close_timestamp < datetime.now())):
+        receipt.status = ReceiptStatus.TIME_LIMIT
+        raise_error(sess, receipt, ValueError(f"Not in product opening time"))
+
+    # Fetch and validate mileage
+    target_mileage = get_mileage(sess, receipt_data.planetId, receipt_data.agentAddress)
+
+    if target_mileage.mileage < product.mileage_price:
+        receipt.status = ReceiptStatus.NOT_ENOUGH_MILEAGE
+        msg = f"{target_mileage.mileage} is not enough to buy product {product.id}: {product.mileage_price} required"
+        receipt.msg = msg
+        raise_error(sess, receipt, ValueError(msg))
+
+    # Required level
+    receipt = check_required_level(sess, receipt, product)
+
+    # Purchase Limit
+    if product.daily_limit:
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="daily", limit=product.daily_limit)
+    if product.weekly_limit:
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="weekly", limit=product.weekly_limit)
+    if product.account_limit:
+        receipt = check_purchase_limit(sess, receipt, product, limit_type="account", limit=product.account_limit)
+
+    # Handle mileage
+    target_mileage.mileage -= product.mileage_price
+    receipt = upsert_mileage(sess, product, receipt, target_mileage)
+    receipt.status = ReceiptStatus.VALID
     sess.commit()
     sess.refresh(receipt)
 
