@@ -8,11 +8,11 @@ from sqlalchemy.sql.functions import count
 
 from common import logger
 from common.enums import ReceiptStatus
+from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.receipt import PlanetID
 from iap import settings
-from models.mileage import Mileage
 
 
 def get_purchase_history(sess, planet_id: PlanetID, address: str, product: Optional[Product] = None,
