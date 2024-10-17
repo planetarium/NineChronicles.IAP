@@ -2,7 +2,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel as BaseSchema, model_validator
 
-from common.enums import ProductRarity, ProductAssetUISize
+from common.enums import ProductRarity, ProductAssetUISize, ProductType
 
 
 class SimpleProductSchema(BaseSchema):
@@ -11,14 +11,15 @@ class SimpleProductSchema(BaseSchema):
     google_sku: str = ""
     apple_sku: str = ""
     apple_sku_k: str = ""
-    is_free: bool
-    # product_type: ProductType
+    product_type: ProductType
     daily_limit: Optional[int] = None
     weekly_limit: Optional[int] = None
     account_limit: Optional[int] = None
     active: bool
     buyable: bool = False
     required_level: Optional[int] = None
+    mileage: int
+    mileage_price: Optional[int] = None
 
     class Config:
         from_attributes = True
