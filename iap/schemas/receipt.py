@@ -157,7 +157,8 @@ class ReceiptDetailSchema(BaseSchema):
     tx_id: Optional[str] = None
     tx_status: Optional[TxStatus] = None
     planet_id: PlanetID
-    mileage: int
+    mileage_change: int
+    mileage_result: int
 
     class Config:
         from_attributes = True

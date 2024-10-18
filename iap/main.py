@@ -25,6 +25,7 @@ app = FastAPI(
     description="",
     version=__VERSION__,
     debug=settings.DEBUG,
+    openapi_prefix=f"/{stage}",
 )
 
 if settings.DEBUG:
