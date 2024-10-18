@@ -113,6 +113,8 @@ def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
     if not mileage:
         mileage = Mileage(planet_id=planet_id, agent_addr=agent_addr, mileage=0)
         sess.add(mileage)
+        sess.commit()
+        sess.refresh(mileage)
     return mileage
 
 
