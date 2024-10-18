@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from common.utils.address import format_addr
 from common.utils.receipt import PlanetID
 from iap.dependencies import session
 from iap.schemas.mileage import MileageSchema
@@ -15,6 +14,4 @@ router = APIRouter(
 
 @router.get("", response_model=MileageSchema)
 def get_mileage(agent_addr: str, planet_id: str, sess: Session = Depends(session)):
-    agent_addr = format_addr(agent_addr).lower()
-    planet = PlanetID(bytes(planet_id, "utf-8"))
-    return get_mileage_fn(sess, planet, agent_addr)
+    return get_mileage_fn(sess, PlanetID(bytes(planet_id, "utf-8")), agent_addr)
