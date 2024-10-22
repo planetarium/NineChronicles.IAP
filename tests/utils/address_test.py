@@ -11,7 +11,7 @@ from common.utils.receipt import PlanetID
     "0xdde23c49C0e36B5f8206Dbdac60675288484B37E"
 ])
 def test_format_addr(address: str):
-    expected = "0xdde23c49C0e36B5f8206Dbdac60675288484B37E"
+    expected = "0xdde23c49C0e36B5f8206Dbdac60675288484B37E".lower()
     assert format_addr(address) == expected
 
 
@@ -23,7 +23,7 @@ def test_format_addr(address: str):
 ])
 def test_get_vault_agent_address(planet_id: PlanetID, key: str):
     os.environ[key] = "dde23c49C0e36B5f8206Dbdac60675288484B37E"
-    assert get_vault_agent_address(planet_id) == "0xdde23c49C0e36B5f8206Dbdac60675288484B37E"
+    assert get_vault_agent_address(planet_id) == "0xdde23c49C0e36B5f8206Dbdac60675288484B37E".lower()
 
 
 @pytest.mark.parametrize("planet_id, key", [
@@ -34,5 +34,5 @@ def test_get_vault_agent_address(planet_id: PlanetID, key: str):
 ])
 def test_get_vault_avatar_address(planet_id: PlanetID, key: str):
     os.environ[key] = "dde23c49C0e36B5f8206Dbdac60675288484B37E"
-    assert get_vault_avatar_address(planet_id) == "0xdde23c49C0e36B5f8206Dbdac60675288484B37E"
+    assert get_vault_avatar_address(planet_id) == "0xdde23c49C0e36B5f8206Dbdac60675288484B37E".lower()
 

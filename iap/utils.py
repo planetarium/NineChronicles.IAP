@@ -11,6 +11,7 @@ from common.enums import ReceiptStatus
 from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.address import format_addr
 from common.utils.receipt import PlanetID
 from iap import settings
 
@@ -109,10 +110,13 @@ def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
     :param agent_addr: Address of target agent.
     :return: Found/created Mileage instance.
     """
+    agent_addr = format_addr(agent_addr)
     mileage = sess.scalar(select(Mileage).where(Mileage.planet_id == planet_id, Mileage.agent_addr == agent_addr))
     if not mileage:
-        mileage = Mileage(planet_id=planet_id, agent_addr=agent_addr)
+        mileage = Mileage(planet_id=planet_id, agent_addr=agent_addr, mileage=0)
         sess.add(mileage)
+        sess.commit()
+        sess.refresh(mileage)
     return mileage
 
 
