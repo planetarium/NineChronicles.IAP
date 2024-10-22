@@ -28,6 +28,9 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
     "internal": ResourceDict(
         vpc_id="vpc-08ee9f2dbd1c97ac6",  # Internal VPC
     ),
+    "preview": ResourceDict(
+        vpc_id="vpc-08ee9f2dbd1c97ac6",  # Internal VPC
+    ),
     "mainnet": ResourceDict(
         vpc_id="vpc-01a0ef2aa2c41bb26",  # Main VPC
     ),
@@ -78,7 +81,7 @@ class SharedStack(Stack):
         self.rds = _rds.DatabaseInstance(
             self, f"{config.stage}-9c-iap-rds",
             instance_identifier=f"{config.stage}-9c-iap-rds",
-            engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_2),
+            engine=_rds.DatabaseInstanceEngine.postgres(version=_rds.PostgresEngineVersion.VER_15_7),
             vpc=self.vpc,
             vpc_subnets=_ec2.SubnetSelection(),
             database_name="iap",
