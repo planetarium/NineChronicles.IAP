@@ -31,7 +31,7 @@ def product_list(agent_addr: str,
     else:
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
 
-    agent_addr = format_addr(agent_addr).lower()
+    agent_addr = format_addr(agent_addr)
     all_category_list = sess.scalars(
         select(Category)
         .options(
