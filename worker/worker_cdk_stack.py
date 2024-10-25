@@ -306,6 +306,36 @@ class WorkerStack(Stack):
                 memory_size=256,
             )
 
+            burn_asset = _lambda.Function(
+                self, f"{config.stage}-9c-iap-burn-asset-function",
+                function_name=f"{config.stage}-9c-iap-burn-asset",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute BurnAsset action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.burn_asset.burn_asset",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
+            issue_token = _lambda.Function(
+                self, f"{config.stage}-9c-iap-issue-token-function",
+                function_name=f"{config.stage}-9c-iap-issue-token",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute IssueToken action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.issue_token.issue_token",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
             asset_transporter = _lambda.Function(
                 self, f"{config.stage}-9c-iap-assets-transfer-function",
                 function_name=f"{config.stage}-9c-iap-transfer-assets",
