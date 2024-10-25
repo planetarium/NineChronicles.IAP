@@ -293,7 +293,7 @@ class WorkerStack(Stack):
 
             token_issuer = _lambda.Function(
                 self, f"{config.stage}-9c-iap-issue-tokens-from-garage-function",
-                function_name=f"{config.stage}-9c-iap-issue-tokens-from-garage",
+                function_name=f"{config.stage}-9c-iap-issue_tokens_from_garage",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute IssueTokensFromGarage action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
@@ -308,7 +308,7 @@ class WorkerStack(Stack):
 
             burn_asset = _lambda.Function(
                 self, f"{config.stage}-9c-iap-burn-asset-function",
-                function_name=f"{config.stage}-9c-iap-burn-asset",
+                function_name=f"{config.stage}-9c-iap-burn_asset",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute BurnAsset action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
@@ -323,7 +323,7 @@ class WorkerStack(Stack):
 
             issue_token = _lambda.Function(
                 self, f"{config.stage}-9c-iap-issue-token-function",
-                function_name=f"{config.stage}-9c-iap-issue-token",
+                function_name=f"{config.stage}-9c-iap-issue_token",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute IssueToken action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
@@ -338,7 +338,7 @@ class WorkerStack(Stack):
 
             asset_transporter = _lambda.Function(
                 self, f"{config.stage}-9c-iap-assets-transfer-function",
-                function_name=f"{config.stage}-9c-iap-transfer-assets",
+                function_name=f"{config.stage}-9c-iap-transfer_assets",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute TransferAssets action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
