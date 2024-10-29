@@ -26,7 +26,6 @@ from common.utils.transaction import create_unsigned_tx, append_signature_to_uns
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
-CURRENT_PLANET = PlanetID.ODIN if os.environ.get("STAGE") == "mainnet" else PlanetID.ODIN_INTERNAL
 HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     os.environ.get("REGION_NAME"),
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
@@ -132,12 +131,11 @@ def handle(event, context):
     sess = scoped_session(sessionmaker(bind=engine))
     uuid_list = [x.body.get("uuid") for x in message.Records if x.body.get("uuid") is not None]
     receipt_dict = {str(x.uuid): x for x in sess.scalars(select(Receipt).where(Receipt.uuid.in_(uuid_list)))}
-    nonce = None
+    nonce_dict = {}
     for i, record in enumerate(message.Records):
         try:
             receipt = receipt_dict.get(record.body.get("uuid"))
             logger.debug(f"UUID : {record.body.get('uuid')}")
-            success, msg = False, None
             if not receipt:
                 success, msg, tx_id = False, f"{record.body.get('uuid')} is not exist in Receipt history", None
                 logger.error(msg)
@@ -146,10 +144,12 @@ def handle(event, context):
                 logger.warning(msg)
             else:
                 receipt.tx_status = TxStatus.CREATED
-                (success, msg, tx_id), nonce, signed_tx = process(sess, record, nonce=nonce)
-                receipt.nonce = nonce
+                (success, msg, tx_id), nonce_dict[receipt.planet_id], signed_tx = process(
+                    sess, record, nonce=nonce_dict.get(receipt.planet_id, None)
+                )
+                receipt.nonce = nonce_dict[receipt.planet_id]
                 if success:
-                    nonce += 1
+                    nonce_dict[receipt.planet_id] += 1
                 receipt.tx_id = tx_id
                 receipt.tx_status = TxStatus.STAGED
                 receipt.tx = signed_tx.hex()
