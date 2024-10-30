@@ -292,12 +292,42 @@ class WorkerStack(Stack):
             )
 
             token_issuer = _lambda.Function(
-                self, f"{config.stage}-9c-iap-token-issue-function",
-                function_name=f"{config.stage}-9c-iap-issue-token",
+                self, f"{config.stage}-9c-iap-issue-tokens-from-garage-function",
+                function_name=f"{config.stage}-9c-iap-issue_tokens_from_garage",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute IssueTokensFromGarage action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-                handler="issue_tokens.issue",
+                handler="manual.issue_tokens_from_garage.issue",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
+            burn_asset = _lambda.Function(
+                self, f"{config.stage}-9c-iap-burn-asset-function",
+                function_name=f"{config.stage}-9c-iap-burn_asset",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute BurnAsset action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.burn_asset.burn_asset",
+                layers=[layer],
+                role=role,
+                vpc=shared_stack.vpc,
+                timeout=cdk_core.Duration.seconds(300),  # 5min
+                environment=env,
+                memory_size=256,
+            )
+
+            issue_token = _lambda.Function(
+                self, f"{config.stage}-9c-iap-issue-token-function",
+                function_name=f"{config.stage}-9c-iap-issue_token",
+                runtime=_lambda.Runtime.PYTHON_3_10,
+                description=f"Execute IssueToken action",
+                code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
+                handler="manual.issue_token.issue_token",
                 layers=[layer],
                 role=role,
                 vpc=shared_stack.vpc,
@@ -308,7 +338,7 @@ class WorkerStack(Stack):
 
             asset_transporter = _lambda.Function(
                 self, f"{config.stage}-9c-iap-assets-transfer-function",
-                function_name=f"{config.stage}-9c-iap-transfer-assets",
+                function_name=f"{config.stage}-9c-iap-transfer_assets",
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Execute TransferAssets action",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
