@@ -9,11 +9,11 @@ import boto3
 import requests
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
+from common._graphql import GQL
 from common.enums import ReceiptStatus, Store, PackageName, ProductType
-from common.models.mileage import Mileage
 from common.models.product import Product
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
@@ -37,6 +37,7 @@ router = APIRouter(
 sqs = boto3.client("sqs", region_name=settings.REGION_NAME)
 SQS_URL = os.environ.get("SQS_URL")
 VOUCHER_SQS_URL = os.environ.get("VOUCHER_SQS_URL")
+HEADLESS_GQL_JWT_SECRET = os.environ.get("HEADLESS_GQL_JWT_SECRET")
 
 
 def raise_error(sess, receipt: Receipt, e: Exception):
@@ -83,10 +84,13 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
             elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
                 gql_url = os.environ.get("HEIMDALL_GQL_URL")
 
+            gql = GQL(gql_url, jwt_secret=HEADLESS_GQL_JWT_SECRET)
             query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
             resp = None
             try:
-                resp = requests.post(gql_url, json={"query": query}, timeout=1)
+                resp = requests.post(gql_url, json={"query": query},
+                                     headers={"Authorization": f"Bearer {gql.create_token()}"},
+                                     timeout=1)
                 cached_data.level = resp.json()["data"]["stateQuery"]["avatar"]["level"]
             except Exception as e:
                 logger.error(f"{resp.status_code} :: {resp.text}" if resp else e)
