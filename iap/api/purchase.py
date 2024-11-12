@@ -563,6 +563,13 @@ def mileage_product(receipt_data: FreeReceiptSchema,
         receipt.msg = "This product it not for free"
         raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not mileage product"))
 
+    if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = f"No mileage product for thor chain"
+        raise_error(sess, receipt,
+                    ValueError(f"You cannot purchase mileage product {product.id}::{product.name} in Thor chain")
+                    )
+
     if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
             (product.close_timestamp and product.close_timestamp < datetime.now())):
         receipt.status = ReceiptStatus.TIME_LIMIT
