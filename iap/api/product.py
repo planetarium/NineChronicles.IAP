@@ -78,6 +78,13 @@ def product_list(agent_addr: str,
             else:  # Product with no limitation
                 schema.buyable = True
 
+            # Thor chain has 5 times of rewards
+            if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                for item in schema.fungible_item_list:
+                    item.amount *= 5
+                for fav in schema.fav_list:
+                    fav.amount *= 5
+
             schema_dict[product.id] = schema
 
         cat_schema.product_list = list(schema_dict.values())
