@@ -361,10 +361,18 @@ def request_product(receipt_data: ReceiptSchema,
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
         )["Value"]
-        claim_list = [{"ticker": x.fungible_item_id, "amount": x.amount, "decimal_places": 0}
-                      for x in product.fungible_item_list]
-        claim_list.extend([{"ticker": x.ticker, "amount": x.amount, "decimal_places": x.decimal_places}
-                           for x in product.fav_list])
+        claim_list = [
+            {"ticker": x.fungible_item_id,
+             "amount": x.amount * (5 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
+             "decimal_places": 0}
+            for x in product.fungible_item_list
+        ]
+        claim_list.extend([
+            {"ticker": x.ticker,
+             "amount": x.amount * (5 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
+             "decimal_places": x.decimal_places}
+            for x in product.fav_list
+        ])
         season_pass_type = "".join([x for x in body if x.isalpha()])
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
