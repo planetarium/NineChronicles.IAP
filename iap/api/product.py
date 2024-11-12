@@ -78,8 +78,11 @@ def product_list(agent_addr: str,
             else:  # Product with no limitation
                 schema.buyable = True
 
-            # Thor chain has 5 times of rewards
+            # Thor chain
             if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                schema.path = schema.path.replace(".png", "_THOR.png")
+                schema.popup_path_key += "_THOR"
+
                 schema.mileage *= 5
                 for item in schema.fungible_item_list:
                     item.amount *= 5
