@@ -80,6 +80,7 @@ def product_list(agent_addr: str,
 
             # Thor chain has 5 times of rewards
             if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                schema.mileage *= 5
                 for item in schema.fungible_item_list:
                     item.amount *= 5
                 for fav in schema.fav_list:

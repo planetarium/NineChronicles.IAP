@@ -95,11 +95,13 @@ def process(sess: Session, message: SQSMessageRecord, nonce: int = None) -> Tupl
     claim_data = []
     for item in product.fungible_item_list:
         claim_data.append(FungibleAssetValue.from_raw_data(
-            ticker=item.fungible_item_id, decimal_places=0, amount=item.amount
+            ticker=item.fungible_item_id, decimal_places=0,
+            amount=item.amount * (5 if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1)
         ))
     for fav in product.fav_list:
         claim_data.append(FungibleAssetValue.from_raw_data(
-            ticker=fav.ticker, decimal_places=fav.decimal_places, amount=fav.amount
+            ticker=fav.ticker, decimal_places=fav.decimal_places,
+            amount=fav.amount * (5 if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1)
         ))
 
     action = ClaimItems(claim_data=[{"avatarAddress": avatar_address, "fungibleAssetValues": claim_data}], memo=memo)
