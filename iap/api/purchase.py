@@ -343,18 +343,37 @@ def request_product(receipt_data: ReceiptSchema,
 
     receipt = check_required_level(sess, receipt, product)
 
-    # Check purchase limit
+    # Handle season pass products differently
     # FIXME: Can we get season pass product without magic string?
-    if "SeasonPass" in product.name:
+    if "pass" in product.google_sku:
+        """
+        SKU Rule : {store}_pkg_{passType}{seasonIndex}{suffix}
+        passType : [[seasonpass | couragepass] | adventurebosspass | worldclearpass]
+        seasonIndex: integer. Season index is sequential for each type.
+        suffix:
+          - "" : premium
+          - "plus": premium+ for premium
+          - "all" : premium & premium+
+          - "premium": new premium type. premium & premium+
+        """
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
         receipt = check_purchase_limit(sess, receipt, product, limit_type="account", limit=product.account_limit,
                                        use_avatar=True)
 
-        prefix, body = product.google_sku.split("seasonpass")
+        prefix, body = product.google_sku.split("pass")
         try:
-            season = int("".join([x for x in body if x.isdigit()]))
+            if "season" in prefix or "courage" in prefix:
+                pass_type = "CouragePass"
+            elif "adventure" in prefix:
+                pass_type = "AdventureBossPass"
+            elif "world" in prefix:
+                pass_type = "WorldClearPass"
+            else:
+                pass_type = None
+            season_index = int("".join([x for x in body if x.isdigit()]))
         except:
-            season = 0
+            pass_type = None
+            season_index = 0
         season_pass_host = fetch_parameter(
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
@@ -369,9 +388,10 @@ def request_product(receipt_data: ReceiptSchema,
                                  "planet_id": receipt_data.planetId.value.decode("utf-8"),
                                  "agent_addr": receipt.agent_addr.lower(),
                                  "avatar_addr": receipt.avatar_addr.lower(),
-                                 "season_id": int(season),
-                                 "is_premium": season_pass_type in ("", "all"),
-                                 "is_premium_plus": season_pass_type in ("plus", "all"),
+                                 "pass_type": pass_type,
+                                 "season_id": int(season_index),
+                                 "is_premium": season_pass_type in ("", "all", "premium"),
+                                 "is_premium_plus": season_pass_type in ("plus", "all", "premium"),
                                  "g_sku": product.google_sku, "a_sku": product.apple_sku,
                                  # SeasonPass only uses claims
                                  "reward_list": claim_list,
