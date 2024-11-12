@@ -83,6 +83,8 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
                 gql_url = os.environ.get("ODIN_GQL_URL")
             elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
                 gql_url = os.environ.get("HEIMDALL_GQL_URL")
+            elif receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                gql_url = os.environ.get("THOR_GQL_URL")
 
             gql = GQL(gql_url, jwt_secret=HEADLESS_GQL_JWT_SECRET)
             query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""

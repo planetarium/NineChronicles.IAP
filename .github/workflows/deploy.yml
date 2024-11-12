@@ -136,6 +136,7 @@ jobs:
           HEADLESS: ${{ vars.HEADLESS }}
           ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
           HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
+          THOR_GQL_URL: ${{ vars.THOR_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           ADHOC_KMS_KEY_ID: ${{ secrets.ADHOC_KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
@@ -174,6 +175,7 @@ jobs:
           HEADLESS: ${{ vars.HEADLESS }}
           ODIN_GQL_URL: ${{ vars.ODIN_GQL_URL }}
           HEIMDALL_GQL_URL: ${{ vars.HEIMDALL_GQL_URL }}
+          THOR_GQL_URL: ${{ vars.THOR_GQL_URL }}
           KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
           ADHOC_KMS_KEY_ID: ${{ secrets.ADHOC_KMS_KEY_ID }}
           GOOGLE_CREDENTIAL: ${{ secrets.GOOGLE_CREDENTIAL }}
