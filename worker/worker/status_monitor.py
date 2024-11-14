@@ -18,8 +18,8 @@ STAGE = os.environ.get("STAGE")
 DB_URI = os.environ.get("DB_URI")
 db_password = fetch_secrets(os.environ.get("REGION_NAME"), os.environ.get("SECRET_ARN"))["password"]
 DB_URI = DB_URI.replace("[DB_PASSWORD]", db_password)
-PLANET_LIST = (PlanetID.ODIN, PlanetID.HEIMDALL) if STAGE == "mainnet" \
-    else (PlanetID.ODIN_INTERNAL, PlanetID.HEIMDALL_INTERNAL)
+PLANET_LIST = (PlanetID.ODIN, PlanetID.HEIMDALL, PlanetID.THOR) if STAGE == "mainnet" \
+    else (PlanetID.ODIN_INTERNAL, PlanetID.HEIMDALL_INTERNAL, PlanetID.THOR_INTERNAL)
 IAP_ALERT_WEBHOOK_URL = os.environ.get("IAP_ALERT_WEBHOOK_URL")
 IAP_GARAGE_WEBHOOK_URL = os.environ.get("IAP_GARAGE_WEBHOOK_URL")
 HEADLESS_GQL_JWT_SECRET = fetch_parameter(
