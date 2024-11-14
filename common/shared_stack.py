@@ -108,17 +108,12 @@ class SharedStack(Stack):
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
                            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
                            )
-        print(ssm.__dict__)
-        print(os.environ.get("AWS_ACCESS_KEY_ID")[::-1])
-        print(os.environ.get("AWS_SECRET_ACCESS_KEY")[::-1])
 
         param_value_dict = {}
         for param, secure in PARAMETER_LIST:
             param_value_dict[param] = None
             try:
-                print(f"{param}:{secure}")
-                print(f"{config.region_name}, {config.stage}_9c_IAP_{param}")
-                prev_param = fetch_parameter(config.region_name, f"{config.stage}_9c_IAP_{param}", secure)
+                prev_param = ssm.get_parameter(Name=f"{config.stage}_9c_IAP_{param}", WithDecryption=secure)["Parameter"]
                 logger.debug(prev_param["Value"])
                 if prev_param["Value"] != getattr(config, param.lower()):
                     logger.info(f"The value of {param} has been changed. Update to new value...")
