@@ -83,6 +83,8 @@ def check_required_level(sess, receipt: Receipt, product: Product) -> Receipt:
                 gql_url = os.environ.get("ODIN_GQL_URL")
             elif receipt.planet_id in (PlanetID.HEIMDALL, PlanetID.HEIMDALL_INTERNAL):
                 gql_url = os.environ.get("HEIMDALL_GQL_URL")
+            elif receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                gql_url = os.environ.get("THOR_GQL_URL")
 
             gql = GQL(gql_url, jwt_secret=HEADLESS_GQL_JWT_SECRET)
             query = f"""{{ stateQuery {{ avatar (avatarAddress: "{receipt.avatar_addr}") {{ level}} }} }}"""
@@ -359,10 +361,18 @@ def request_product(receipt_data: ReceiptSchema,
             settings.REGION_NAME,
             f"{os.environ.get('STAGE')}_9c_SEASON_PASS_HOST", False
         )["Value"]
-        claim_list = [{"ticker": x.fungible_item_id, "amount": x.amount, "decimal_places": 0}
-                      for x in product.fungible_item_list]
-        claim_list.extend([{"ticker": x.ticker, "amount": x.amount, "decimal_places": x.decimal_places}
-                           for x in product.fav_list])
+        claim_list = [
+            {"ticker": x.fungible_item_id,
+             "amount": x.amount * (5 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
+             "decimal_places": 0}
+            for x in product.fungible_item_list
+        ]
+        claim_list.extend([
+            {"ticker": x.ticker,
+             "amount": x.amount * (5 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
+             "decimal_places": x.decimal_places}
+            for x in product.fav_list
+        ])
         season_pass_type = "".join([x for x in body if x.isalpha()])
         resp = requests.post(f"{season_pass_host}/api/user/upgrade",
                              json={
@@ -562,6 +572,13 @@ def mileage_product(receipt_data: FreeReceiptSchema,
         receipt.status = ReceiptStatus.INVALID
         receipt.msg = "This product it not for free"
         raise_error(sess, receipt, ValueError(f"Requested product {product.id}::{product.name} is not mileage product"))
+
+    if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = f"No mileage product for thor chain"
+        raise_error(sess, receipt,
+                    ValueError(f"You cannot purchase mileage product {product.id}::{product.name} in Thor chain")
+                    )
 
     if ((product.open_timestamp and product.open_timestamp > datetime.now()) or
             (product.close_timestamp and product.close_timestamp < datetime.now())):

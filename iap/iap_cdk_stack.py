@@ -100,6 +100,7 @@ class APIStack(Stack):
             "HEADLESS": config.headless,
             "ODIN_GQL_URL": config.odin_gql_url,
             "HEIMDALL_GQL_URL": config.heimdall_gql_url,
+            "THOR_GQL_URL": config.thor_gql_url,
             "CDN_HOST": config.cdn_host,
             "CDN_HOST_K": config.cdn_host_k,
             "PLANET_URL": config.planet_url,
