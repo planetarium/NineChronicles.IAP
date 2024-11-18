@@ -44,6 +44,10 @@ def product_list(agent_addr: str,
     category_schema_list = []
     purchase_history = get_purchase_history(sess, planet_id, agent_addr)
     for category in all_category_list:
+        # Do not show Mileage category for thor chain
+        if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) and category.name == "Mileage":
+            continue
+
         cat_schema = CategorySchema.model_validate(category)
         schema_dict = {}
         for product in category.product_list:
@@ -73,6 +77,17 @@ def product_list(agent_addr: str,
                 schema.buyable = schema.purchase_count < product.account_limit
             else:  # Product with no limitation
                 schema.buyable = True
+
+            # Thor chain
+            if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                schema.path = schema.path.replace(".png", "_THOR.png")
+                schema.popup_path_key += "_THOR"
+
+                schema.mileage *= 5
+                for item in schema.fungible_item_list:
+                    item.amount *= 5
+                for fav in schema.fav_list:
+                    fav.amount *= 5
 
             schema_dict[product.id] = schema
 

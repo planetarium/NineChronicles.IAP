@@ -4,6 +4,7 @@ version = "1.14.0"
 description = "NineChronicles In-app Purchase Service"
 authors = ["hyeon <hyeon+iap@planetariumhq.com>"]
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 # Main, Common
