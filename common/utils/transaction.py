@@ -48,8 +48,8 @@ def get_genesis_block_hash(planet_id: PlanetID) -> bytes:
         PlanetID.HEIMDALL: bytes.fromhex("729fa26958648a35b53e8e3905d11ec53b1b4929bf5f499884aed7df616f5913"),
         PlanetID.HEIMDALL_INTERNAL: bytes.fromhex("729fa26958648a35b53e8e3905d11ec53b1b4929bf5f499884aed7df616f5913"),
         # FIXME: Set to right genesis hash
-        PlanetID.THOR: bytes.fromhex("c0f73331f92e6153701c4a81ba8d704e5d467c5f16996a3f118a6a71f6a77dc9"),
-        PlanetID.THOR_INTERNAL: bytes.fromhex("c0f73331f92e6153701c4a81ba8d704e5d467c5f16996a3f118a6a71f6a77dc9"),
+        PlanetID.THOR: bytes.fromhex("bde462fd59de5ccba8495ebb163b124bf77ddc82cfc8b2f9fb57c00fc6e133b7"),
+        PlanetID.THOR_INTERNAL: bytes.fromhex("bde462fd59de5ccba8495ebb163b124bf77ddc82cfc8b2f9fb57c00fc6e133b7"),
     }
 
     if planet_id not in switcher:
