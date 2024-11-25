@@ -7,16 +7,16 @@ def add_thor_path(input_path: str, output_path: str):
     processed_data = []
     with open(input_path, "r") as f:
         reader = csv.reader(f)
-        prev = None
-        for i, r in enumerate(reader):
+        for i, row in enumerate(reader):
             if i == 0:
-                header = r
+                header = row
                 continue
 
-            if i > 1 and i % 2 == 1:  # Add thor path
+            processed_data.append(row)
+            if row[0].endswith("_PATH"):  # Add thor path
                 data = []
-                for p in prev:
-                    prefix, *suffix = p.split(".")
+                for d in row:
+                    prefix, *suffix = d.split(".")
                     if suffix:
                         data.append(f"{prefix}_THOR.{'.'.join(suffix)}")
                     elif prefix:
@@ -24,10 +24,6 @@ def add_thor_path(input_path: str, output_path: str):
                     else:
                         data.append(prefix)
                 processed_data.append(data)
-                processed_data.append(r)
-            else:
-                processed_data.append(r)
-                prev = r
     print(f"Processed with {input_path.split('/')[-1]}")
 
     with open(output_path, "w") as f:
