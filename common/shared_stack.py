@@ -34,6 +34,9 @@ RESOURCE_DICT: Dict[str, ResourceDict] = {
     "mainnet": ResourceDict(
         vpc_id="vpc-01a0ef2aa2c41bb26",  # Main VPC
     ),
+    "thor-test": ResourceDict(
+        vpc_id="vpc-01a0ef2aa2c41bb26",  # Main VPC
+    ),
 }
 
 
