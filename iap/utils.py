@@ -100,7 +100,7 @@ def create_season_pass_jwt() -> str:
     }, settings.SEASON_PASS_JWT_SECRET, algorithm="HS256")
 
 
-def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
+def get_mileage(sess, agent_addr: str) -> Mileage:
     """
     Read or create Mileage instance from DB.
     If no valid Mileage instance found, create new one.
@@ -111,9 +111,11 @@ def get_mileage(sess, planet_id: PlanetID, agent_addr: str) -> Mileage:
     :return: Found/created Mileage instance.
     """
     agent_addr = format_addr(agent_addr)
-    mileage = sess.scalar(select(Mileage).where(Mileage.planet_id == planet_id, Mileage.agent_addr == agent_addr))
+    # UPDATE: mileage has been merge across planets. Use one without planet_id.
+    #  Merged mileage has planet_id as None. Others are historical data.
+    mileage = sess.scalar(select(Mileage).where(Mileage.planet_id.is_(None), Mileage.agent_addr == agent_addr))
     if not mileage:
-        mileage = Mileage(planet_id=planet_id, agent_addr=agent_addr, mileage=0)
+        mileage = Mileage(planet_id=None, agent_addr=agent_addr, mileage=0)
         sess.add(mileage)
         sess.commit()
         sess.refresh(mileage)
@@ -133,7 +135,7 @@ def upsert_mileage(sess, product: Product, receipt: Receipt, mileage: Optional[M
     :return: Updated receipt instance.
     """
     if mileage is None:
-        mileage = get_mileage(sess, PlanetID(receipt.planet_id), receipt.agent_addr)
+        mileage = get_mileage(sess, receipt.agent_addr)
     target_mileage = product.mileage or 0
     if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
         target_mileage *= 5
