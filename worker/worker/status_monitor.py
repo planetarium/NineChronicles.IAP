@@ -129,6 +129,14 @@ query balanceQuery(
   $address: Address! = "0xCb75C84D76A6f97A2d55882Aea4436674c288673"
 ) {
   stateQuery {
+    ThorRune: balance (
+      address: $address,
+      currency: {ticker: "FAV__RUNESTONE_GOLDENTHOR", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    GoldenMeat: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_800202", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
     CriRune: balance (
       address: $address,
       currency: {ticker: "FAV__RUNESTONE_CRI", decimalPlaces: 0, minters: [], }
