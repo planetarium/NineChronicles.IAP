@@ -606,7 +606,7 @@ def mileage_product(receipt_data: FreeReceiptSchema,
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
 
     # Fetch and validate mileage
-    target_mileage = get_mileage(sess, receipt_data.planetId, receipt_data.agentAddress)
+    target_mileage = get_mileage(sess, receipt_data.agentAddress)
 
     if target_mileage.mileage < product.mileage_price:
         receipt.status = ReceiptStatus.NOT_ENOUGH_MILEAGE
