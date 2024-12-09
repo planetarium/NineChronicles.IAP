@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional, List
 
 from pydantic import BaseModel as BaseSchema, model_validator
@@ -64,6 +65,8 @@ class ProductSchema(SimpleProductSchema):
     path: str
     bg_path: Optional[str] = None
     popup_path_key: Optional[str] = None
+    open_timestamp: Optional[datetime] = None
+    close_timestamp: Optional[datetime] = None
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
