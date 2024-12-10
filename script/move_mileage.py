@@ -1,3 +1,5 @@
+import sys
+
 from sqlalchemy import create_engine, select, delete
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -23,7 +25,8 @@ def move(db_uri: str, dry_run: bool = True):
     history_list = []
     print(f"{len(mileage_list)} mileages to save")
     for m in mileage_list:
-        history_list.append(MileageHistory(**m.__dict__))
+        history_list.append(MileageHistory(id=m.id, agent_addr=m.agent_addr, planet_id=m.planet_id, mileage=m.mileage,
+                                           created_at=m.created_at, updated_at=m.updated_at))
 
     print(f"{len(history_list)}/{len(mileage_list)} moved to history")
     if len(history_list) != len(mileage_list):
@@ -41,3 +44,5 @@ def move(db_uri: str, dry_run: bool = True):
         print("Mileage deleted. Merge mileage from history.")
 
 
+if __name__ == "__main__":
+    move(sys.argv[1], dry_run=len(sys.argv) > 2 and sys.argv[2].lower() in ("dry_run", "dry-run", "dryrun", "dry"))

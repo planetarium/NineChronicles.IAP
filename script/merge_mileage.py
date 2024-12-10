@@ -23,9 +23,6 @@ def merge(db_uri: str, dry_run: bool = True):
     engine = create_engine(db_uri)
     sess = scoped_session(sessionmaker(bind=engine))
 
-    print("Delete old merged data")
-    sess.execute(delete(Mileage).where(Mileage.planet_id.is_(None)))
-
     history_list = sess.scalars(select(MileageHistory)).fetchall()
     print(f"Total {len(history_list)} histories found to merge.")
 
@@ -35,7 +32,7 @@ def merge(db_uri: str, dry_run: bool = True):
     for i, m in enumerate(history_list):
         target = merged.get(m.agent_addr)
         if not target:
-            merged[m.agent_addr] = target = Mileage(agent_addr=m.agent_addr, planet_id=None, mileage=0)
+            merged[m.agent_addr] = target = Mileage(agent_addr=m.agent_addr, mileage=0)
         prev = target.mileage
         target.mileage += m.mileage
         print(
