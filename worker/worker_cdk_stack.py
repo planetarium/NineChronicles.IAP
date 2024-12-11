@@ -283,7 +283,7 @@ class WorkerStack(Stack):
                 runtime=_lambda.Runtime.PYTHON_3_10,
                 description=f"Manual unload Tx. executor from NineChronicles.IAP",
                 code=_lambda.AssetCode("worker/worker", exclude=exclude_list),
-                handler="manual.handle",
+                handler="manual_unload.handle",
                 layers=[layer],
                 role=role,
                 vpc=shared_stack.vpc,
