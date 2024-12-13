@@ -139,7 +139,8 @@ def handle(event, context):
     gql_dict = {planet: GQL(url, HEADLESS_GQL_JWT_SECRET) for planet, url in GQL_DICT.items()}
     db_nonce_dict = {
         x.planet_id: x.nonce
-        for x in sess.execute(select(Receipt.planet_id, func.max(Receipt.nonce)).group_by(Receipt.planet_id)).all()
+        for x in sess.execute(select(Receipt.planet_id.label("planet_id"), func.max(Receipt.nonce).label("nonce"))
+                              .group_by(Receipt.planet_id)).all()
     }
     nonce_dict = {}
     target_list = []
