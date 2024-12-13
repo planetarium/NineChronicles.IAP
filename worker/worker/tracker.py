@@ -72,8 +72,9 @@ def track_tx(event, context):
     result = defaultdict(list)
     for receipt in receipt_list:
         tx_id, tx_status, msg = process(GQL_DICT[receipt.planet_id], receipt.tx_id)
-        result[tx_status.name].append(tx_id)
-        receipt.tx_status = tx_status
+        if tx_status is not None:
+            result[tx_status.name].append(tx_id)
+            receipt.tx_status = tx_status
         if msg:
             receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
