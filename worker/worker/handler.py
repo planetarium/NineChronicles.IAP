@@ -167,13 +167,14 @@ def handle(event, context):
             else:
                 # Fresh receipt
                 receipt.tx_status = TxStatus.CREATED
-                receipt.nonce = max(  # max nonce of
-                    nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                        receipt.planet_id,
-                        gql_dict[receipt.planet_id].get_next_nonce(account.address)
-                    ),
-                    db_nonce_dict.get(receipt.planet_id, 0)  # DB stored nonce
-                )
+                if receipt.nonce is None:
+                    receipt.nonce = max(  # max nonce of
+                        nonce_dict.get(  # current handling nonce (or nonce in blockchain)
+                            receipt.planet_id,
+                            gql_dict[receipt.planet_id].get_next_nonce(account.address)
+                        ),
+                        db_nonce_dict.get(receipt.planet_id, 0)  # DB stored nonce
+                    )
                 receipt.tx = create_tx(sess, account, receipt).hex()
                 nonce_dict[receipt.planet_id] = receipt.nonce + 1
                 target_list.append((receipt, record))
