@@ -22,6 +22,7 @@ class MileageRequestSchema(BaseSchema):
 
 class MileageSchema(BaseSchema):
     id: int
+    planet_id: PlanetID
     agent_addr: str
     mileage: int
 
