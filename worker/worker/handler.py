@@ -139,7 +139,8 @@ def handle(event, context):
     gql_dict = {planet: GQL(url, HEADLESS_GQL_JWT_SECRET) for planet, url in GQL_DICT.items()}
     db_nonce_dict = {
         x.planet_id: x.nonce
-        for x in sess.execute(select(Receipt.planet_id, func.max(Receipt.nonce)).group_by(Receipt.planet_id)).all()
+        for x in sess.execute(select(Receipt.planet_id.label("planet_id"), func.max(Receipt.nonce).label("nonce"))
+                              .group_by(Receipt.planet_id)).all()
     }
     nonce_dict = {}
     target_list = []
@@ -166,13 +167,14 @@ def handle(event, context):
             else:
                 # Fresh receipt
                 receipt.tx_status = TxStatus.CREATED
-                receipt.nonce = max(  # max nonce of
-                    nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                        receipt.planet_id,
-                        gql_dict[receipt.planet_id].get_next_nonce(account.address)
-                    ),
-                    db_nonce_dict.get(receipt.planet_id, 0)  # DB stored nonce
-                )
+                if receipt.nonce is None:
+                    receipt.nonce = max(  # max nonce of
+                        nonce_dict.get(  # current handling nonce (or nonce in blockchain)
+                            receipt.planet_id,
+                            gql_dict[receipt.planet_id].get_next_nonce(account.address)
+                        ),
+                        db_nonce_dict.get(receipt.planet_id, 0)  # DB stored nonce
+                    )
                 receipt.tx = create_tx(sess, account, receipt).hex()
                 nonce_dict[receipt.planet_id] = receipt.nonce + 1
                 target_list.append((receipt, record))
