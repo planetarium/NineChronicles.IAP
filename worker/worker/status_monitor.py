@@ -129,6 +129,22 @@ query balanceQuery(
   $address: Address! = "0xCb75C84D76A6f97A2d55882Aea4436674c288673"
 ) {
   stateQuery {
+    BlackCat: balance (
+      address: $address,
+      currency: {ticker: "FAV__SOULSTONE_1001", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    RedDongle: balance (
+      address: $address,
+      currency: {ticker: "FAV__SOULSTONE_1002", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    Valkyrie: balance (
+      address: $address,
+      currency: {ticker: "FAV__SOULSTONE_1003", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
+    LilFenrir: balance (
+      address: $address,
+      currency: {ticker: "FAV__SOULSTONE_1004", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
     ThorRune: balance (
       address: $address,
       currency: {ticker: "FAV__RUNESTONE_GOLDENTHOR", decimalPlaces: 0, minters: [], }
