@@ -1,8 +1,8 @@
 from typing import Optional
 
-from lib9c.actions import ActionBase
-from lib9c.models.address import Address
-from lib9c.models.fungible_asset_value import FungibleAssetValue
+from common.lib9c.actions import ActionBase
+from common.lib9c.models.address import Address
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 
 class BurnAsset(ActionBase):

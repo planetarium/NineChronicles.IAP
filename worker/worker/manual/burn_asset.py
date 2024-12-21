@@ -5,11 +5,12 @@ from datetime import timedelta, datetime
 from common import logger
 from common._crypto import Account
 from common._graphql import GQL
+from common.lib9c.actions.burn_asset import BurnAsset
+from common.lib9c.models.address import Address
+from common.lib9c.models.fungible_asset_value import FungibleAssetValue
 from common.utils.aws import fetch_parameter, fetch_kms_key_id
 from common.utils.receipt import PlanetID
 from common.utils.transaction import create_unsigned_tx, append_signature_to_unsigned_tx
-from lib9c.actions.burn_asset import BurnAsset
-from lib9c.models.fungible_asset_value import FungibleAssetValue
 
 # NOTE: Set these values by manual from here
 PLANET_ID = PlanetID.XXX
@@ -43,7 +44,7 @@ def burn_asset(event, context):
     nonce = data["nonce"]
     amt = data["amount"]
     amount = FungibleAssetValue.from_raw_data(ticker=amt[0], decimal_places=amt[1], amount=amt[2])
-    action = BurnAsset(owner=data["owner"], amount=amount, memo=data["memo"])
+    action = BurnAsset(owner=Address(data["owner"]), amount=amount, memo=data["memo"])
     utx = create_unsigned_tx(planet_id=PLANET_ID, public_key=account.pubkey.hex(), address=account.address, nonce=nonce,
                              plain_value=action.plain_value, timestamp=datetime.utcnow() + timedelta(days=1)
                              )
