@@ -1,8 +1,10 @@
 import json
 import os
+import boto3
 from collections import defaultdict
 from typing import Optional, Tuple
 
+from datetime import datetime, timezone, timedelta
 from gql.dsl import dsl_gql, DSLQuery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -23,6 +25,9 @@ HEADLESS_GQL_JWT_SECRET = fetch_parameter(
     f"{os.environ.get('STAGE')}_9c_IAP_HEADLESS_GQL_JWT_SECRET",
     True
 )["Value"]
+
+SQS_URL = os.environ.get("SQS_URL")
+sqs = boto3.client("sqs", region_name=os.environ.get("REGION_NAME"))
 
 LIMIT = 200
 
@@ -68,6 +73,24 @@ def track_tx(event, context):
             Receipt.tx_status.in_((TxStatus.STAGED, TxStatus.INVALID))
         ).order_by(Receipt.id).limit(LIMIT)
     ).fetchall()
+
+    now = datetime.now(tz=timezone.utc)
+    created_receipt_list = sess.scalars(
+        select(Receipt).where(
+            Receipt.created_at <= now - timedelta(minutes=5),
+            Receipt.status == ReceiptStatus.VALID,
+            Receipt.tx_status == TxStatus.CREATED
+        ).order_by(Receipt.id).limit(LIMIT)
+    ).fetchall()
+
+    if created_receipt_list:
+        for created_receipt in created_receipt_list:
+            msg = {
+                "uuid": str(created_receipt.uuid),
+            }
+
+            sqs.send_message(QueueUrl=SQS_URL, MessageBody=json.dumps(msg))
+        logger.info(f"Found created receipt [{len(created_receipt_list)}], re queuing.")
 
     result = defaultdict(list)
     for receipt in receipt_list:
