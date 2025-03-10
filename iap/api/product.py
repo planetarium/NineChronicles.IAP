@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi_cache.decorator import cache
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
@@ -30,6 +30,10 @@ def product_list(agent_addr: str,
         planet_id = PlanetID.ODIN if settings.stage == "mainnet" else PlanetID.ODIN_INTERNAL
     else:
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
+
+    # raise not found exception in thor network
+    if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+        raise HTTPException(status_code=404, detail="available product not found")
 
     agent_addr = format_addr(agent_addr)
     all_category_list = sess.scalars(
