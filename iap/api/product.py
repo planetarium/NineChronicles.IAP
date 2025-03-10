@@ -31,6 +31,10 @@ def product_list(agent_addr: str,
     else:
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
 
+    # return empty list for disable thor purchase
+    if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+        return []
+
     agent_addr = format_addr(agent_addr)
     all_category_list = sess.scalars(
         select(Category)
