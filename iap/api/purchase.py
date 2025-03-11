@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import boto3
 import requests
 from fastapi import APIRouter, Depends, Header, Query
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, desc
 from sqlalchemy.orm import joinedload
 from starlette.responses import JSONResponse
 
@@ -23,7 +23,8 @@ from iap import settings
 from iap.dependencies import session
 from iap.exceptions import ReceiptNotFoundException, InsufficientUserDataException
 from iap.main import logger
-from iap.schemas.receipt import ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema
+from iap.schemas.receipt import (ReceiptSchema, ReceiptDetailSchema, FreeReceiptSchema, SimpleReceiptSchema,
+                                 PurchaseHistorySchema, )
 from iap.utils import create_season_pass_jwt, get_purchase_count, upsert_mileage, get_mileage
 from iap.validator.apple import validate_apple
 from iap.validator.common import get_order_data
@@ -645,6 +646,34 @@ def mileage_product(receipt_data: FreeReceiptSchema,
     logger.debug(f"message [{resp['MessageId']}] sent to SQS.")
 
     return receipt
+
+
+@router.get("/history", response_model=List[PurchaseHistorySchema])
+def purchase_history(planet_id: str, agent_addr: str, offset: int = 0, limit: int = 10, sess=Depends(session)):
+    """
+    Get succeeded IAP type purchase list.
+
+    :param planet_id: Planet ID to find. Empty string("") for all planets
+    :param agent_addr: Agent address to find.
+    :param offset: Offset to find. Ignore latest K receipts
+    :param limit: Limit to get receipt. Maximum 100 receipt can be fetched.
+    :return: receipt detail list.
+    """
+    if planet_id != "":
+        planet_id = PlanetID(bytes(planet_id, "utf-8"))
+
+    q = (select(Receipt).where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID)
+         .join(Receipt.product).filter(Product.product_type == ProductType.IAP)
+         )
+
+    if planet_id:
+        q = q.where(Receipt.planet_id == planet_id)
+    if offset:
+        q = q.offset(offset)
+    if limit:
+        q = q.limit(min(limit, 100))
+
+    return sess.scalars(q.order_by(desc(Receipt.id))).fetchall()
 
 
 @router.get("/status", response_model=Dict[UUID, Optional[ReceiptDetailSchema]])
