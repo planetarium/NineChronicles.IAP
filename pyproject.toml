@@ -46,6 +46,11 @@ constructs = "^10.2.70"
 python-dotenv = "^1.0.1"
 fastapi-debug-toolbar = "^0.6.2"
 
+[tool.poetry.group.backoffice.dependencies]
+# Only for Backoffice
+Jinja2 = "^3.1.5"
+python-multipart = "^0.0.20"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
