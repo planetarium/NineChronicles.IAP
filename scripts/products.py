@@ -1,6 +1,7 @@
 import os
 import csv
-from datetime import datetime
+import argparse
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -17,6 +18,28 @@ PRODUCTS_FILE_PATH = os.getenv("PRODUCTS_FILE_PATH")
 # ✅ SQLAlchemy 엔진 및 세션 생성
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Import products from CSV to database")
+    parser.add_argument("--environment", required=True, choices=['internal', 'mainnet'], 
+                        help="Specify whether this is for internal or mainnet environment")
+    parser.add_argument("--csv-path", 
+                        default=PRODUCTS_FILE_PATH,
+                        help="Path to the CSV file containing product data")
+    parser.add_argument("--db-uri", 
+                        default=DATABASE_URL,
+                        help="Database URI (e.g., postgresql://user:password@host/database)")
+    
+    args = parser.parse_args()
+    
+    # Validate required parameters
+    if not args.csv_path:
+        parser.error("CSV file path is required. Provide with --csv-path or set PRODUCTS_FILE_PATH environment variable")
+    if not args.db_uri:
+        parser.error("Database URI is required. Provide with --db-uri or set DATABASE_URL environment variable")
+    
+    return args
 
 def parse_boolean(value: str) -> bool:
     return value.strip().upper() == "TRUE"
@@ -37,13 +60,25 @@ def parse_float(value: str):
 
 def parse_datetime(value: str):
     try:
-        return datetime.fromisoformat(value) if value.strip() else None
+        # Parse to datetime then ensure it has UTC timezone
+        dt = datetime.fromisoformat(value) if value.strip() else None
+        if dt and dt.tzinfo is None:
+            # If no timezone info, assume UTC
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
         return None
 
-def compare_and_update_product(db: Session, csv_data: dict):
+def compare_and_update_product(db: Session, csv_data: dict, is_internal: bool):
     """ 기존 DB 데이터와 CSV 데이터를 비교 후, CLI를 통해 업데이트 여부 결정 """
     existing_product = db.query(Product).filter(Product.id == csv_data["id"]).first()
+
+    # For internal environment, adjust open_timestamp if it's in the future
+    current_time_utc = datetime.now(timezone.utc)
+    if is_internal and csv_data["open_timestamp"] and csv_data["open_timestamp"] > current_time_utc:
+        old_timestamp = csv_data["open_timestamp"]
+        csv_data["open_timestamp"] = current_time_utc
+        print(f"🕒 Internal environment detected: Adjusting open_timestamp from {old_timestamp} to {csv_data['open_timestamp']} (UTC)")
 
     if existing_product:
         changes = {}
@@ -70,10 +105,24 @@ def compare_and_update_product(db: Session, csv_data: dict):
         db.add(new_product)
         print(f"🆕 새로운 Product 추가: ID {csv_data['id']}")
 
-def import_products():
+def import_products(csv_path, db_uri, environment):
+    # Get user confirmation about environment
+    print(f"\n🌐 Selected environment: {environment.upper()}")
+    print(f"⏰ Current UTC time: {datetime.now(timezone.utc)}")
+    confirm = input(f"계속 진행하시겠습니까? 이 작업은 {environment.upper()} 환경에 영향을 미칩니다. (y/n): ").strip().lower()
+    if confirm != "y":
+        print("⏩ 작업이 취소되었습니다.")
+        return
+    
+    # Create DB session with provided URI
+    engine = create_engine(db_uri)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db: Session = SessionLocal()
+    
+    is_internal = environment == 'internal'
+    
     try:
-        with open(PRODUCTS_FILE_PATH, mode="r", encoding="utf-8") as file:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
 
             for row in reader:
@@ -103,7 +152,7 @@ def import_products():
                     "mileage_price": parse_int(row["mileage_price"])
                 }
 
-                compare_and_update_product(db, csv_data)
+                compare_and_update_product(db, csv_data, is_internal)
 
             db.commit()
             print("\n✅ CSV 데이터 동기화 완료!")
@@ -120,4 +169,5 @@ def import_products():
         print("🔌 DB 연결이 종료되었습니다.")
 
 if __name__ == "__main__":
-    import_products()
+    args = parse_args()
+    import_products(args.csv_path, args.db_uri, args.environment)
