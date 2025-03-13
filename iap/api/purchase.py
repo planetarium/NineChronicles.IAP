@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 
 from common._graphql import GQL
 from common.enums import ReceiptStatus, Store, PackageName, ProductType
-from common.models.product import Product
+from common.models.product import Product, Price
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
 from common.utils.aws import fetch_parameter
@@ -649,25 +649,23 @@ def mileage_product(receipt_data: FreeReceiptSchema,
 
 
 @router.get("/history", response_model=List[PurchaseHistorySchema])
-def purchase_history(planet_id: str, agent_addr: str, offset: int = 0, limit: int = 10, sess=Depends(session)):
+def purchase_history(agent_addr: str, offset: int = 0, limit: int = 10, product_id: Optional[int] = None, sess=Depends(session)):
     """
     Get succeeded IAP type purchase list.
 
-    :param planet_id: Planet ID to find. Empty string("") for all planets
     :param agent_addr: Agent address to find.
     :param offset: Offset to find. Ignore latest K receipts
     :param limit: Limit to get receipt. Maximum 100 receipt can be fetched.
+    :param product_id: Optional. If product_id provided, search only this product's purchase history.
     :return: receipt detail list.
     """
-    if planet_id != "":
-        planet_id = PlanetID(bytes(planet_id, "utf-8"))
-
     q = (select(Receipt).where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID)
          .join(Receipt.product).filter(Product.product_type == ProductType.IAP)
+         # .join(Product.price_list).filter(Price.store == Store.GOOGLE, Price.currency == "USD")
          )
 
-    if planet_id:
-        q = q.where(Receipt.planet_id == planet_id)
+    if product_id:
+        q = q.filter(Receipt.product_id == product_id)
     if offset:
         q = q.offset(offset)
     if limit:
