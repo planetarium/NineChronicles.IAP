@@ -173,7 +173,7 @@ def handle(event, context):
                             receipt.planet_id,
                             gql_dict[receipt.planet_id].get_next_nonce(account.address)
                         ),
-                        db_nonce_dict.get(receipt.planet_id, 0)  # DB stored nonce
+                        db_nonce_dict.get(receipt.planet_id, 0) + 1  # DB stored nonce
                     )
                 receipt.tx = create_tx(sess, account, receipt).hex()
                 nonce_dict[receipt.planet_id] = receipt.nonce + 1
