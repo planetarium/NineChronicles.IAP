@@ -14,4 +14,6 @@ router = APIRouter(
 
 @router.get("", response_model=MileageSchema)
 def get_mileage(agent_addr: str, planet_id: str, sess: Session = Depends(session)):
-    return get_mileage_fn(sess, PlanetID(bytes(planet_id, "utf-8")), agent_addr)
+    mileage = get_mileage_fn(sess, agent_addr)
+    schema = MileageSchema(**mileage.__dict__, planet_id=PlanetID(bytes(planet_id, "utf-8")))
+    return schema

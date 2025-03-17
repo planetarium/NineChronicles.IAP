@@ -178,3 +178,24 @@ class RefundedReceiptSchema(BaseSchema):
 
     class Config:
         from_attributes = True
+
+
+class PurchaseHistoryProductSchema(BaseSchema):
+    id: int
+    name: str
+    google_sku: str = ""
+    apple_sku: str = ""
+    apple_sku_k: str = ""
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseHistorySchema(BaseSchema):
+    uuid: UUID
+    purchased_at: datetime
+    status: ReceiptStatus
+    product: PurchaseHistoryProductSchema
+
+    class Config:
+        from_attributes = True

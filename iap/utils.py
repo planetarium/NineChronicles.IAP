@@ -113,9 +113,9 @@ def get_mileage(sess, agent_addr: str) -> Mileage:
     agent_addr = format_addr(agent_addr)
     # UPDATE: mileage has been merge across planets. Use one without planet_id.
     #  Merged mileage has planet_id as None. Others are historical data.
-    mileage = sess.scalar(select(Mileage).where(Mileage.planet_id.is_(None), Mileage.agent_addr == agent_addr))
+    mileage = sess.scalar(select(Mileage).where(Mileage.agent_addr == agent_addr))
     if not mileage:
-        mileage = Mileage(planet_id=None, agent_addr=agent_addr, mileage=0)
+        mileage = Mileage(agent_addr=agent_addr, mileage=0)
         sess.add(mileage)
         sess.commit()
         sess.refresh(mileage)
