@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+
+  backoffice:
+    build: .
+    ports:
+      - "8001:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    command: >
+      sh -c "alembic upgrade head &&
+             poetry run uvicorn backoffice.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: iap
+      POSTGRES_USER: iap
+      POSTGRES_PASSWORD: iap
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
