@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env*
+__pycache__
+*.pyc
+.pytest_cache
+tests/
+.idea/
+.DS_Store
+*.log
+.github/
+README.md
+CHANGELOG.md

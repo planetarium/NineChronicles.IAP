@@ -1,0 +1,67 @@
+# Stage
+STAGE=development
+
+# Region
+REGION_NAME=ap-northeast-2
+
+# Headless
+HEADLESS=https://9c-main-full-state.nine-chronicles.com
+
+# Package Names
+GOOGLE_PACKAGE_NAME=com.planetariumlabs.ninechroniclesmobile
+
+# Google Sheets
+FORM_SHEET=Order Form
+GOLDEN_DUST_REQUEST_SHEET_ID=your_sheet_id
+GOLDEN_DUST_WORK_SHEET_ID=your_sheet_id
+
+# CDN
+CDN_HOST=https://your-cdn.cloudfront.net
+
+# AWS
+ACCOUNT_ID=your_account_id
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+KMS_KEY_ID=your_kms_key_id
+
+# Google Service Account
+GOOGLE_CREDENTIAL='{
+  "type": "service_account",
+  "project_id": "your-project-id",
+  "private_key_id": "your-private-key-id",
+  "private_key": "your-private-key",
+  "client_email": "your-service-account-email",
+  "client_id": "your-client-id",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "your-cert-url"
+}'
+
+# Database
+DATABASE_URL=postgresql://iap:iap@db:5432/iap
+DB_URI=postgresql://iap:iap@db:5432/iap
+
+# File Paths
+PRODUCTS_FILE_PATH=/path/to/products.csv
+CATEGORY_PRODUCTS_FILE_PATH=/path/to/category_products.csv
+FUNGIBLE_ITEM_FILE_PATH=/path/to/fungible_items.csv
+FUNGIBLE_ASSET_FILE_PATH=/path/to/fungible_assets.csv
+L10N_FILE_PATH=/path/to/l10n.csv
+IMAGES_FOLDER_PATH=/path/to/images
+
+# S3 & CloudFront
+S3_BUCKET=your-bucket-name
+CLOUDFRONT_DISTRIBUTION_1=your-distribution-id
+CLOUDFRONT_DISTRIBUTION_2=your-distribution-id
+
+# Apple
+APPLE_BUNDLE_ID=com.planetariumlabs.ninechroniclesmobile
+APPLE_ISSUER_ID=your-issuer-id
+APPLE_KEY_ID=your-key-id
+APPLE_VALIDATION_URL=https://api.storekit-sandbox.itunes.apple.com/inApps/v1/transactions/{transactionId}
+APPLE_CREDENTIAL=your-apple-credential
+
+# JWT
+SEASON_PASS_JWT_SECRET=your-jwt-secret
+HEADLESS_GQL_JWT_SECRET=your-jwt-secret
