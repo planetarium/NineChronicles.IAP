@@ -12,8 +12,15 @@
             <tr>
                 <th>ID</th>
                 <th>이름</th>
+                <th>정렬</th>
                 <th>Google SKU</th>
                 <th>Apple SKU</th>
+                <th>Apple SKU (한국)</th>
+                <th>타입</th>
+                <th>Rarity</th>
+                <th>필요레벨</th>
+                <th>제한</th>
+                <th>마일리지</th>
                 <th>상태</th>
                 <th>관리</th>
             </tr>
@@ -23,8 +30,23 @@
             <tr>
                 <td>{{ product.id }}</td>
                 <td>{{ product.name }}</td>
+                <td>{{ product.order }}</td>
                 <td>{{ product.google_sku }}</td>
                 <td>{{ product.apple_sku }}</td>
+                <td>{{ product.apple_sku_k }}</td>
+                <td>{{ product.product_type }}</td>
+                <td>{{ product.rarity or '-' }}</td>
+                <td>{{ product.required_level or '-' }}</td>
+                <td>
+                    {% if product.daily_limit or product.weekly_limit or product.account_limit %}
+                        일:{{ product.daily_limit or '-' }} /
+                        주:{{ product.weekly_limit or '-' }} /
+                        계정:{{ product.account_limit or '-' }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>{{ product.mileage }}</td>
                 <td>
                     {% if product.active %}
                         <span class="badge bg-success">✅ 활성</span>
@@ -33,9 +55,9 @@
                     {% endif %}
                 </td>
                 <td>
-                    <button class="btn btn-warning btn-sm" onclick="editProduct('{{ product.id }}', '{{ product.name }}', '{{ product.google_sku }}', '{{ product.apple_sku }}', '{{ product.product_type }}', '{{ product.active|lower }}', '{{ product.discount }}')">✏️ 수정</button>
+                    <button class="btn btn-warning btn-sm edit-product" data-product='{{ product|tojson }}'>✏️ 수정</button>
                     <a href="/products/delete/{{ product.id }}" class="btn btn-danger btn-sm"
-                       onclick="return confirm('정말 삭제하시겠습니까?')">🗑 삭제</a>
+                       onclick="return confirm('정말로 이 제품을 삭제하시겠습니까?')">🗑 삭제</a>
                 </td>
             </tr>
             {% endfor %}
@@ -43,84 +65,429 @@
     </table>
 
     <!-- 추가 버튼 -->
-    <button class="btn btn-primary mt-3" onclick="showAddForm()">➕ 새 Product 추가</button>
+    <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
 
-    <!-- Product 추가/수정 폼 -->
-    <div id="product-form" class="card shadow p-4 mt-4 d-none">
-        <h2 class="mb-4" id="form-title">새 Product 추가</h2>
-        
-        <form method="post" action="/products/save">
-            <input type="hidden" name="id" id="product-id">
+    <!-- Product 추가/수정 모달 -->
+    <div class="modal fade" id="productModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="form-title">새 Product 추가</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form method="post" action="/products/save" id="product-form">
+                        <input type="hidden" name="id" id="product-id">
 
-            <div class="mb-3">
-                <label class="form-label">이름</label>
-                <input type="text" name="name" id="product-name" class="form-control" required>
-            </div>
+                        <div class="mb-3">
+                            <label class="form-label">이름</label>
+                            <input type="text" name="name" id="product-name" class="form-control" required>
+                        </div>
 
-            <div class="mb-3">
-                <label class="form-label">Google SKU</label>
-                <input type="text" name="google_sku" id="product-google-sku" class="form-control">
-            </div>
+                        <div class="mb-3">
+                            <label class="form-label">정렬 순서</label>
+                            <input type="number" name="order" id="product-order" class="form-control" required>
+                        </div>
 
-            <div class="mb-3">
-                <label class="form-label">Apple SKU</label>
-                <input type="text" name="apple_sku" id="product-apple-sku" class="form-control">
-            </div>
+                        <div class="mb-3">
+                            <label class="form-label">Google SKU</label>
+                            <input type="text" name="google_sku" id="product-google-sku" class="form-control">
+                        </div>
 
-            <div class="mb-3">
-                <label class="form-label">Product 타입</label>
-                <input type="text" name="product_type" id="product-type" class="form-control" required>
-            </div>
+                        <div class="mb-3">
+                            <label class="form-label">Apple SKU</label>
+                            <input type="text" name="apple_sku" id="product-apple-sku" class="form-control">
+                        </div>
 
-            <div class="mb-3">
-                <label class="form-label">할인율 (%)</label>
-                <input type="number" step="0.01" name="discount" id="product-discount" class="form-control">
-            </div>
+                        <div class="mb-3">
+                            <label class="form-label">Apple SKU (한국)</label>
+                            <input type="text" name="apple_sku_k" id="product-apple-sku-k" class="form-control">
+                        </div>
 
-            <div class="mb-3">
-                <label class="form-label">활성화</label>
-                <div class="form-check">
-                    <input type="checkbox" name="active" id="product-active" class="form-check-input">
-                    <label class="form-check-label">이 제품 활성화</label>
+                        <div class="mb-3">
+                            <label for="product_type" class="form-label">Product Type</label>
+                            <select class="form-select" id="product_type" name="product_type" required>
+                                <option value="">선택하세요</option>
+                                <option value="IAP">IAP (인앱 결제)</option>
+                                <option value="FREE">FREE (무료)</option>
+                                <option value="MILEAGE">MILEAGE (마일리지)</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="category" class="form-label">Category</label>
+                            <select class="form-select" id="category" name="category_id" required>
+                                <option value="">선택하세요</option>
+                                {% for category in categories %}
+                                <option value="{{ category.id }}">{{ category.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Rarity</label>
+                            <select name="rarity" id="product-rarity" class="form-control">
+                                <option value="">선택하세요</option>
+                                <option value="Normal">Normal</option>
+                                <option value="Rare">Rare</option>
+                                <option value="Epic">Epic</option>
+                                <option value="Unique">Unique</option>
+                                <option value="Legendary">Legendary</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="required_level" class="form-label">Required Level</label>
+                            <input type="number" name="required_level" id="product-required-level" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">일일 제한</label>
+                            <input type="number" name="daily_limit" id="product-daily-limit" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">주간 제한</label>
+                            <input type="number" name="weekly_limit" id="product-weekly-limit" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">계정당 제한</label>
+                            <input type="number" name="account_limit" id="product-account-limit" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">시작 시간</label>
+                            <input type="datetime-local" name="open_timestamp" id="product-open-timestamp" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">종료 시간</label>
+                            <input type="datetime-local" name="close_timestamp" id="product-close-timestamp" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">할인율 (%)</label>
+                            <input type="number" step="0.01" name="discount" id="product-discount" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">마일리지</label>
+                            <input type="number" name="mileage" id="product-mileage" class="form-control" value="0">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">마일리지 가격</label>
+                            <input type="number" name="mileage_price" id="product-mileage-price" class="form-control" value="0">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Path</label>
+                            <input type="text" name="path" id="product-path" class="form-control" value="=">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">L10N Key</label>
+                            <input type="text" name="l10n_key" id="product-l10n-key" class="form-control" value="=">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Size</label>
+                            <select name="size" id="product-size" class="form-control">
+                                <option value="">선택하세요</option>
+                                <option value="1x1">1x1</option>
+                                <option value="1x2">1x2</option>
+                                <option value="2x1">2x1</option>
+                                <option value="2x2">2x2</option>
+                                <option value="3x1">3x1</option>
+                                <option value="1x3">1x3</option>
+                                <option value="3x2">3x2</option>
+                                <option value="2x3">2x3</option>
+                                <option value="3x3">3x3</option>
+                                <option value="4x1">4x1</option>
+                                <option value="1x4">1x4</option>
+                                <option value="4x2">4x2</option>
+                                <option value="2x4">2x4</option>
+                                <option value="4x3">4x3</option>
+                                <option value="3x4">3x4</option>
+                                <option value="4x4">4x4</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Background Path</label>
+                            <input type="text" name="bg_path" id="product-bg-path" class="form-control">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Popup Path Key</label>
+                            <input type="text" name="popup_path_key" id="product-popup-path-key" class="form-control">
+                        </div>
+
+                        <!-- Fungible Item List -->
+                        <div class="mb-3">
+                            <label class="form-label">Fungible Item List</label>
+                            <div id="fungible-item-list">
+                                <!-- Fungible Item 항목들이 여기에 동적으로 추가됩니다 -->
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="addFungibleItem()">
+                                + Fungible Item 추가
+                            </button>
+                        </div>
+
+                        <!-- Fungible Asset Value List -->
+                        <div class="mb-3">
+                            <label class="form-label">Fungible Asset Value List</label>
+                            <div id="fungible-asset-value-list">
+                                <!-- Fungible Asset Value 항목들이 여기에 동적으로 추가됩니다 -->
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="addFungibleAssetValue()">
+                                + Fungible Asset Value 추가
+                            </button>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">활성화</label>
+                            <div class="form-check">
+                                <input type="checkbox" name="active" id="product-active" class="form-check-input">
+                                <label class="form-check-label">이 제품 활성화</label>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="submit" form="product-form" class="btn btn-success">💾 저장</button>
                 </div>
             </div>
-
-            <div class="text-center">
-                <button type="submit" class="btn btn-success">💾 저장</button>
-                <button type="button" class="btn btn-secondary" onclick="hideForm()">취소</button>
-            </div>
-        </form>
+        </div>
     </div>
 </div>
 
 <!-- JavaScript -->
 <script>
-    function showAddForm() {
-        document.getElementById('form-title').innerText = "새 Product 추가";
-        document.getElementById('product-id').value = "";
-        document.getElementById('product-name').value = "";
-        document.getElementById('product-google-sku').value = "";
-        document.getElementById('product-apple-sku').value = "";
-        document.getElementById('product-type').value = "";
-        document.getElementById('product-discount').value = "0";
-        document.getElementById('product-active').checked = false;
-        document.getElementById('product-form').classList.remove('d-none');
+    function showProductForm(product = null) {
+        const form = document.getElementById('product-form');
+        const modalTitle = document.getElementById('form-title');
+        const fungibleAssetValueList = document.getElementById('fungible-asset-value-list');
+        const fungibleItemList = document.getElementById('fungible-item-list');
+
+        // 폼 초기화
+        if (form) {
+            form.reset();
+        }
+        document.getElementById('product-id').value = '';
+        modalTitle.textContent = '새 Product 추가';
+        fungibleAssetValueList.innerHTML = '';
+        fungibleItemList.innerHTML = '';
+
+        if (product) {
+            // 기존 제품 데이터로 폼 채우기
+            console.log(product);
+            document.getElementById('product-id').value = product.id;
+            document.getElementById('product-name').value = product.name;
+            document.getElementById('product-order').value = product.order;
+            document.getElementById('product-google-sku').value = product.google_sku;
+            document.getElementById('product-apple-sku').value = product.apple_sku;
+            document.getElementById('product-apple-sku-k').value = product.apple_sku_k;
+            document.getElementById('product_type').value = product.product_type;
+            // 카테고리 설정
+            if (product.category_list && product.category_list.length > 0) {
+                document.getElementById('category').value = product.category_list[0].id;
+            }
+            document.getElementById('product-required-level').value = product.required_level;
+            document.getElementById('product-daily-limit').value = product.daily_limit;
+            document.getElementById('product-weekly-limit').value = product.weekly_limit;
+            document.getElementById('product-account-limit').value = product.account_limit;
+            document.getElementById('product-active').checked = product.active;
+            document.getElementById('product-discount').value = product.discount;
+            document.getElementById('product-open-timestamp').value = product.open_timestamp;
+            document.getElementById('product-close-timestamp').value = product.close_timestamp;
+            document.getElementById('product-mileage').value = product.mileage;
+            document.getElementById('product-mileage-price').value = product.mileage_price;
+            document.getElementById('product-path').value = product.path;
+            document.getElementById('product-l10n-key').value = product.l10n_key;
+            document.getElementById('product-size').value = product.size || '';
+            document.getElementById('product-bg-path').value = product.bg_path;
+            document.getElementById('product-popup-path-key').value = product.popup_path_key;
+            document.getElementById('product-rarity').value = product.rarity;
+
+            // Fungible Item List 채우기
+            if (product.fungible_item_list) {
+                product.fungible_item_list.forEach((item, index) => {
+                    const container = document.getElementById('fungible-item-list');
+                    const itemElement = document.createElement('div');
+                    itemElement.className = 'card mb-2';
+                    itemElement.innerHTML = `
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label class="form-label">Sheet Item ID</label>
+                                        <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" value="${item.sheet_item_id}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label class="form-label">Fungible Item ID</label>
+                                        <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" value="${item.fungible_item_id}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label class="form-label">Amount</label>
+                                        <input type="number" name="fungible_items[${index}][amount]" class="form-control" value="${item.amount}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-1 d-flex align-items-center">
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="mb-3">
+                                        <label class="form-label">Name</label>
+                                        <input type="text" name="fungible_items[${index}][name]" class="form-control" value="${item.name}" required>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(itemElement);
+                });
+            }
+
+            // Fungible Asset Value List 채우기
+            if (product.fav_list) {
+                product.fav_list.forEach((item, index) => {
+                    const container = document.getElementById('fungible-asset-value-list');
+                    const itemElement = document.createElement('div');
+                    itemElement.className = 'card mb-2';
+                    itemElement.innerHTML = `
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-5">
+                                    <div class="mb-3">
+                                        <label class="form-label">Ticker</label>
+                                        <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" value="${item.ticker}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-5">
+                                    <div class="mb-3">
+                                        <label class="form-label">Amount</label>
+                                        <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" value="${item.amount}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center">
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(itemElement);
+                });
+            }
+
+            modalTitle.textContent = 'Product 수정';
+        }
     }
 
-    function editProduct(id, name, googleSku, appleSku, productType, active, discount) {
-        document.getElementById('form-title').innerText = "Product 수정";
-        document.getElementById('product-id').value = id;
-        document.getElementById('product-name').value = name;
-        document.getElementById('product-google-sku').value = googleSku;
-        document.getElementById('product-apple-sku').value = appleSku;
-        document.getElementById('product-type').value = productType;
-        document.getElementById('product-discount').value = discount;
-        document.getElementById('product-active').checked = active;
-        document.getElementById('product-form').classList.remove('d-none');
-    }
+    // 수정 버튼에 이벤트 리스너 추가
+    document.querySelectorAll('.edit-product').forEach(button => {
+        button.addEventListener('click', function() {
+            const productData = JSON.parse(this.getAttribute('data-product'));
+            showProductForm(productData);
+            // 모달 표시
+            const modal = new bootstrap.Modal(document.getElementById('productModal'));
+            modal.show();
+        });
+    });
+
+    // 모달이 닫힐 때 폼 초기화
+    document.getElementById('productModal').addEventListener('hidden.bs.modal', function () {
+        showProductForm();
+    });
 
     function hideForm() {
         document.getElementById('product-form').classList.add('d-none');
+    }
+
+    function deleteProduct(id) {
+        if (confirm('정말로 이 제품을 삭제하시겠습니까?')) {
+            window.location.href = `/products/delete/${id}`;
+        }
+    }
+
+    function addFungibleAssetValue() {
+        const container = document.getElementById('fungible-asset-value-list');
+        const index = container.children.length;
+        const item = document.createElement('div');
+        item.className = 'card mb-2';
+        item.innerHTML = `
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-5">
+                        <div class="mb-3">
+                            <label class="form-label">Ticker</label>
+                            <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <div class="mb-3">
+                            <label class="form-label">Amount</label>
+                            <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-center">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(item);
+    }
+
+    function addFungibleItem() {
+        const container = document.getElementById('fungible-item-list');
+        const index = container.children.length;
+        const item = document.createElement('div');
+        item.className = 'card mb-2';
+        item.innerHTML = `
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">Sheet Item ID</label>
+                            <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">Fungible Item ID</label>
+                            <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-3">
+                            <label class="form-label">Amount</label>
+                            <input type="number" name="fungible_items[${index}][amount]" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-md-1 d-flex align-items-center">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="mb-3">
+                            <label class="form-label">Name</label>
+                            <input type="text" name="fungible_items[${index}][name]" class="form-control" required>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(item);
     }
 </script>
 {% endblock %}

@@ -8,6 +8,7 @@ from common.consts import AVATAR_BOUND_TICKER
 from common.enums import Store, ProductAssetUISize, ProductRarity, ProductType
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
 
+# 카테고리-제품 다대다 관계를 위한 테이블 정의
 category_product_table = Table(
     "category_product",
     Base.metadata,
@@ -99,6 +100,39 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
     fav_list: Mapped[List["FungibleAssetProduct"]] = relationship(back_populates="product")
     fungible_item_list: Mapped[List["FungibleItemProduct"]] = relationship(back_populates="product")
     price_list: Mapped[List["Price"]] = relationship(back_populates="product")
+    category_list = relationship("Category", secondary=category_product_table, back_populates="product_list")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "order": self.order,
+            "google_sku": self.google_sku,
+            "apple_sku": self.apple_sku,
+            "apple_sku_k": self.apple_sku_k,
+            "product_type": self.product_type.value,
+            "required_level": self.required_level,
+            "daily_limit": self.daily_limit,
+            "weekly_limit": self.weekly_limit,
+            "account_limit": self.account_limit,
+            "active": self.active,
+            "discount": float(self.discount),
+            "open_timestamp": self.open_timestamp.isoformat() if self.open_timestamp else None,
+            "close_timestamp": self.close_timestamp.isoformat() if self.close_timestamp else None,
+            "mileage": self.mileage,
+            "mileage_price": self.mileage_price,
+            "rarity": self.rarity.value,
+            "size": self.size.value if self.size else None,
+            "path": self.path,
+            "bg_path": self.bg_path or f"shop/images/product/list/bg_{self.rarity.value}_{self.size.value}.png",
+            "popup_path_key": self.popup_path_key or f"{self.l10n_key}_PATH",
+            "l10n_key": self.l10n_key,
+            "fav_list": [{"ticker": fav.ticker.split("__")[-1], "amount": float(fav.amount)} for fav in self.fav_list],
+            "fungible_item_list": [{"sheet_item_id": item.sheet_item_id, "fungible_item_id": item.fungible_item_id, "amount": item.amount, "name": item.name} for item in self.fungible_item_list],
+            "category_list": [{"id": category.id, "name": category.name} for category in self.category_list],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
 
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):

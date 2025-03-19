@@ -1,14 +1,16 @@
+from typing import Dict, List
 from fastapi import FastAPI, Depends, Request, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from .database import SessionLocal, engine, Base
-from common.models.product import Product, Category
+from common.models.product import Product, Category, FungibleItemProduct, FungibleAssetProduct
+from common.enums import ProductType, ProductRarity, ProductAssetUISize
 from datetime import datetime
 from fastapi import HTTPException
 
-app = FastAPI()
-templates = Jinja2Templates(directory="backoffice/templates")
+app = FastAPI(debug=True)
+templates = Jinja2Templates(directory="backoffice/templates", auto_reload=True)
 
 def get_db():
     db = SessionLocal()
@@ -21,19 +23,58 @@ def get_db():
 @app.get("/products")
 def list_products(request: Request, db: Session = Depends(get_db)):
     products = db.query(Product).all()
-    return templates.TemplateResponse("products.html", {"request": request, "products": products})
+    categories = db.query(Category).all()
+
+    # Product 데이터 변환
+    products_dict = []
+    for product in products:
+        product_dict = product.to_dict()
+        # category_id 설정 (첫 번째 카테고리 사용)
+        if product.category_list and len(product.category_list) > 0:
+            product_dict['category_id'] = product.category_list[0].id
+        products_dict.append(product_dict)
+
+
+    categories_dict = [category.to_dict() for category in categories]
+    return templates.TemplateResponse("products.html", {"request": request, "products": products_dict, "categories": categories_dict})
 
 # ✅ Product 추가/수정 처리
 @app.post("/products/save")
-def save_product(
-    id: int = Form(None), name: str = Form(...), order: int = Form(...), google_sku: str = Form(...),
-    apple_sku: str = Form(...), product_type: str = Form(...), required_level: int = Form(None),
-    daily_limit: int = Form(None), weekly_limit: int = Form(None), account_limit: int = Form(None),
-    active: bool = Form(False), discount: float = Form(0.0), open_timestamp: str = Form(None),
-    close_timestamp: str = Form(None), mileage: int = Form(0), db: Session = Depends(get_db)
+async def save_product(
+    request: Request,
+    db: Session = Depends(get_db)
 ):
+    form_data = await request.form()
+    id = form_data.get("id")
+    name = form_data.get("name")
+    order = int(form_data.get("order"))
+    google_sku = form_data.get("google_sku")
+    apple_sku = form_data.get("apple_sku")
+    apple_sku_k = form_data.get("apple_sku_k")
+    product_type = form_data.get("product_type")
+    required_level = int(form_data.get("required_level")) if form_data.get("required_level") else None
+    daily_limit = int(form_data.get("daily_limit")) if form_data.get("daily_limit") else None
+    weekly_limit = int(form_data.get("weekly_limit")) if form_data.get("weekly_limit") else None
+    account_limit = int(form_data.get("account_limit")) if form_data.get("account_limit") else None
+    active = form_data.get("active") == "on"
+    discount = float(form_data.get("discount", 0))
+    open_timestamp = form_data.get("open_timestamp")
+    close_timestamp = form_data.get("close_timestamp")
+    mileage = int(form_data.get("mileage", 0))
+    mileage_price = int(form_data.get("mileage_price", 0))
+    rarity = form_data.get("rarity")
+    path = form_data.get("path", "=")
+    l10n_key = form_data.get("l10n_key", "=")
+    size = form_data.get("size")
+    bg_path = form_data.get("bg_path")
+    popup_path_key = form_data.get("popup_path_key")
+    category_id = int(form_data.get("category_id"))
+
     if id:
         product = db.query(Product).filter(Product.id == id).first()
+        # 기존 fungible_items와 fungible_asset_values 삭제
+        db.query(FungibleItemProduct).filter(FungibleItemProduct.product_id == id).delete()
+        db.query(FungibleAssetProduct).filter(FungibleAssetProduct.product_id == id).delete()
     else:
         product = Product()
         db.add(product)
@@ -42,26 +83,78 @@ def save_product(
     product.order = order
     product.google_sku = google_sku
     product.apple_sku = apple_sku
-    product.product_type = product_type
+    product.apple_sku_k = apple_sku_k
+    product.product_type = ProductType(product_type)
     product.required_level = required_level
     product.daily_limit = daily_limit
     product.weekly_limit = weekly_limit
     product.account_limit = account_limit
     product.active = active
     product.discount = discount
-    product.open_timestamp = open_timestamp
-    product.close_timestamp = close_timestamp
+    product.open_timestamp = datetime.fromisoformat(open_timestamp.replace('Z', '+00:00')) if open_timestamp else None
+    product.close_timestamp = datetime.fromisoformat(close_timestamp.replace('Z', '+00:00')) if close_timestamp else None
     product.mileage = mileage
+    product.mileage_price = mileage_price
+    product.rarity = ProductRarity(rarity) if rarity else ProductRarity.NORMAL
+    product.path = path
+    product.l10n_key = l10n_key
+    product.size = ProductAssetUISize(size) if size else ProductAssetUISize.ONE_BY_ONE
+    product.bg_path = bg_path
+    product.popup_path_key = popup_path_key
 
-    db.commit()
+    # 카테고리 설정
+    category = db.query(Category).filter(Category.id == category_id).first()
+    if category:
+        product.category_list = [category]
+
+    # Fungible Items 추가
+    for key, value in form_data.items():
+        if key.startswith("fungible_items[") and key.endswith("][sheet_item_id]"):
+            index = key.split("[")[1].split("]")[0]
+            sheet_item_id = int(value)
+            fungible_item_id = form_data.get(f"fungible_items[{index}][fungible_item_id]")
+            amount = int(form_data.get(f"fungible_items[{index}][amount]"))
+            name = form_data.get(f"fungible_items[{index}][name]")
+
+            fungible_item = FungibleItemProduct(
+                product_id=product.id,
+                sheet_item_id=sheet_item_id,
+                fungible_item_id=fungible_item_id,
+                amount=amount,
+                name=name
+            )
+            db.add(fungible_item)
+
+    # Fungible Asset Values 추가
+    for key, value in form_data.items():
+        if key.startswith("fungible_asset_values[") and key.endswith("][ticker]"):
+            index = key.split("[")[1].split("]")[0]
+            ticker = value
+            amount = float(form_data.get(f"fungible_asset_values[{index}][amount]"))
+
+            fungible_asset = FungibleAssetProduct(
+                product_id=product.id,
+                ticker=ticker,
+                amount=amount,
+                decimal_places=18,  # 기본값으로 18 설정
+            )
+            db.add(fungible_asset)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
+
     return RedirectResponse(url="/products", status_code=303)
 
 # ✅ Product 삭제
 @app.get("/products/delete/{id}")
 def delete_product(id: int, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == id).first()
-    db.delete(product)
-    db.commit()
+    if product:
+        db.delete(product)
+        db.commit()
     return RedirectResponse(url="/products", status_code=303)
 
 @app.get("/categories")
