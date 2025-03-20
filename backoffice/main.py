@@ -191,16 +191,17 @@ async def save_product(
         raise e
 
     # CloudFront 캐시 무효화
-    try:
-        cloudfront_client.create_invalidation(
-            DistributionId=os.getenv("CLOUDFRONT_DISTRIBUTION_1"),
-            InvalidationBatch={
-                "Paths": {"Quantity": 1, "Items": ["/*"]},
-                "CallerReference": str(os.urandom(16))
-            }
-        )
-    except Exception as e:
-        print(f"CloudFront 캐시 무효화 실패: {e}")
+    if detail_image or list_image:
+        try:
+            cloudfront_client.create_invalidation(
+                DistributionId=os.getenv("CLOUDFRONT_DISTRIBUTION_1"),
+                InvalidationBatch={
+                    "Paths": {"Quantity": 1, "Items": ["/*"]},
+                    "CallerReference": str(os.urandom(16))
+                }
+            )
+        except Exception as e:
+            print(f"CloudFront 캐시 무효화 실패: {e}")
 
     return RedirectResponse(url="/products", status_code=303)
 
