@@ -3,7 +3,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from scripts.s3 import S3_BUCKET, S3_KEYS, invalidate_cloudfront
+from scripts.s3 import S3_BUCKET, S3_KEYS, S3_IMAGE_DETAIL_FOLDER, S3_IMAGE_LIST_FOLDER, invalidate_cloudfront
 from .database import SessionLocal
 from common.models.product import Product, Category, FungibleItemProduct, FungibleAssetProduct
 from common.enums import ProductType, ProductRarity, ProductAssetUISize
@@ -13,6 +13,9 @@ import os
 import shutil
 import boto3
 
+# AWS 클라이언트 설정
+s3_client = boto3.client("s3")
+cloudfront_client = boto3.client("cloudfront")
 
 S3_CATEGORY_KEYS = [
     "internal/shop/l10n/category.csv",
@@ -21,7 +24,6 @@ S3_CATEGORY_KEYS = [
 
 app = FastAPI(debug=True)
 templates = Jinja2Templates(directory="backoffice/templates", auto_reload=True)
-s3_client = boto3.client("s3")
 
 def get_db():
     db = SessionLocal()
@@ -53,6 +55,8 @@ def list_products(request: Request, db: Session = Depends(get_db)):
 @app.post("/products/save")
 async def save_product(
     request: Request,
+    detail_image: UploadFile = File(None),
+    list_image: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
     form_data = await request.form()
@@ -143,11 +147,60 @@ async def save_product(
             )
             db.add(fungible_asset)
 
+    # 이미지 파일 처리
+    if detail_image:
+        file_name = product.get_image_name()
+
+        # S3에 업로드
+        for folder in S3_IMAGE_DETAIL_FOLDER:
+            s3_key = f"{folder}{file_name}"
+            try:
+                # 파일 내용을 바이트로 읽어서 업로드
+                file_content = await detail_image.read()
+                s3_client.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=detail_image.content_type
+                )
+            except Exception as e:
+                print(f"Detail 이미지 업로드 실패: {e}")
+
+    if list_image:
+        file_name = product.get_image_name()
+
+        # S3에 업로드
+        for folder in S3_IMAGE_LIST_FOLDER:
+            s3_key = f"{folder}{file_name}"
+            try:
+                # 파일 내용을 바이트로 읽어서 업로드
+                file_content = await list_image.read()
+                s3_client.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=list_image.content_type
+                )
+            except Exception as e:
+                print(f"List 이미지 업로드 실패: {e}")
+
     try:
         db.commit()
     except Exception as e:
         db.rollback()
         raise e
+
+    # CloudFront 캐시 무효화
+    try:
+        cloudfront_client.create_invalidation(
+            DistributionId=os.getenv("CLOUDFRONT_DISTRIBUTION_1"),
+            InvalidationBatch={
+                "Paths": {"Quantity": 1, "Items": ["/*"]},
+                "CallerReference": str(os.urandom(16))
+            }
+        )
+    except Exception as e:
+        print(f"CloudFront 캐시 무효화 실패: {e}")
 
     return RedirectResponse(url="/products", status_code=303)
 
@@ -221,7 +274,7 @@ async def delete_category(category_id: int, db: Session = Depends(get_db)):
 
 @app.get("/l10n")
 async def l10n_page(request: Request):
-    return templates.TemplateResponse("l10n.html", {"request": request})
+    return templates.TemplateResponse("upload_l10n.html", {"request": request})
 
 @app.post("/l10n/upload/product")
 async def upload_product_l10n(request: Request, file: UploadFile = File(...)):
@@ -242,7 +295,7 @@ async def upload_product_l10n(request: Request, file: UploadFile = File(...)):
         cache_result = invalidate_cloudfront()
 
         return templates.TemplateResponse(
-            "l10n.html",
+            "upload_l10n.html",
             {
                 "request": request,
                 "message": "Product 번역어 파일이 성공적으로 업로드되었습니다." + (f"CloudFront 캐시 무효화 결과: {cache_result}"),
@@ -251,7 +304,7 @@ async def upload_product_l10n(request: Request, file: UploadFile = File(...)):
         )
     except Exception as e:
         return templates.TemplateResponse(
-            "l10n.html",
+            "upload_l10n.html",
             {
                 "request": request,
                 "message": f"업로드 중 오류가 발생했습니다: {str(e)}",
@@ -279,7 +332,7 @@ async def upload_category_l10n(request: Request, file: UploadFile = File(...)):
         cache_result = invalidate_cloudfront()
 
         return templates.TemplateResponse(
-            "l10n.html",
+            "upload_l10n.html",
             {
                 "request": request,
                 "message": "Category 번역어 파일이 성공적으로 업로드되었습니다." + (f"CloudFront 캐시 무효화 결과: {cache_result}"),
@@ -288,7 +341,7 @@ async def upload_category_l10n(request: Request, file: UploadFile = File(...)):
         )
     except Exception as e:
         return templates.TemplateResponse(
-            "l10n.html",
+            "upload_l10n.html",
             {
                 "request": request,
                 "message": f"업로드 중 오류가 발생했습니다: {str(e)}",

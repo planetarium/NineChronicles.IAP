@@ -7,6 +7,7 @@ from sqlalchemy.orm import relationship, Mapped
 from common.consts import AVATAR_BOUND_TICKER
 from common.enums import Store, ProductAssetUISize, ProductRarity, ProductType
 from common.models.base import AutoIdMixin, Base, TimeStampMixin
+from iap.settings import CDN_HOST
 
 # 카테고리-제품 다대다 관계를 위한 테이블 정의
 category_product_table = Table(
@@ -134,9 +135,21 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
             "fungible_item_list": [{"sheet_item_id": item.sheet_item_id, "fungible_item_id": item.fungible_item_id, "amount": item.amount, "name": item.name} for item in self.fungible_item_list],
             "category_list": [{"id": category.id, "name": category.name} for category in self.category_list],
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "detail_image_path": f"{CDN_HOST}/{self.get_detail_image_s3_path()}" if self.path else None,
+            "list_image_path": f"{CDN_HOST}/{self.get_list_image_s3_path()}" if self.path else None,
         }
 
+    def get_detail_image_s3_path(self) -> str:
+        """상품 상세 이미지의 S3 경로를 반환합니다."""
+        return f"shop/images/product/detail/{self.get_image_name()}"
+
+    def get_list_image_s3_path(self) -> str:
+        """상품 목록 이미지의 S3 경로를 반환합니다."""
+        return f"shop/images/product/list/{self.get_image_name()}"
+
+    def get_image_name(self) -> str:
+        return f"{self.google_sku.split('_')[-1]}.png"
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "fungible_asset_product"

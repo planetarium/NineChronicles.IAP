@@ -82,3 +82,4 @@ REGION_NAME = config("REGION_NAME")
 
 SEASON_PASS_JWT_SECRET = season_pass_jwt_secret or config("SEASON_PASS_JWT_SECRET")
 HEADLESS_JWT_GQL_SECRET = headless_gql_jwt_secret or config("HEADLESS_GQL_JWT_SECRET")
+CDN_HOST = os.environ.get("CDN_HOST", "https://assets-internal.nine-chronicles.com")
