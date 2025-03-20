@@ -1,16 +1,27 @@
-from typing import Dict, List
-from fastapi import FastAPI, Depends, Request, Form
+from fastapi import FastAPI, Depends, Request, UploadFile, File
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from .database import SessionLocal, engine, Base
+
+from scripts.s3 import S3_BUCKET, S3_KEYS, invalidate_cloudfront
+from .database import SessionLocal
 from common.models.product import Product, Category, FungibleItemProduct, FungibleAssetProduct
 from common.enums import ProductType, ProductRarity, ProductAssetUISize
 from datetime import datetime
 from fastapi import HTTPException
+import os
+import shutil
+import boto3
+
+
+S3_CATEGORY_KEYS = [
+    "internal/shop/l10n/category.csv",
+    "K/internal/shop/l10n/category.csv"
+]
 
 app = FastAPI(debug=True)
 templates = Jinja2Templates(directory="backoffice/templates", auto_reload=True)
+s3_client = boto3.client("s3")
 
 def get_db():
     db = SessionLocal()
@@ -207,3 +218,84 @@ async def delete_category(category_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
     return RedirectResponse(url="/categories", status_code=303)
+
+@app.get("/l10n")
+async def l10n_page(request: Request):
+    return templates.TemplateResponse("l10n.html", {"request": request})
+
+@app.post("/l10n/upload/product")
+async def upload_product_l10n(request: Request, file: UploadFile = File(...)):
+    try:
+        # 임시 파일로 저장
+        temp_path = "product.csv"
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # S3에 업로드
+        for s3_key in S3_KEYS:
+            s3_client.upload_file(temp_path, S3_BUCKET, s3_key)
+
+        # 임시 파일 삭제
+        os.remove(temp_path)
+
+        # CloudFront 캐시 무효화
+        cache_result = invalidate_cloudfront()
+
+        return templates.TemplateResponse(
+            "l10n.html",
+            {
+                "request": request,
+                "message": "Product 번역어 파일이 성공적으로 업로드되었습니다." + (f"CloudFront 캐시 무효화 결과: {cache_result}"),
+                "message_type": "success"
+            }
+        )
+    except Exception as e:
+        return templates.TemplateResponse(
+            "l10n.html",
+            {
+                "request": request,
+                "message": f"업로드 중 오류가 발생했습니다: {str(e)}",
+                "message_type": "danger"
+            }
+        )
+
+@app.post("/l10n/upload/category")
+async def upload_category_l10n(request: Request, file: UploadFile = File(...)):
+    try:
+        # 임시 파일로 저장
+        temp_path = "category.csv"
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # S3에 업로드
+        # S3에 업로드
+        for s3_key in S3_CATEGORY_KEYS:
+            s3_client.upload_file(temp_path, S3_BUCKET, s3_key)
+
+        # 임시 파일 삭제
+        os.remove(temp_path)
+
+        # CloudFront 캐시 무효화
+        cache_result = invalidate_cloudfront()
+
+        return templates.TemplateResponse(
+            "l10n.html",
+            {
+                "request": request,
+                "message": "Category 번역어 파일이 성공적으로 업로드되었습니다." + (f"CloudFront 캐시 무효화 결과: {cache_result}"),
+                "message_type": "success"
+            }
+        )
+    except Exception as e:
+        return templates.TemplateResponse(
+            "l10n.html",
+            {
+                "request": request,
+                "message": f"업로드 중 오류가 발생했습니다: {str(e)}",
+                "message_type": "danger"
+            }
+        )
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/products", status_code=303)
