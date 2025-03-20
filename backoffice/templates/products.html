@@ -182,11 +182,6 @@
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label">L10N Key</label>
-                            <input type="text" name="l10n_key" id="product-l10n-key" class="form-control" value="=">
-                        </div>
-
-                        <div class="mb-3">
                             <label class="form-label">Size</label>
                             <select name="size" id="product-size" class="form-control">
                                 <option value="">선택하세요</option>
@@ -290,7 +285,6 @@
             document.getElementById('product-close-timestamp').value = product.close_timestamp;
             document.getElementById('product-mileage').value = product.mileage;
             document.getElementById('product-mileage-price').value = product.mileage_price;
-            document.getElementById('product-l10n-key').value = product.l10n_key;
             document.getElementById('product-size').value = product.size || '';
             document.getElementById('product-rarity').value = product.rarity;
 
