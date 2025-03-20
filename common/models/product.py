@@ -92,8 +92,11 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
                     doc="Rarity of this product. This is for UI bg color.")
     size = Column(ENUM(ProductAssetUISize, create_type=False), nullable=False,
                   doc="UI size ratio of this product in client")
+    # 사용 안함
     path = Column(Text, nullable=False, doc="Full asset path")
+    # 값을 직접 넣으면 안됨. ProductSchema에서 설정되는 값을 사용.
     bg_path = Column(Text, nullable=True, doc="Product bg image in list")
+    # 사용 안함
     popup_path_key = Column(Text, nullable=True, doc="Product detail popup path key with L10N")
     l10n_key = Column(Text, nullable=False, doc="L10N Key")
 

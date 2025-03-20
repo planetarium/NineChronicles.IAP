@@ -63,11 +63,8 @@ async def save_product(
     mileage = int(form_data.get("mileage", 0))
     mileage_price = int(form_data.get("mileage_price", 0))
     rarity = form_data.get("rarity")
-    path = form_data.get("path", "=")
     l10n_key = form_data.get("l10n_key", "=")
     size = form_data.get("size")
-    bg_path = form_data.get("bg_path")
-    popup_path_key = form_data.get("popup_path_key")
     category_id = int(form_data.get("category_id"))
 
     if id:
@@ -96,11 +93,8 @@ async def save_product(
     product.mileage = mileage
     product.mileage_price = mileage_price
     product.rarity = ProductRarity(rarity) if rarity else ProductRarity.NORMAL
-    product.path = path
     product.l10n_key = l10n_key
     product.size = ProductAssetUISize(size) if size else ProductAssetUISize.ONE_BY_ONE
-    product.bg_path = bg_path
-    product.popup_path_key = popup_path_key
 
     # 카테고리 설정
     category = db.query(Category).filter(Category.id == category_id).first()

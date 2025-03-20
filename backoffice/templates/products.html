@@ -182,11 +182,6 @@
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label">Path</label>
-                            <input type="text" name="path" id="product-path" class="form-control" value="=">
-                        </div>
-
-                        <div class="mb-3">
                             <label class="form-label">L10N Key</label>
                             <input type="text" name="l10n_key" id="product-l10n-key" class="form-control" value="=">
                         </div>
@@ -212,16 +207,6 @@
                                 <option value="3x4">3x4</option>
                                 <option value="4x4">4x4</option>
                             </select>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">Background Path</label>
-                            <input type="text" name="bg_path" id="product-bg-path" class="form-control">
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">Popup Path Key</label>
-                            <input type="text" name="popup_path_key" id="product-popup-path-key" class="form-control">
                         </div>
 
                         <!-- Fungible Item List -->
@@ -305,11 +290,8 @@
             document.getElementById('product-close-timestamp').value = product.close_timestamp;
             document.getElementById('product-mileage').value = product.mileage;
             document.getElementById('product-mileage-price').value = product.mileage_price;
-            document.getElementById('product-path').value = product.path;
             document.getElementById('product-l10n-key').value = product.l10n_key;
             document.getElementById('product-size').value = product.size || '';
-            document.getElementById('product-bg-path').value = product.bg_path;
-            document.getElementById('product-popup-path-key').value = product.popup_path_key;
             document.getElementById('product-rarity').value = product.rarity;
 
             // Fungible Item List 채우기
