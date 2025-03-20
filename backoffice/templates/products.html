@@ -76,7 +76,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <form id="product-form" method="post" action="/products/save" enctype="multipart/form-data">
+                    <form method="post" action="/products/save" id="product-form">
                         <input type="hidden" name="id" id="product-id">
 
                         <div class="mb-3">
@@ -408,43 +408,73 @@
 
             // Fungible Asset Value 설정
             if (product.fav_list) {
-                product.fav_list.forEach(fav => {
-                    const favRow = document.createElement("tr");
+                product.fav_list.forEach((fav, index) => {
+                    const favRow = document.createElement("div");
+                    favRow.className = "card mb-2";
                     favRow.innerHTML = `
-                        <td>
-                            <input type="text" class="form-control" name="fav_ticker[]" value="${fav.ticker}" required>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control" name="fav_amount[]" value="${fav.amount}" required>
-                        </td>
-                        <td>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">삭제</button>
-                        </td>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-5">
+                                    <div class="mb-3">
+                                        <label class="form-label">Ticker</label>
+                                        <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" value="${fav.ticker}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-5">
+                                    <div class="mb-3">
+                                        <label class="form-label">Amount</label>
+                                        <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" value="${fav.amount}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-center">
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                                </div>
+                            </div>
+                        </div>
                     `;
-                    document.getElementById("fav-list").appendChild(favRow);
+                    document.getElementById("fungible-asset-value-list").appendChild(favRow);
                 });
             }
 
             // Fungible Item 설정
             if (product.fungible_item_list) {
-                product.fungible_item_list.forEach(item => {
-                    const itemRow = document.createElement("tr");
+                product.fungible_item_list.forEach((item, index) => {
+                    const itemRow = document.createElement("div");
+                    itemRow.className = "card mb-2";
                     itemRow.innerHTML = `
-                        <td>
-                            <input type="number" class="form-control" name="fungible_item_sheet_item_id[]" value="${item.sheet_item_id}" required>
-                        </td>
-                        <td>
-                            <input type="text" class="form-control" name="fungible_item_fungible_item_id[]" value="${item.fungible_item_id}" required>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control" name="fungible_item_amount[]" value="${item.amount}" required>
-                        </td>
-                        <td>
-                            <input type="text" class="form-control" name="fungible_item_name[]" value="${item.name}" required>
-                        </td>
-                        <td>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">삭제</button>
-                        </td>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label class="form-label">Sheet Item ID</label>
+                                        <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" value="${item.sheet_item_id}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label class="form-label">Fungible Item ID</label>
+                                        <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" value="${item.fungible_item_id}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label class="form-label">Amount</label>
+                                        <input type="number" name="fungible_items[${index}][amount]" class="form-control" value="${item.amount}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-1 d-flex align-items-center">
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="mb-3">
+                                        <label class="form-label">Name</label>
+                                        <input type="text" name="fungible_items[${index}][name]" class="form-control" value="${item.name}" required>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     `;
                     document.getElementById("fungible-item-list").appendChild(itemRow);
                 });
