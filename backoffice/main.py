@@ -33,7 +33,7 @@ def get_db():
 
 # ✅ Product 목록 조회
 @app.get("/products")
-def list_products(request: Request, db: Session = Depends(get_db)):
+async def list_products(request: Request, db: Session = Depends(get_db)):
     products = db.query(Product).all()
     categories = db.query(Category).all()
 

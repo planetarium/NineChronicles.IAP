@@ -285,216 +285,107 @@
         document.querySelectorAll('.edit-product').forEach(button => {
             button.addEventListener('click', function() {
                 const productData = JSON.parse(this.getAttribute('data-product'));
-                showProductForm(productData);
-                // 모달 표시
                 const modal = new bootstrap.Modal(document.getElementById('productModal'));
+                showProductForm(productData);
                 modal.show();
             });
+        });
+
+        // 모달이 닫힐 때 폼 초기화
+        const productModal = document.getElementById('productModal');
+        productModal.addEventListener('hidden.bs.modal', function () {
+            showProductForm();
         });
     });
 
     function showProductForm(product = null) {
-        const form = document.getElementById("product-form");
+        const form = document.getElementById('product-form');
         form.reset();
-        document.getElementById("product-id").value = "";
-        document.getElementById("product-submit").textContent = "상품 추가";
-        document.getElementById("product-submit").classList.remove("btn-warning");
-        document.getElementById("product-submit").classList.add("btn-primary");
 
-        // 이미지 입력 필드와 미리보기 초기화
-        document.getElementById("product-detail-image").style.display = "none";
-        document.getElementById("product-list-image").style.display = "none";
-        document.getElementById("product-preview-detail").style.display = "none";
-        document.getElementById("product-preview-list").style.display = "none";
-        document.getElementById("product-preview-detail-image").src = "";
-        document.getElementById("product-preview-detail-image").style.display = "none";
-        document.getElementById("product-preview-list-image").src = "";
-        document.getElementById("product-preview-list-image").style.display = "none";
+        // 기존 이미지 프리뷰 초기화
+        document.getElementById('product-preview-detail').innerHTML = '';
+        document.getElementById('product-preview-list').innerHTML = '';
 
-        // 가격 목록 초기화
-        const priceList = document.getElementById("price-list");
-        if (priceList) {
-            priceList.innerHTML = "";
-        }
+        // 기존 fungible item과 asset value 리스트 초기화
+        document.getElementById('fungible-item-list').innerHTML = '';
+        document.getElementById('fungible-asset-value-list').innerHTML = '';
 
-        // Fungible Asset Value 목록 초기화
-        const favList = document.getElementById("fav-list");
-        if (favList) {
-            favList.innerHTML = "";
-        }
-
-        // Fungible Item 목록 초기화
-        const fungibleItemList = document.getElementById("fungible-item-list");
-        if (fungibleItemList) {
-            fungibleItemList.innerHTML = "";
-        }
-
-        // 카테고리 선택 초기화
-        const categorySelect = document.getElementById("category");
-        if (categorySelect) {
-            categorySelect.value = "";
-        }
+        // 모든 입력 필드 초기화
+        document.getElementById('product-id').value = '';
+        document.getElementById('product-name').value = '';
+        document.getElementById('product-order').value = '';
+        document.getElementById('product-google-sku').value = '';
+        document.getElementById('product-apple-sku').value = '';
+        document.getElementById('product-apple-sku-k').value = '';
+        document.getElementById('product-type').value = '';
+        document.getElementById('product-required-level').value = '';
+        document.getElementById('product-daily-limit').value = '';
+        document.getElementById('product-weekly-limit').value = '';
+        document.getElementById('product-account-limit').value = '';
+        document.getElementById('product-active').checked = false;
+        document.getElementById('product-discount').value = '';
+        document.getElementById('product-open-timestamp').value = '';
+        document.getElementById('product-close-timestamp').value = '';
+        document.getElementById('product-mileage').value = '0';
+        document.getElementById('product-mileage-price').value = '0';
+        document.getElementById('product-rarity').value = '';
+        document.getElementById('product-size').value = '';
+        document.getElementById('category').value = '';
 
         if (product) {
-            document.getElementById("product-id").value = product.id;
-            document.getElementById("product-name").value = product.name;
-            document.getElementById("product-order").value = product.order;
-            document.getElementById("product-google-sku").value = product.google_sku;
-            document.getElementById("product-apple-sku").value = product.apple_sku;
-            document.getElementById("product-apple-sku-k").value = product.apple_sku_k;
-            document.getElementById("product-type").value = product.product_type;
-            document.getElementById("product-required-level").value = product.required_level || "";
-            document.getElementById("product-daily-limit").value = product.daily_limit || "";
-            document.getElementById("product-weekly-limit").value = product.weekly_limit || "";
-            document.getElementById("product-account-limit").value = product.account_limit || "";
-            document.getElementById("product-active").checked = product.active;
-            document.getElementById("product-discount").value = product.discount;
-            document.getElementById("product-open-timestamp").value = product.open_timestamp || "";
-            document.getElementById("product-close-timestamp").value = product.close_timestamp || "";
-            document.getElementById("product-mileage").value = product.mileage;
-            document.getElementById("product-mileage-price").value = product.mileage_price || "";
-            document.getElementById("product-rarity").value = product.rarity;
-            document.getElementById("product-size").value = product.size;
+            // 기존 데이터로 폼 채우기
+            document.getElementById('product-id').value = product.id;
+            document.getElementById('product-name').value = product.name;
+            document.getElementById('product-order').value = product.order;
+            document.getElementById('product-google-sku').value = product.google_sku;
+            document.getElementById('product-apple-sku').value = product.apple_sku;
+            document.getElementById('product-apple-sku-k').value = product.apple_sku_k;
+            document.getElementById('product-type').value = product.product_type;
+            document.getElementById('product-required-level').value = product.required_level || '';
+            document.getElementById('product-daily-limit').value = product.daily_limit || '';
+            document.getElementById('product-weekly-limit').value = product.weekly_limit || '';
+            document.getElementById('product-account-limit').value = product.account_limit || '';
+            document.getElementById('product-active').checked = product.active;
+            document.getElementById('product-discount').value = product.discount;
+            document.getElementById('product-open-timestamp').value = product.open_timestamp || '';
+            document.getElementById('product-close-timestamp').value = product.close_timestamp || '';
+            document.getElementById('product-mileage').value = product.mileage;
+            document.getElementById('product-mileage-price').value = product.mileage_price || '';
+            document.getElementById('product-rarity').value = product.rarity;
+            document.getElementById('product-size').value = product.size;
+            document.getElementById('category').value = product.category_id || '';
 
-            // 이미지 입력 필드와 미리보기 표시
-            document.getElementById("product-detail-image").style.display = "block";
-            document.getElementById("product-list-image").style.display = "block";
-            if (product.detail_image_path) {
-                document.getElementById("product-preview-detail").style.display = "block";
-                document.getElementById("product-preview-detail-image").src = product.detail_image_path;
-                document.getElementById("product-preview-detail-image").style.display = "block";
+            // 기존 이미지 표시
+            if (product.detail_image) {
+                const detailPreview = document.getElementById('product-preview-detail');
+                detailPreview.innerHTML = `<img src="${product.detail_image}" class="img-fluid" style="max-height: 200px;">`;
             }
-            if (product.list_image_path) {
-                document.getElementById("product-preview-list").style.display = "block";
-                document.getElementById("product-preview-list-image").src = product.list_image_path;
-                document.getElementById("product-preview-list-image").style.display = "block";
+            if (product.list_image) {
+                const listPreview = document.getElementById('product-preview-list');
+                listPreview.innerHTML = `<img src="${product.list_image}" class="img-fluid" style="max-height: 200px;">`;
             }
 
-            // 가격 정보 설정
-            if (product.price_list) {
-                product.price_list.forEach(price => {
-                    const priceRow = document.createElement("tr");
-                    priceRow.innerHTML = `
-                        <td>
-                            <select class="form-select" name="price_store[]" required>
-                                <option value="GOOGLE" ${price.store === "GOOGLE" ? "selected" : ""}>Google</option>
-                                <option value="APPLE" ${price.store === "APPLE" ? "selected" : ""}>Apple</option>
-                            </select>
-                        </td>
-                        <td>
-                            <input type="text" class="form-control" name="price_currency[]" value="${price.currency}" required>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control" name="price_price[]" value="${price.price}" required>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control" name="price_discount[]" value="${price.discount}" required>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control" name="price_regular_price[]" value="${price.regular_price}" required>
-                        </td>
-                        <td>
-                            <div class="form-check">
-                                <input type="checkbox" class="form-check-input" name="price_active[]" ${price.active ? "checked" : ""}>
-                            </div>
-                        </td>
-                        <td>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">삭제</button>
-                        </td>
-                    `;
-                    document.getElementById("price-list").appendChild(priceRow);
-                });
-            }
-
-            // Fungible Asset Value 설정
-            if (product.fav_list) {
-                product.fav_list.forEach((fav, index) => {
-                    const favRow = document.createElement("div");
-                    favRow.className = "card mb-2";
-                    favRow.innerHTML = `
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-5">
-                                    <div class="mb-3">
-                                        <label class="form-label">Ticker</label>
-                                        <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" value="${fav.ticker}" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-5">
-                                    <div class="mb-3">
-                                        <label class="form-label">Amount</label>
-                                        <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" value="${fav.amount}" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-2 d-flex align-items-center">
-                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    document.getElementById("fungible-asset-value-list").appendChild(favRow);
-                });
-            }
-
-            // Fungible Item 설정
+            // 기존 fungible items 추가
             if (product.fungible_item_list) {
-                product.fungible_item_list.forEach((item, index) => {
-                    const itemRow = document.createElement("div");
-                    itemRow.className = "card mb-2";
-                    itemRow.innerHTML = `
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Sheet Item ID</label>
-                                        <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" value="${item.sheet_item_id}" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Fungible Item ID</label>
-                                        <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" value="${item.fungible_item_id}" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="mb-3">
-                                        <label class="form-label">Amount</label>
-                                        <input type="number" name="fungible_items[${index}][amount]" class="form-control" value="${item.amount}" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-1 d-flex align-items-center">
-                                    <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.card').remove()">×</button>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-12">
-                                    <div class="mb-3">
-                                        <label class="form-label">Name</label>
-                                        <input type="text" name="fungible_items[${index}][name]" class="form-control" value="${item.name}" required>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    document.getElementById("fungible-item-list").appendChild(itemRow);
+                product.fungible_item_list.forEach(item => {
+                    addFungibleItem(item.sheet_item_id, item.fungible_item_id, item.amount, item.name);
                 });
             }
 
-            // 카테고리 선택
-            if (product.category_list && product.category_list.length > 0) {
-                document.getElementById("category").value = product.category_list[0].id;
+            // 기존 fungible asset values 추가
+            if (product.fav_list) {
+                product.fav_list.forEach(asset => {
+                    addFungibleAssetValue(asset.ticker, asset.amount);
+                });
             }
 
-            document.getElementById("product-submit").textContent = "상품 수정";
-            document.getElementById("product-submit").classList.remove("btn-primary");
-            document.getElementById("product-submit").classList.add("btn-warning");
+            // 수정 모드에서는 submit 버튼 활성화
+            document.getElementById('product-submit').disabled = false;
+        } else {
+            // 새 상품 추가 모드
+            document.getElementById('product-submit').disabled = true;
         }
     }
-
-    // 모달이 닫힐 때 폼 초기화
-    document.getElementById('productModal').addEventListener('hidden.bs.modal', function () {
-        showProductForm();
-    });
 
     function hideForm() {
         document.getElementById('product-form').classList.add('d-none');
@@ -506,7 +397,7 @@
         }
     }
 
-    function addFungibleAssetValue() {
+    function addFungibleAssetValue(ticker = '', amount = '') {
         const container = document.getElementById('fungible-asset-value-list');
         const index = container.children.length;
         const item = document.createElement('div');
@@ -517,13 +408,13 @@
                     <div class="col-md-5">
                         <div class="mb-3">
                             <label class="form-label">Ticker</label>
-                            <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" required>
+                            <input type="text" name="fungible_asset_values[${index}][ticker]" class="form-control" required value="${ticker}">
                         </div>
                     </div>
                     <div class="col-md-5">
                         <div class="mb-3">
                             <label class="form-label">Amount</label>
-                            <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" required>
+                            <input type="number" step="0.000000000000000001" name="fungible_asset_values[${index}][amount]" class="form-control" required value="${amount}">
                         </div>
                     </div>
                     <div class="col-md-2 d-flex align-items-center">
@@ -535,7 +426,7 @@
         container.appendChild(item);
     }
 
-    function addFungibleItem() {
+    function addFungibleItem(sheetItemId = '', fungibleItemId = '', amount = '', name = '') {
         const container = document.getElementById('fungible-item-list');
         const index = container.children.length;
         const item = document.createElement('div');
@@ -546,19 +437,19 @@
                     <div class="col-md-4">
                         <div class="mb-3">
                             <label class="form-label">Sheet Item ID</label>
-                            <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" required>
+                            <input type="number" name="fungible_items[${index}][sheet_item_id]" class="form-control" required value="${sheetItemId}">
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="mb-3">
                             <label class="form-label">Fungible Item ID</label>
-                            <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" required>
+                            <input type="text" name="fungible_items[${index}][fungible_item_id]" class="form-control" required value="${fungibleItemId}">
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="mb-3">
                             <label class="form-label">Amount</label>
-                            <input type="number" name="fungible_items[${index}][amount]" class="form-control" required>
+                            <input type="number" name="fungible_items[${index}][amount]" class="form-control" required value="${amount}">
                         </div>
                     </div>
                     <div class="col-md-1 d-flex align-items-center">
@@ -569,7 +460,7 @@
                     <div class="col-md-12">
                         <div class="mb-3">
                             <label class="form-label">Name</label>
-                            <input type="text" name="fungible_items[${index}][name]" class="form-control" required>
+                            <input type="text" name="fungible_items[${index}][name]" class="form-control" required value="${name}">
                         </div>
                     </div>
                 </div>
