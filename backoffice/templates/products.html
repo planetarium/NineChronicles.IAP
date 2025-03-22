@@ -76,7 +76,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <form method="post" action="/products/save" id="product-form">
+                    <form method="post" action="/products/save" id="product-form" enctype="multipart/form-data">
                         <input type="hidden" name="id" id="product-id">
 
                         <div class="mb-3">
@@ -271,7 +271,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
-                    <button type="submit" form="product-form" class="btn btn-success" id="product-submit">💾 저장</button>
+                    <button type="submit" form="product-form" class="btn btn-success" id="product-submit" disabled>💾 저장</button>
                 </div>
             </div>
         </div>
@@ -628,10 +628,25 @@
                 preview.src = e.target.result;
                 preview.style.display = 'block';
                 previewContainer.style.display = 'block';
+
+                // 파일이 선택되었을 때 form의 submit 버튼 활성화
+                document.getElementById('product-submit').disabled = false;
             };
             reader.readAsDataURL(input.files[0]);
         }
     }
+
+    // form submit 전에 파일이 선택되었는지 확인
+    document.getElementById('product-form').addEventListener('submit', function(e) {
+        const detailImage = document.getElementById('product-detail-image');
+        const listImage = document.getElementById('product-list-image');
+
+        if (!detailImage.files.length && !listImage.files.length) {
+            e.preventDefault();
+            alert('최소 하나의 이미지를 선택해주세요.');
+            return false;
+        }
+    });
 </script>
 
 <style>

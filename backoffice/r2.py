@@ -35,7 +35,7 @@ r2_client = boto3.client(
     region_name="auto",
 )
 
-def upload_to_r2(file_path: str, r2_key: str):
+def upload_csv_to_r2(file_path: str, r2_key: str):
     try:
         r2_client.upload_file(
             file_path,
@@ -44,6 +44,20 @@ def upload_to_r2(file_path: str, r2_key: str):
             ExtraArgs={
                 "ContentType": "text/csv; charset=utf-8",
                 "ContentDisposition": "inline"
+            }
+        )
+        print(f"✅ R2 업로드 완료: r2://{R2_BUCKET}/{r2_key}")
+    except Exception as e:
+        print(f"❌ R2 업로드 실패 (r2://{R2_BUCKET}/{r2_key}): {e}")
+
+def upload_image_to_r2(file_path: str, r2_key: str):
+    try:
+        r2_client.upload_file(
+            file_path,
+            R2_BUCKET,
+            r2_key,
+            ExtraArgs={
+                "ContentType": "image/png",
             }
         )
         print(f"✅ R2 업로드 완료: r2://{R2_BUCKET}/{r2_key}")

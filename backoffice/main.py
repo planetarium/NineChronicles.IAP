@@ -5,8 +5,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from backoffice.r2 import CDN_URLS, R2_CATEGORY_KEYS, R2_PRODUCT_KEYS, purge_cache, upload_to_r2
-from scripts.s3 import S3_BUCKET, S3_IMAGE_DETAIL_FOLDER, S3_IMAGE_LIST_FOLDER
+from backoffice.r2 import CDN_URLS, R2_CATEGORY_KEYS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from .database import SessionLocal
 from common.models.product import Product, Category, FungibleItemProduct, FungibleAssetProduct
 from common.enums import ProductType, ProductRarity, ProductAssetUISize
@@ -62,7 +61,7 @@ async def save_product(
     form_data = await request.form()
     id = form_data.get("id")
     name = form_data.get("name")
-    order = int(form_data.get("order"))
+    order = int(form_data.get("order", 0))
     google_sku = form_data.get("google_sku")
     apple_sku = form_data.get("apple_sku")
     apple_sku_k = form_data.get("apple_sku_k")
@@ -72,10 +71,10 @@ async def save_product(
     weekly_limit = int(form_data.get("weekly_limit")) if form_data.get("weekly_limit") else None
     account_limit = int(form_data.get("account_limit")) if form_data.get("account_limit") else None
     active = form_data.get("active") == "on"
-    discount = float(form_data.get("discount", 0))
+    discount = float(form_data.get("discount", 0)) if form_data.get("discount") else 0
     open_timestamp = form_data.get("open_timestamp")
     close_timestamp = form_data.get("close_timestamp")
-    mileage = int(form_data.get("mileage", 0))
+    mileage = int(form_data.get("mileage", 0)) if form_data.get("mileage") else 0
     mileage_price = int(form_data.get("mileage_price")) if form_data.get("mileage_price") else None
     rarity = form_data.get("rarity")
     size = form_data.get("size")
@@ -108,100 +107,105 @@ async def save_product(
     product.mileage_price = mileage_price
     product.rarity = ProductRarity(rarity) if rarity else ProductRarity.NORMAL
     product.size = ProductAssetUISize(size) if size else ProductAssetUISize.ONE_BY_ONE
+    # 사용 안함
+    product.l10n_key = "="
+    product.path = "="
 
     # 카테고리 설정
     category = db.query(Category).filter(Category.id == category_id).first()
     if category:
         product.category_list = [category]
 
-    # Fungible Items 추가
-    for key, value in form_data.items():
-        if key.startswith("fungible_items[") and key.endswith("][sheet_item_id]"):
-            index = key.split("[")[1].split("]")[0]
-            sheet_item_id = int(value)
-            fungible_item_id = form_data.get(f"fungible_items[{index}][fungible_item_id]")
-            amount = int(form_data.get(f"fungible_items[{index}][amount]"))
-            name = form_data.get(f"fungible_items[{index}][name]")
-
-            fungible_item = FungibleItemProduct(
-                product_id=product.id,
-                sheet_item_id=sheet_item_id,
-                fungible_item_id=fungible_item_id,
-                amount=amount,
-                name=name
-            )
-            db.add(fungible_item)
-
-    # Fungible Asset Values 추가
-    for key, value in form_data.items():
-        if key.startswith("fungible_asset_values[") and key.endswith("][ticker]"):
-            index = key.split("[")[1].split("]")[0]
-            ticker = value
-            amount = float(form_data.get(f"fungible_asset_values[{index}][amount]"))
-
-            fungible_asset = FungibleAssetProduct(
-                product_id=product.id,
-                ticker=ticker,
-                amount=amount,
-                decimal_places=18,  # 기본값으로 18 설정
-            )
-            db.add(fungible_asset)
-
-    # 이미지 파일 처리
-    if detail_image:
-        file_name = product.get_image_name()
-
-        # S3에 업로드
-        for folder in S3_IMAGE_DETAIL_FOLDER:
-            s3_key = f"{folder}{file_name}"
-            try:
-                # 파일 내용을 바이트로 읽어서 업로드
-                file_content = await detail_image.read()
-                s3_client.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=s3_key,
-                    Body=file_content,
-                    ContentType=detail_image.content_type
-                )
-            except Exception as e:
-                print(f"Detail 이미지 업로드 실패: {e}")
-
-    if list_image:
-        file_name = product.get_image_name()
-
-        # S3에 업로드
-        for folder in S3_IMAGE_LIST_FOLDER:
-            s3_key = f"{folder}{file_name}"
-            try:
-                # 파일 내용을 바이트로 읽어서 업로드
-                file_content = await list_image.read()
-                s3_client.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=s3_key,
-                    Body=file_content,
-                    ContentType=list_image.content_type
-                )
-            except Exception as e:
-                print(f"List 이미지 업로드 실패: {e}")
-
     try:
+        # 먼저 product를 저장하여 id를 얻습니다
+        db.add(product)
+        db.flush()  # product의 id를 얻기 위해 flush
+
+        # Fungible Items 추가
+        for key, value in form_data.items():
+            if key.startswith("fungible_items[") and key.endswith("][sheet_item_id]"):
+                index = key.split("[")[1].split("]")[0]
+                sheet_item_id = int(value)
+                fungible_item_id = form_data.get(f"fungible_items[{index}][fungible_item_id]")
+                amount = int(form_data.get(f"fungible_items[{index}][amount]"))
+                name = form_data.get(f"fungible_items[{index}][name]")
+
+                fungible_item = FungibleItemProduct(
+                    product_id=product.id,
+                    sheet_item_id=sheet_item_id,
+                    fungible_item_id=fungible_item_id,
+                    amount=amount,
+                    name=name
+                )
+                db.add(fungible_item)
+
+        # Fungible Asset Values 추가
+        for key, value in form_data.items():
+            if key.startswith("fungible_asset_values[") and key.endswith("][ticker]"):
+                index = key.split("[")[1].split("]")[0]
+                ticker = value
+                amount = float(form_data.get(f"fungible_asset_values[{index}][amount]"))
+
+                fungible_asset = FungibleAssetProduct(
+                    product_id=product.id,
+                    ticker=ticker,
+                    amount=amount,
+                    decimal_places=18,  # 기본값으로 18 설정
+                )
+                db.add(fungible_asset)
+
+        # 이미지 파일 처리
+        r2_keys = []
+        if detail_image and detail_image.filename:
+            file_name = product.get_image_name()
+            temp_detail_image_path = f"temp_detail_image_{file_name}"
+            with open(temp_detail_image_path, "wb") as buffer:
+                content = await detail_image.read()
+                buffer.write(content)
+
+            # R2에 업로드
+            for folder in R2_IMAGE_DETAIL_FOLDER:
+                r2_key = f"{folder}{file_name}"
+                try:
+                    upload_image_to_r2(temp_detail_image_path, r2_key)
+                    r2_keys.append(r2_key)
+                except Exception as e:
+                    print(f"Detail 이미지 업로드 실패: {e}")
+
+            # 임시 파일 삭제
+            os.remove(temp_detail_image_path)
+
+        if list_image and list_image.filename:
+            file_name = product.get_image_name()
+            temp_list_image_path = f"temp_list_image_{file_name}"
+            with open(temp_list_image_path, "wb") as buffer:
+                content = await list_image.read()
+                buffer.write(content)
+
+            # R2에 업로드
+            for folder in R2_IMAGE_LIST_FOLDER:
+                r2_key = f"{folder}{file_name}"
+                try:
+                    upload_image_to_r2(temp_list_image_path, r2_key)
+                    r2_keys.append(r2_key)
+                except Exception as e:
+                    print(f"List 이미지 업로드 실패: {e}")
+
+            # 임시 파일 삭제
+            os.remove(temp_list_image_path)
+
+        # 모든 변경사항을 커밋
         db.commit()
+
+        # 캐시 무효화
+        if len(r2_keys) > 0:
+            for zone_id, cdn_url in CDN_URLS.items():
+                for r2_key in r2_keys:
+                    purge_cache(zone_id, cdn_url, r2_key)
+
     except Exception as e:
         db.rollback()
         raise e
-
-    # CloudFront 캐시 무효화
-    if detail_image or list_image:
-        try:
-            cloudfront_client.create_invalidation(
-                DistributionId=os.getenv("CLOUDFRONT_DISTRIBUTION_1"),
-                InvalidationBatch={
-                    "Paths": {"Quantity": 1, "Items": ["/*"]},
-                    "CallerReference": str(os.urandom(16))
-                }
-            )
-        except Exception as e:
-            print(f"CloudFront 캐시 무효화 실패: {e}")
 
     return RedirectResponse(url="/products", status_code=303)
 
@@ -288,7 +292,7 @@ async def upload_product_l10n(request: Request, file: UploadFile = File(...)):
         # R2에 업로드
         results = []
         for r2_key in R2_PRODUCT_KEYS:
-            upload_to_r2(temp_path, r2_key)
+            upload_csv_to_r2(temp_path, r2_key)
 
         # 캐시 무효화
         for zone_id, cdn_url in CDN_URLS.items():
@@ -328,7 +332,7 @@ async def upload_category_l10n(
 
         # R2에 업로드
         r2_key = "shop/l10n/category.csv"
-        upload_to_r2(temp_file, r2_key)
+        upload_csv_to_r2(temp_file, r2_key)
 
         # 캐시 무효화
         results = []
