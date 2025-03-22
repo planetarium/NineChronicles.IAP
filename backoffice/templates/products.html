@@ -356,13 +356,15 @@
             document.getElementById('category').value = product.category_id || '';
 
             // 기존 이미지 표시
-            if (product.detail_image) {
+            if (product.detail_image_path) {
                 const detailPreview = document.getElementById('product-preview-detail');
-                detailPreview.innerHTML = `<img src="${product.detail_image}" class="img-fluid" style="max-height: 200px;">`;
+                detailPreview.style.display = 'block';
+                detailPreview.innerHTML = `<img src="${product.detail_image_path}" class="img-fluid" style="max-height: 200px;">`;
             }
-            if (product.list_image) {
+            if (product.list_image_path) {
                 const listPreview = document.getElementById('product-preview-list');
-                listPreview.innerHTML = `<img src="${product.list_image}" class="img-fluid" style="max-height: 200px;">`;
+                listPreview.style.display = 'block';
+                listPreview.innerHTML = `<img src="${product.list_image_path}" class="img-fluid" style="max-height: 200px;">`;
             }
 
             // 기존 fungible items 추가
