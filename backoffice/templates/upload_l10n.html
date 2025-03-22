@@ -53,7 +53,7 @@
                                 <div class="drop-zone-content">
                                     <i class="bi bi-cloud-upload"></i>
                                     <p>파일을 드래그하여 업로드하거나 클릭하여 선택하세요</p>
-                                    <input type="file" class="form-control d-none" id="category_csv" name="file" accept=".csv" required>
+                                    <input type="file" class="form-control d-none" id="category_csv" name="category_file" accept=".csv" required>
                                 </div>
                             </div>
                             <div id="category-file-name" class="mt-2"></div>
@@ -74,9 +74,9 @@
         </div>
     </div>
 
-    {% if message %}
-    <div class="alert alert-{{ message_type }} alert-dismissible fade show" role="alert">
-        {{ message }}
+    {% if request.session.message %}
+    <div class="alert alert-{{ request.session.message_type }} alert-dismissible fade show" role="alert">
+        {{ request.session.message }}
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
     {% endif %}
