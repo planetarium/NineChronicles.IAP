@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
+from .auth import router as auth_router
 
 from backoffice.r2 import CDN_URLS, R2_CATEGORY_KEYS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from .database import SessionLocal
@@ -18,11 +19,22 @@ import shutil
 app = FastAPI(debug=True)
 templates = Jinja2Templates(directory="backoffice/templates", auto_reload=True)
 
-# SessionMiddleware 추가
-app.add_middleware(
-    SessionMiddleware,
-    secret_key="your-secret-key-here"  # 안전한 비밀키로 변경해주세요
-)
+# 인증 라우터 추가
+app.include_router(auth_router)
+
+# 인증 미들웨어
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # 인증이 필요없는 경로
+    public_paths = ["/auth/login", "/auth/callback", "/static"]
+
+    if request.url.path not in public_paths:
+        user = request.session.get("user")
+        if not user:
+            return RedirectResponse(url="/auth/login")
+
+    response = await call_next(request)
+    return response
 
 def get_db():
     db = SessionLocal()
@@ -365,4 +377,11 @@ async def upload_category_l10n(
 
 @app.get("/")
 async def root():
-    return RedirectResponse(url="/products", status_code=303)
+    return RedirectResponse(url="/auth/login", status_code=303)
+
+# 세션 미들웨어 설정
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET_KEY"),
+    max_age=3600  # 1시간
+)
