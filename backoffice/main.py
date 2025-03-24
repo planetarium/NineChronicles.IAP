@@ -162,7 +162,7 @@ async def save_product(
                     product_id=product.id,
                     ticker=ticker,
                     amount=amount,
-                    decimal_places=18,  # 기본값으로 18 설정
+                    decimal_places=18 if "CRYSTAL" in ticker else 0,  # CRYSTAL은 18자리, 나머지는 0자리
                 )
                 db.add(fungible_asset)
 
