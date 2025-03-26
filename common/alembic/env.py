@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path = ["", ".."] + sys.path[1:]
 from common import models
-
+from iap.settings import DB_URI
 for model in models.__all__:
     import_module(f".{model}", "common.models")
 from common.models.base import Base
@@ -32,7 +32,7 @@ target_metadata = Base.metadata
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
-
+config.set_main_option("sqlalchemy.url", DB_URI)
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
