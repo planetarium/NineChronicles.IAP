@@ -25,6 +25,7 @@ alembic = "^1.13.1"
 python-dotenv = "^1.0.1"
 itsdangerous = "^2.2.0"
 
+
 [tool.poetry.group.iap.dependencies]
 # IAP API
 cryptography = "^41.0.7"
