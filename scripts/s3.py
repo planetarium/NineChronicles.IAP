@@ -83,8 +83,10 @@ def invalidate_cloudfront():
                 }
             )
             print(f"✅ CloudFront 캐시 무효화 요청 완료: {distribution_id}")
+            return True
         except Exception as e:
             print(f"❌ CloudFront 캐시 무효화 실패 ({distribution_id}): {e}")
+            return False
 
 if __name__ == "__main__":
     print("🚀 S3 파일 업로드 시작...")

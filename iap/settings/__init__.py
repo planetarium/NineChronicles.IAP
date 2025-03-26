@@ -4,6 +4,9 @@ import os
 from starlette.config import Config
 
 from common.utils.aws import fetch_secrets, fetch_parameter
+from dotenv import load_dotenv
+
+load_dotenv()
 
 stage = os.environ.get("STAGE", "local")
 db_password = None
@@ -82,3 +85,12 @@ REGION_NAME = config("REGION_NAME")
 
 SEASON_PASS_JWT_SECRET = season_pass_jwt_secret or config("SEASON_PASS_JWT_SECRET")
 HEADLESS_JWT_GQL_SECRET = headless_gql_jwt_secret or config("HEADLESS_GQL_JWT_SECRET")
+CDN_HOST = config("CDN_HOST")
+CLOUDFLARE_ASSETS_ZONE_ID = config("CLOUDFLARE_ASSETS_ZONE_ID")
+CLOUDFLARE_ASSETS_K_ZONE_ID = config("CLOUDFLARE_ASSETS_K_ZONE_ID")
+CLOUDFLARE_EMAIL = config("CLOUDFLARE_EMAIL")
+CLOUDFLARE_API_KEY = config("CLOUDFLARE_API_KEY")
+R2_ACCESS_KEY_ID = config("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = config("R2_SECRET_ACCESS_KEY")
+R2_ACCOUNT_ID = config("R2_ACCOUNT_ID")
+R2_BUCKET = config("R2_BUCKET")

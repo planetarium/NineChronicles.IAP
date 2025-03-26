@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>카테고리 관리</h2>
+
+    <!-- 카테고리 목록 -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">카테고리 목록</h5>
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#categoryModal">
+                새 카테고리 추가
+            </button>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>이름</th>
+                            <th>순서</th>
+                            <th>활성화</th>
+                            <th>L10N Key</th>
+                            <th>시작일</th>
+                            <th>종료일</th>
+                            <th>작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for category in categories %}
+                        <tr>
+                            <td>{{ category.id }}</td>
+                            <td>{{ category.name }}</td>
+                            <td>{{ category.order }}</td>
+                            <td>
+                                <span class="badge {% if category.active %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ "활성" if category.active else "비활성" }}
+                                </span>
+                            </td>
+                            <td>{{ category.l10n_key }}</td>
+                            <td>{{ category.open_timestamp or "-" }}</td>
+                            <td>{{ category.close_timestamp or "-" }}</td>
+                            <td>
+                                <button type="button" class="btn btn-sm btn-primary edit-category" data-category='{{ category|tojson }}'>
+                                    수정
+                                </button>
+                                <a href="/categories/delete/{{ category.id }}" class="btn btn-sm btn-danger" onclick="return confirm('정말 삭제하시겠습니까?')">
+                                    삭제
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 카테고리 모달 -->
+<div class="modal fade" id="categoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">카테고리 추가/수정</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="categoryForm" action="/categories/save" method="post">
+                    <input type="hidden" name="id" id="categoryId">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">이름</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="order" class="form-label">순서</label>
+                        <input type="number" class="form-control" id="order" name="order" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="l10n_key" class="form-label">L10N Key</label>
+                        <input type="text" class="form-control" id="l10n_key" name="l10n_key" required>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="active" name="active">
+                            <label class="form-check-label" for="active">활성화</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="open_timestamp" class="form-label">시작일</label>
+                        <input type="datetime-local" class="form-control" id="open_timestamp" name="open_timestamp">
+                    </div>
+                    <div class="mb-3">
+                        <label for="close_timestamp" class="form-label">종료일</label>
+                        <input type="datetime-local" class="form-control" id="close_timestamp" name="close_timestamp">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="submit" form="categoryForm" class="btn btn-primary">저장</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function editCategory(category) {
+    document.getElementById('categoryId').value = category.id;
+    document.getElementById('name').value = category.name;
+    document.getElementById('order').value = category.order;
+    document.getElementById('l10n_key').value = category.l10n_key;
+    document.getElementById('active').checked = category.active;
+
+    if (category.open_timestamp) {
+        document.getElementById('open_timestamp').value = category.open_timestamp.slice(0, 16);
+    } else {
+        document.getElementById('open_timestamp').value = '';
+    }
+
+    if (category.close_timestamp) {
+        document.getElementById('close_timestamp').value = category.close_timestamp.slice(0, 16);
+    } else {
+        document.getElementById('close_timestamp').value = '';
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('categoryModal'));
+    modal.show();
+}
+
+// 모달이 닫힐 때 폼 초기화
+document.getElementById('categoryModal').addEventListener('hidden.bs.modal', function () {
+    document.getElementById('categoryForm').reset();
+    document.getElementById('categoryId').value = '';
+});
+
+// 수정 버튼에 이벤트 리스너 추가
+document.querySelectorAll('.edit-category').forEach(button => {
+    button.addEventListener('click', function() {
+        const categoryData = JSON.parse(this.dataset.category);
+        editCategory(categoryData);
+    });
+});
+</script>
+{% endblock %}
