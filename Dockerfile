@@ -12,6 +12,7 @@ COPY alembic.ini ./
 COPY iap/ ./iap/
 COPY common/ ./common/
 COPY worker/ ./worker/
+COPY backoffice/ ./backoffice/
 COPY app.py ./
 
 # Poetry 설정: 가상환경 생성하지 않음
@@ -25,4 +26,4 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # 애플리케이션 실행
-CMD ["poetry", "run", "uvicorn", "iap.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["poetry", "run", "uvicorn", "backoffice.main:app", "--host", "0.0.0.0", "--port", "8000"]
