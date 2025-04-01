@@ -4,10 +4,7 @@
 
 {% block content %}
 <div class="container">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="mb-0">Product 관리</h1>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
-    </div>
+    <h1 class="mb-4">Product 관리</h1>
 
     <!-- Product 목록 테이블 -->
     <div class="card">
@@ -72,6 +69,9 @@
             </div>
         </div>
     </div>
+
+    <!-- 추가 버튼 -->
+    <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
 
     <!-- Product 추가/수정 모달 -->
     <div class="modal fade" id="productModal" tabindex="-1">
@@ -666,6 +666,9 @@
     margin: 0;
     padding: 0;
     border: none;
+    max-height: 70vh;
+    overflow-y: auto;
+    position: relative;
 }
 
 .table {
@@ -681,29 +684,71 @@
     z-index: 1;
 }
 
+/* 관리 열 고정 스타일 */
+.table th:last-child,
+.table td:last-child {
+    position: sticky;
+    right: 0;
+    background-color: #fff;
+    z-index: 2;
+    border-left: 1px solid #dee2e6;
+    min-width: 160px;
+}
+
+.table th:last-child {
+    background-color: #212529;
+    z-index: 3;
+}
+
+/* 마지막 열 그림자 효과 */
+.table th:last-child::after,
+.table td:last-child::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(to right, rgba(0,0,0,0.1), rgba(0,0,0,0));
+}
+
 .table td {
     vertical-align: middle;
     white-space: nowrap;
+    background-color: inherit;
+}
+
+/* 짝수 행의 배경색 유지 */
+.table-striped > tbody > tr:nth-of-type(even) td:last-child {
+    background-color: rgba(0,0,0,.05);
+}
+
+/* 호버 효과 유지 */
+.table-hover > tbody > tr:hover td:last-child {
+    background-color: rgba(0,0,0,.075);
 }
 
 .card {
     border-radius: 0.5rem;
     box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
     margin-bottom: 1.5rem;
+    overflow: hidden;
 }
 
 .card-body {
     padding: 0;
 }
 
-.table-responsive {
-    max-height: 70vh;
-    overflow-y: auto;
+.btn-sm + .btn-sm {
+    margin-left: 0.25rem;
 }
 
-.btn-sm {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.875rem;
+.action-buttons {
+    display: flex;
+    gap: 0.25rem;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 0.25rem;
 }
 
 /* 정렬 관련 스타일 */
