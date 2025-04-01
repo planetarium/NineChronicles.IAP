@@ -585,27 +585,47 @@
                 const rows = Array.from(tbody.querySelectorAll('tr'));
 
                 const sortedRows = rows.sort((a, b) => {
-                    let aValue = a.querySelector(`td:nth-child(${Array.from(headers).indexOf(header) + 1})`).textContent.trim();
-                    let bValue = b.querySelector(`td:nth-child(${Array.from(headers).indexOf(header) + 1})`).textContent.trim();
+                    const columnIndex = Array.from(table.querySelectorAll('th')).indexOf(header) + 1;
+                    let aValue = a.querySelector(`td:nth-child(${columnIndex})`).textContent.trim();
+                    let bValue = b.querySelector(`td:nth-child(${columnIndex})`).textContent.trim();
 
                     // 숫자 정렬 처리
-                    if (column === 'id' || column === 'order' || column === 'required_level' || column === 'mileage') {
+                    if (column === 'id' || column === 'order' || column === 'required_level') {
                         aValue = parseFloat(aValue) || 0;
                         bValue = parseFloat(bValue) || 0;
                     }
 
+                    // 마일리지 정렬 처리
+                    if (column === 'mileage') {
+                        aValue = parseInt(aValue.replace(/[^0-9]/g, '')) || 0;
+                        bValue = parseInt(bValue.replace(/[^0-9]/g, '')) || 0;
+                    }
+
                     // 상태 정렬 처리
                     if (column === 'active') {
-                        aValue = a.querySelector('td:nth-child(12) .badge').textContent.includes('활성') ? 1 : 0;
-                        bValue = b.querySelector('td:nth-child(12) .badge').textContent.includes('활성') ? 1 : 0;
+                        const aBadge = a.querySelector(`td:nth-child(${columnIndex}) .badge`);
+                        const bBadge = b.querySelector(`td:nth-child(${columnIndex}) .badge`);
+
+                        // 활성 상태를 1, 비활성 상태를 0으로 변환
+                        aValue = aBadge && aBadge.classList.contains('bg-success') ? 1 : 0;
+                        bValue = bBadge && bBadge.classList.contains('bg-success') ? 1 : 0;
+
+                        return direction === 'asc' ? aValue - bValue : bValue - aValue;
                     }
 
                     if (aValue === bValue) return 0;
-                    if (direction === 'asc') {
-                        return aValue > bValue ? 1 : -1;
-                    } else {
-                        return aValue < bValue ? 1 : -1;
+
+                    // 문자열 비교
+                    if (typeof aValue === 'string' && typeof bValue === 'string') {
+                        return direction === 'asc'
+                            ? aValue.localeCompare(bValue, 'ko-KR')
+                            : bValue.localeCompare(aValue, 'ko-KR');
                     }
+
+                    // 숫자 비교
+                    return direction === 'asc'
+                        ? aValue - bValue
+                        : bValue - aValue;
                 });
 
                 // 정렬된 행 다시 삽입
