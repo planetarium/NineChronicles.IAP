@@ -7,62 +7,68 @@
     <h1 class="mb-4">Product 관리</h1>
 
     <!-- Product 목록 테이블 -->
-    <table class="table table-striped table-hover">
-        <thead class="table-dark">
-            <tr>
-                <th>ID</th>
-                <th>이름</th>
-                <th>정렬</th>
-                <th>Google SKU</th>
-                <th>Apple SKU</th>
-                <th>Apple SKU (한국)</th>
-                <th>타입</th>
-                <th>Rarity</th>
-                <th>필요레벨</th>
-                <th>제한</th>
-                <th>마일리지</th>
-                <th>상태</th>
-                <th>관리</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for product in products %}
-            <tr>
-                <td>{{ product.id }}</td>
-                <td>{{ product.name }}</td>
-                <td>{{ product.order }}</td>
-                <td>{{ product.google_sku }}</td>
-                <td>{{ product.apple_sku }}</td>
-                <td>{{ product.apple_sku_k }}</td>
-                <td>{{ product.product_type }}</td>
-                <td>{{ product.rarity or '-' }}</td>
-                <td>{{ product.required_level or '-' }}</td>
-                <td>
-                    {% if product.daily_limit or product.weekly_limit or product.account_limit %}
-                        일:{{ product.daily_limit or '-' }} /
-                        주:{{ product.weekly_limit or '-' }} /
-                        계정:{{ product.account_limit or '-' }}
-                    {% else %}
-                        -
-                    {% endif %}
-                </td>
-                <td>{{ product.mileage }}</td>
-                <td>
-                    {% if product.active %}
-                        <span class="badge bg-success">✅ 활성</span>
-                    {% else %}
-                        <span class="badge bg-danger">❌ 비활성</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <button class="btn btn-warning btn-sm edit-product" data-product='{{ product|tojson }}'>✏️ 수정</button>
-                    <a href="/products/delete/{{ product.id }}" class="btn btn-danger btn-sm"
-                       onclick="return confirm('정말로 이 제품을 삭제하시겠습니까?')">🗑 삭제</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>ID</th>
+                            <th>이름</th>
+                            <th>정렬</th>
+                            <th>Google SKU</th>
+                            <th>Apple SKU</th>
+                            <th>Apple SKU (한국)</th>
+                            <th>타입</th>
+                            <th>Rarity</th>
+                            <th>필요레벨</th>
+                            <th>제한</th>
+                            <th>마일리지</th>
+                            <th>상태</th>
+                            <th>관리</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>{{ product.id }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>{{ product.order }}</td>
+                            <td>{{ product.google_sku }}</td>
+                            <td>{{ product.apple_sku }}</td>
+                            <td>{{ product.apple_sku_k }}</td>
+                            <td>{{ product.product_type }}</td>
+                            <td>{{ product.rarity or '-' }}</td>
+                            <td>{{ product.required_level or '-' }}</td>
+                            <td>
+                                {% if product.daily_limit or product.weekly_limit or product.account_limit %}
+                                    일:{{ product.daily_limit or '-' }} /
+                                    주:{{ product.weekly_limit or '-' }} /
+                                    계정:{{ product.account_limit or '-' }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>{{ product.mileage }}</td>
+                            <td>
+                                {% if product.active %}
+                                    <span class="badge bg-success">✅ 활성</span>
+                                {% else %}
+                                    <span class="badge bg-danger">❌ 비활성</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-warning btn-sm edit-product" data-product='{{ product|tojson }}'>✏️ 수정</button>
+                                <a href="/products/delete/{{ product.id }}" class="btn btn-danger btn-sm"
+                                   onclick="return confirm('정말로 이 제품을 삭제하시겠습니까?')">🗑 삭제</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 
     <!-- 추가 버튼 -->
     <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
@@ -586,6 +592,50 @@
 .drop-zone-content p {
     margin: 0;
     color: #6c757d;
+}
+
+.table-responsive {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+.table {
+    margin-bottom: 0;
+}
+
+.table th {
+    white-space: nowrap;
+    background-color: #212529;
+    color: white;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.table td {
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+}
+
+.card-body {
+    padding: 0;
+}
+
+.table-responsive {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
 }
 </style>
 {% endblock %}
