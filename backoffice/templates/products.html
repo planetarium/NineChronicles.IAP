@@ -4,68 +4,74 @@
 
 {% block content %}
 <div class="container">
-    <h1 class="mb-4">Product 관리</h1>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">Product 관리</h1>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
+    </div>
 
     <!-- Product 목록 테이블 -->
-    <table class="table table-striped table-hover">
-        <thead class="table-dark">
-            <tr>
-                <th>ID</th>
-                <th>이름</th>
-                <th>정렬</th>
-                <th>Google SKU</th>
-                <th>Apple SKU</th>
-                <th>Apple SKU (한국)</th>
-                <th>타입</th>
-                <th>Rarity</th>
-                <th>필요레벨</th>
-                <th>제한</th>
-                <th>마일리지</th>
-                <th>상태</th>
-                <th>관리</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for product in products %}
-            <tr>
-                <td>{{ product.id }}</td>
-                <td>{{ product.name }}</td>
-                <td>{{ product.order }}</td>
-                <td>{{ product.google_sku }}</td>
-                <td>{{ product.apple_sku }}</td>
-                <td>{{ product.apple_sku_k }}</td>
-                <td>{{ product.product_type }}</td>
-                <td>{{ product.rarity or '-' }}</td>
-                <td>{{ product.required_level or '-' }}</td>
-                <td>
-                    {% if product.daily_limit or product.weekly_limit or product.account_limit %}
-                        일:{{ product.daily_limit or '-' }} /
-                        주:{{ product.weekly_limit or '-' }} /
-                        계정:{{ product.account_limit or '-' }}
-                    {% else %}
-                        -
-                    {% endif %}
-                </td>
-                <td>{{ product.mileage }}</td>
-                <td>
-                    {% if product.active %}
-                        <span class="badge bg-success">✅ 활성</span>
-                    {% else %}
-                        <span class="badge bg-danger">❌ 비활성</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <button class="btn btn-warning btn-sm edit-product" data-product='{{ product|tojson }}'>✏️ 수정</button>
-                    <a href="/products/delete/{{ product.id }}" class="btn btn-danger btn-sm"
-                       onclick="return confirm('정말로 이 제품을 삭제하시겠습니까?')">🗑 삭제</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <!-- 추가 버튼 -->
-    <button class="btn btn-primary mt-3" data-bs-toggle="modal" data-bs-target="#productModal">➕ 새 Product 추가</button>
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th class="sortable" data-sort="id">ID <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="name">이름 <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="order">정렬 <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="google_sku">Google SKU <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="apple_sku">Apple SKU <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="apple_sku_k">Apple SKU (한국) <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="product_type">타입 <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="rarity">Rarity <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="required_level">필요레벨 <span class="sort-icon"></span></th>
+                            <th>제한</th>
+                            <th class="sortable" data-sort="mileage">마일리지 <span class="sort-icon"></span></th>
+                            <th class="sortable" data-sort="active">상태 <span class="sort-icon"></span></th>
+                            <th>관리</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>{{ product.id }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>{{ product.order }}</td>
+                            <td>{{ product.google_sku }}</td>
+                            <td>{{ product.apple_sku }}</td>
+                            <td>{{ product.apple_sku_k }}</td>
+                            <td>{{ product.product_type }}</td>
+                            <td>{{ product.rarity or '-' }}</td>
+                            <td>{{ product.required_level or '-' }}</td>
+                            <td>
+                                {% if product.daily_limit or product.weekly_limit or product.account_limit %}
+                                    일:{{ product.daily_limit or '-' }} /
+                                    주:{{ product.weekly_limit or '-' }} /
+                                    계정:{{ product.account_limit or '-' }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>{{ product.mileage }}</td>
+                            <td>
+                                {% if product.active %}
+                                    <span class="badge bg-success">✅ 활성</span>
+                                {% else %}
+                                    <span class="badge bg-danger">❌ 비활성</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-warning btn-sm edit-product" data-product='{{ product|tojson }}'>✏️ 수정</button>
+                                <a href="/products/delete/{{ product.id }}" class="btn btn-danger btn-sm"
+                                   onclick="return confirm('정말로 이 제품을 삭제하시겠습니까?')">🗑 삭제</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 
     <!-- Product 추가/수정 모달 -->
     <div class="modal fade" id="productModal" tabindex="-1">
@@ -540,6 +546,94 @@
             return false;
         }
     });
+
+    // 테이블 정렬 기능
+    document.addEventListener('DOMContentLoaded', function() {
+        const table = document.querySelector('table');
+        const headers = table.querySelectorAll('th.sortable');
+        let currentSort = {
+            column: null,
+            direction: 'asc'
+        };
+
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const column = header.dataset.sort;
+                let direction = 'asc';
+
+                // 이전에 정렬된 헤더의 클래스 제거
+                headers.forEach(h => {
+                    h.classList.remove('sort-asc', 'sort-desc');
+                });
+
+                // 같은 컬럼을 다시 클릭한 경우 방향 전환
+                if (currentSort.column === column) {
+                    direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                }
+
+                // 정렬 상태 업데이트
+                currentSort = {
+                    column: column,
+                    direction: direction
+                };
+
+                // 정렬 방향 표시
+                header.classList.add(`sort-${direction}`);
+
+                // 테이블 정렬
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+
+                const sortedRows = rows.sort((a, b) => {
+                    const columnIndex = Array.from(table.querySelectorAll('th')).indexOf(header) + 1;
+                    let aValue = a.querySelector(`td:nth-child(${columnIndex})`).textContent.trim();
+                    let bValue = b.querySelector(`td:nth-child(${columnIndex})`).textContent.trim();
+
+                    // 숫자 정렬 처리
+                    if (column === 'id' || column === 'order' || column === 'required_level') {
+                        aValue = parseFloat(aValue) || 0;
+                        bValue = parseFloat(bValue) || 0;
+                    }
+
+                    // 마일리지 정렬 처리
+                    if (column === 'mileage') {
+                        aValue = parseInt(aValue.replace(/[^0-9]/g, '')) || 0;
+                        bValue = parseInt(bValue.replace(/[^0-9]/g, '')) || 0;
+                    }
+
+                    // 상태 정렬 처리
+                    if (column === 'active') {
+                        const aBadge = a.querySelector(`td:nth-child(${columnIndex}) .badge`);
+                        const bBadge = b.querySelector(`td:nth-child(${columnIndex}) .badge`);
+
+                        // 활성 상태를 1, 비활성 상태를 0으로 변환
+                        aValue = aBadge && aBadge.classList.contains('bg-success') ? 1 : 0;
+                        bValue = bBadge && bBadge.classList.contains('bg-success') ? 1 : 0;
+
+                        return direction === 'asc' ? aValue - bValue : bValue - aValue;
+                    }
+
+                    if (aValue === bValue) return 0;
+
+                    // 문자열 비교
+                    if (typeof aValue === 'string' && typeof bValue === 'string') {
+                        return direction === 'asc'
+                            ? aValue.localeCompare(bValue, 'ko-KR')
+                            : bValue.localeCompare(aValue, 'ko-KR');
+                    }
+
+                    // 숫자 비교
+                    return direction === 'asc'
+                        ? aValue - bValue
+                        : bValue - aValue;
+                });
+
+                // 정렬된 행 다시 삽입
+                tbody.innerHTML = '';
+                sortedRows.forEach(row => tbody.appendChild(row));
+            });
+        });
+    });
 </script>
 
 <style>
@@ -586,6 +680,125 @@
 .drop-zone-content p {
     margin: 0;
     color: #6c757d;
+}
+
+.table-responsive {
+    margin: 0;
+    padding: 0;
+    border: none;
+    max-height: 70vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.table {
+    margin-bottom: 0;
+}
+
+.table th {
+    white-space: nowrap;
+    background-color: #212529;
+    color: white;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* 관리 열 고정 스타일 */
+.table th:last-child,
+.table td:last-child {
+    position: sticky;
+    right: 0;
+    background-color: #fff;
+    z-index: 2;
+    border-left: 1px solid #dee2e6;
+    min-width: 160px;
+}
+
+.table th:last-child {
+    background-color: #212529;
+    z-index: 3;
+}
+
+/* 마지막 열 그림자 효과 */
+.table th:last-child::after,
+.table td:last-child::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(to right, rgba(0,0,0,0.1), rgba(0,0,0,0));
+}
+
+.table td {
+    vertical-align: middle;
+    white-space: nowrap;
+    background-color: inherit;
+}
+
+/* 짝수 행의 배경색 유지 */
+.table-striped > tbody > tr:nth-of-type(even) td:last-child {
+    background-color: rgba(0,0,0,.05);
+}
+
+/* 호버 효과 유지 */
+.table-hover > tbody > tr:hover td:last-child {
+    background-color: rgba(0,0,0,.075);
+}
+
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.card-body {
+    padding: 0;
+}
+
+.btn-sm + .btn-sm {
+    margin-left: 0.25rem;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 0.25rem;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 0.25rem;
+}
+
+/* 정렬 관련 스타일 */
+.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 1.5rem !important;
+}
+
+.sort-icon {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.sort-icon::before {
+    content: "↕️";
+    opacity: 0.3;
+}
+
+.sort-asc .sort-icon::before {
+    content: "↑";
+    opacity: 1;
+}
+
+.sort-desc .sort-icon::before {
+    content: "↓";
+    opacity: 1;
 }
 </style>
 {% endblock %}
