@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional, Union, Dict
 from uuid import UUID
 
-from pydantic import BaseModel as BaseSchema
+from pydantic import BaseModel as BaseSchema, Field
 
 from common.enums import (
     ReceiptStatus, Store, TxStatus,
@@ -12,7 +12,7 @@ from common.enums import (
 )
 from common.utils.address import format_addr
 from common.utils.receipt import PlanetID
-from iap.schemas.product import SimpleProductSchema
+from iap.schemas.product import SimpleProductSchema, PriceSchema
 
 
 class GooglePurchaseSchema(BaseSchema):
@@ -186,6 +186,7 @@ class PurchaseHistoryProductSchema(BaseSchema):
     google_sku: str = ""
     apple_sku: str = ""
     apple_sku_k: str = ""
+    price_list: list[PriceSchema] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -193,6 +194,7 @@ class PurchaseHistoryProductSchema(BaseSchema):
 
 class PurchaseHistorySchema(BaseSchema):
     uuid: UUID
+    agent_addr: str
     purchased_at: datetime
     status: ReceiptStatus
     product: PurchaseHistoryProductSchema
