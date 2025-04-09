@@ -23,7 +23,7 @@ tunnel = SSHTunnelForwarder(
     local_bind_address=('0.0.0.0', local_port),
 )
 tunnel.start()
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{local_port}/{DB_NAME}"
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@0.0.0.0:{local_port}/{DB_NAME}"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
