@@ -20,7 +20,7 @@ tunnel = SSHTunnelForwarder(
     ssh_username=os.environ["SSH_USERNAME"],
     ssh_pkey=private_key,
     remote_bind_address=(os.environ['REMOTE_HOST'], 5432),
-    local_bind_address=('0.0.0.0', local_port),
+    local_bind_address=('0.0.0.0', int(local_port)),
 )
 tunnel.start()
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@0.0.0.0:{local_port}/{DB_NAME}"
