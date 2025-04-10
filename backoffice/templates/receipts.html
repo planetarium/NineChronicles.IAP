@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .table {
+        font-size: 14px;
+        width: 100%;
+        margin-bottom: 1rem;
+    }
+    .table th {
+        background-color: #f8f9fa;
+        border-bottom: 2px solid #dee2e6;
+        padding: 12px;
+        white-space: nowrap;
+        font-weight: 600;
+    }
+    .table td {
+        padding: 12px;
+        vertical-align: middle;
+        border-bottom: 1px solid #dee2e6;
+        word-break: break-all;
+    }
+    .table tr:hover {
+        background-color: rgba(0,0,0,.03);
+    }
+    .address-cell {
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .container {
+        max-width: 1400px;
+        padding: 20px;
+    }
+</style>
+
+<div class="container mt-4">
+    <h2 class="mb-4">미지급 영수증 목록</h2>
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>주문 ID</th>
+                    <th>상태</th>
+                    <th>상점</th>
+                    <th>제품명</th>
+                    <th>에이전트 주소</th>
+                    <th>아바타 주소</th>
+                    <th>행성</th>
+                    <th>구매 시간</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for receipt in receipts %}
+                <tr>
+                    <td>{{ receipt.order_id }}</td>
+                    <td>
+                        {% if receipt.status.value == 0 %}
+                            초기화
+                        {% elif receipt.status.value == 1 %}
+                            검증 요청 중
+                        {% elif receipt.status.value == 10 %}
+                            유효함
+                        {% elif receipt.status.value == 20 %}
+                            관리자에 의해 환불됨
+                        {% elif receipt.status.value == 91 %}
+                            유효하지 않음
+                        {% elif receipt.status.value == 92 %}
+                            구매자에 의해 환불됨
+                        {% elif receipt.status.value == 93 %}
+                            구매 한도 초과
+                        {% elif receipt.status.value == 94 %}
+                            시간 제한
+                        {% elif receipt.status.value == 95 %}
+                            필요 레벨 부족
+                        {% elif receipt.status.value == 96 %}
+                            마일리지 부족
+                        {% elif receipt.status.value == 99 %}
+                            알 수 없음
+                        {% else %}
+                            {{ receipt.status.name }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if receipt.store.value == 0 %}
+                            테스트
+                        {% elif receipt.store.value == 1 %}
+                            애플 앱스토어
+                        {% elif receipt.store.value == 2 %}
+                            구글 플레이스토어
+                        {% elif receipt.store.value == 91 %}
+                            애플 샌드박스
+                        {% elif receipt.store.value == 92 %}
+                            구글 샌드박스
+                        {% else %}
+                            {{ receipt.store.name }}
+                        {% endif %}
+                    </td>
+                    <td>{{ receipt.product.name if receipt.product else '-' }}</td>
+                    <td class="address-cell">{{ receipt.agent_addr }}</td>
+                    <td class="address-cell">{{ receipt.avatar_addr }}</td>
+                    <td>{{ PlanetID(receipt.planet_id).name }}</td>
+                    <td>{{ receipt.purchased_at }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
