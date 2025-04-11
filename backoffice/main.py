@@ -2,14 +2,18 @@ import time
 from fastapi import FastAPI, Depends, Request, UploadFile, File
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import not_, or_
 from starlette.middleware.sessions import SessionMiddleware
+
+from common.utils.receipt import PlanetID
 from .auth import router as auth_router
 
 from backoffice.r2 import CDN_URLS, R2_CATEGORY_KEYS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from .database import SessionLocal
 from common.models.product import Product, Category, FungibleItemProduct, FungibleAssetProduct
-from common.enums import ProductType, ProductRarity, ProductAssetUISize
+from common.models.receipt import Receipt
+from common.enums import ProductType, ProductRarity, ProductAssetUISize, ReceiptStatus
 from datetime import datetime
 from fastapi import HTTPException
 import os
@@ -374,6 +378,38 @@ async def upload_category_l10n(
     request.session["message_type"] = message_type
     return response
 
+@app.get("/receipts")
+async def list_receipts(request: Request, db: Session = Depends(get_db)):
+    """
+    특정 상태의 영수증 목록을 보여주는 페이지
+    - status가 'VALID'인 영수증
+    - product_id가 'pass'를 포함하지 않는 제품
+    - tx_id가 null인 영수증
+    - planet_id가 '0x000000000003'이 아닌 영수증
+    """
+    receipts = db.query(Receipt).options(
+        joinedload(Receipt.product)
+    ).filter(
+        Receipt.status == ReceiptStatus.VALID,
+        Receipt.tx_id.is_(None),
+        Receipt.planet_id != PlanetID.THOR.value,
+        not_(
+            Receipt.product_id.in_(
+                db.query(Product.id).filter(
+                    Product.google_sku.ilike('%pass%')
+                )
+            )
+        )
+    ).order_by(Receipt.purchased_at.desc()).all()
+
+    return templates.TemplateResponse(
+        "receipts.html",
+        {
+            "request": request,
+            "receipts": receipts,
+            "PlanetID": PlanetID
+        }
+    )
 
 @app.get("/")
 async def root():
