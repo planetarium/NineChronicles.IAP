@@ -48,8 +48,6 @@ GQL_DICT = {
     PlanetID.ODIN_INTERNAL: os.environ.get("ODIN_GQL_URL"),
     PlanetID.HEIMDALL: os.environ.get("HEIMDALL_GQL_URL"),
     PlanetID.HEIMDALL_INTERNAL: os.environ.get("HEIMDALL_GQL_URL"),
-    PlanetID.THOR: os.environ.get("THOR_GQL_URL"),
-    PlanetID.THOR_INTERNAL: os.environ.get("THOR_GQL_URL"),
 }
 
 ITEM_FUNGIBLE_ID_DICT = {

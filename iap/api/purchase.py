@@ -9,12 +9,12 @@ import boto3
 import requests
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select, or_, desc
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, with_loader_criteria
 from starlette.responses import JSONResponse
 
 from common._graphql import GQL
 from common.enums import ReceiptStatus, Store, PackageName, ProductType
-from common.models.product import Product
+from common.models.product import Product, Price
 from common.models.receipt import Receipt
 from common.models.user import AvatarLevel
 from common.utils.aws import fetch_parameter
@@ -649,31 +649,37 @@ def mileage_product(receipt_data: FreeReceiptSchema,
 
 
 @router.get("/history", response_model=List[PurchaseHistorySchema])
-def purchase_history(planet_id: str, agent_addr: str, offset: int = 0, limit: int = 10, sess=Depends(session)):
+def purchase_history(agent_addr: str, offset: int = 0, limit: int = 10, epoch: Optional[datetime] = None,
+                     product_id: Optional[int] = None, sess=Depends(session)):
     """
     Get succeeded IAP type purchase list.
 
-    :param planet_id: Planet ID to find. Empty string("") for all planets
     :param agent_addr: Agent address to find.
     :param offset: Offset to find. Ignore latest K receipts
     :param limit: Limit to get receipt. Maximum 100 receipt can be fetched.
+    :param epoch: Optional. If provided, search only purchased after epoch.
+    :param product_id: Optional. If product_id provided, search only this product's purchase history.
     :return: receipt detail list.
     """
-    if planet_id != "":
-        planet_id = PlanetID(bytes(planet_id, "utf-8"))
+    q = (
+        select(Receipt)
+        .where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID)
+        .join(Receipt.product)  # Receipt -> Product
+        .options(
+            joinedload(Receipt.product).joinedload(Product.price_list),
+            with_loader_criteria(Price, Price.currency == "USD"))
+    )
 
-    q = (select(Receipt).where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID)
-         .join(Receipt.product).filter(Product.product_type == ProductType.IAP)
-         )
-
-    if planet_id:
-        q = q.where(Receipt.planet_id == planet_id)
+    if epoch:
+        q = q.filter(Receipt.purchased_at >= epoch)
+    if product_id:
+        q = q.filter(Receipt.product_id == product_id)
     if offset:
         q = q.offset(offset)
     if limit:
         q = q.limit(min(limit, 100))
 
-    return sess.scalars(q.order_by(desc(Receipt.id))).fetchall()
+    return sess.scalars(q.order_by(desc(Receipt.id))).unique().all()
 
 
 @router.get("/status", response_model=Dict[UUID, Optional[ReceiptDetailSchema]])
