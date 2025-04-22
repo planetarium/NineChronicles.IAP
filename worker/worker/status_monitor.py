@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List
 
 import requests
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from common import logger
@@ -63,14 +63,13 @@ def create_block(text: str) -> Dict:
 
 def check_invalid_receipt(sess):
     """Notify all invalid receipt"""
-    invalid_list = sess.scalars(select(Receipt).where(
+    invalid_list = sess.query(func.count(Receipt.id)).filter(
         Receipt.created_at <= (datetime.now(tz=timezone.utc) - timedelta(minutes=1)),
         Receipt.status.in_([ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.INVALID])
-    )).fetchall()
+    ).scalar()
 
     msg = []
-    for invalid in invalid_list:
-        msg.append(create_block(f"ID {invalid.id} :: {invalid.uuid} :: {invalid.status.name}"))
+    msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37>Non-Valid Receipt Report :: {invalid_list}"))
 
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Non-Valid Receipt Report", msg)
 
@@ -80,26 +79,26 @@ def check_tx_failure(sess):
     tx_failed_receipt_list = sess.scalars(select(Receipt).where(Receipt.tx_status == TxStatus.FAILURE)).fetchall()
 
     msg = []
-    for receipt in tx_failed_receipt_list:
-        msg.append(create_block(
-            f"ID {receipt.id} :: {receipt.uuid} :: {receipt.tx_status.name}\nTx. ID: {receipt.tx_id}"
-        ))
+    if len(tx_failed_receipt_list) > 0:
+        msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37>"))
+        for receipt in tx_failed_receipt_list:
+          msg.append(create_block(
+              f"ID {receipt.id} :: {receipt.uuid} :: {receipt.tx_status.name}\nTx. ID: {receipt.tx_id}"
+          ))
 
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Failed Receipt Report", msg)
 
 
 def check_halt_tx(sess):
     """Notify when STAGED|INVALID tx over 5min."""
-    tx_halt_receipt_list = sess.scalars(select(Receipt).where(
+    tx_halt_receipt_list = sess.query(func.count(Receipt.id)).filter(
         Receipt.status == ReceiptStatus.VALID,
         Receipt.tx_status.in_([TxStatus.INVALID, TxStatus.STAGED]),
         Receipt.created_at <= (datetime.now(tz=timezone.utc) - timedelta(minutes=5)),
-    )).fetchall()
+    ).scalar()
 
     msg = []
-    for receipt in tx_halt_receipt_list:
-        msg.append(create_block(f"ID {receipt.id} :: {receipt.uuid}\n{receipt.tx_id}"))
-
+    msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37> Tx. Invalid Receipt Report :: {tx_halt_receipt_list}"))
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Invalid Receipt Report", msg)
 
 
@@ -112,10 +111,12 @@ def check_no_tx(sess):
     )).fetchall()
 
     msg = []
-    for receipt in no_tx_receipt_list:
-        msg.append(create_block(
-            f"ID {receipt.id} :: {receipt.uuid}::Product {receipt.product_id}\n{receipt.agent_addr} :: {receipt.avatar_addr}"
-        ))
+    if len(no_tx_receipt_list) > 0:
+        msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37>"))
+        for receipt in no_tx_receipt_list:
+            msg.append(create_block(
+                f"ID {receipt.id} :: {receipt.uuid}::Product {receipt.product_id}\n{receipt.agent_addr} :: {receipt.avatar_addr}"
+            ))
 
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] No Tx. Create Receipt Report", msg)
 
@@ -201,7 +202,7 @@ query balanceQuery(
 
     send_message(
         IAP_GARAGE_WEBHOOK_URL,
-        f"[NineChronicles.IAP] Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
+        f"[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
         msg
     )
 
