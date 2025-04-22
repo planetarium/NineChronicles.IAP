@@ -72,7 +72,7 @@ def check_invalid_receipt(sess):
     for invalid in invalid_list:
         msg.append(create_block(f"ID {invalid.id} :: {invalid.uuid} :: {invalid.status.name}"))
 
-    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Non-Valid Receipt Report", msg)
+    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> Non-Valid Receipt Report", msg)
 
 
 def check_tx_failure(sess):
@@ -85,7 +85,7 @@ def check_tx_failure(sess):
             f"ID {receipt.id} :: {receipt.uuid} :: {receipt.tx_status.name}\nTx. ID: {receipt.tx_id}"
         ))
 
-    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Failed Receipt Report", msg)
+    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> Tx. Failed Receipt Report", msg)
 
 
 def check_halt_tx(sess):
@@ -100,7 +100,7 @@ def check_halt_tx(sess):
     for receipt in tx_halt_receipt_list:
         msg.append(create_block(f"ID {receipt.id} :: {receipt.uuid}\n{receipt.tx_id}"))
 
-    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Invalid Receipt Report", msg)
+    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> Tx. Invalid Receipt Report", msg)
 
 
 def check_no_tx(sess):
@@ -117,7 +117,7 @@ def check_no_tx(sess):
             f"ID {receipt.id} :: {receipt.uuid}::Product {receipt.product_id}\n{receipt.agent_addr} :: {receipt.avatar_addr}"
         ))
 
-    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] No Tx. Create Receipt Report", msg)
+    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> No Tx. Create Receipt Report", msg)
 
 
 def check_token_balance(planet: PlanetID):
@@ -201,7 +201,7 @@ query balanceQuery(
 
     send_message(
         IAP_GARAGE_WEBHOOK_URL,
-        f"[NineChronicles.IAP] Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
+        f"[NineChronicles.IAP] <@U03DRL8R1FE> <@UCKUGBH37> Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
         msg
     )
 
