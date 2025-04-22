@@ -5,8 +5,8 @@ from iap import settings
 
 
 @pytest.mark.parametrize("headless", [
-    "https://9c-main-jwt.nine-chronicles.com/graphql",
-    "https://heimdall-jwt.nine-chronicles.com/graphql",
+    "https://odin-rpc.nine-chronicles.com/graphql",
+    "https://heimdall-rpc.nine-chronicles.com/graphql",
 ])
 def test_gql_jwt(headless):
     gql = GQL(headless, settings.HEADLESS_JWT_GQL_SECRET)
