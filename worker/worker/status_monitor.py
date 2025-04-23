@@ -97,8 +97,9 @@ def check_halt_tx(sess):
     ).scalar()
 
     msg = []
-    msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37> Tx. Invalid Receipt Report :: {tx_halt_receipt_list}"))
-    send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Invalid Receipt Report", msg)
+    if tx_halt_receipt_list > 0:
+        msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37> Tx. Invalid Receipt Report :: {tx_halt_receipt_list}"))
+        send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Tx. Invalid Receipt Report", msg)
 
 
 def check_no_tx(sess):
