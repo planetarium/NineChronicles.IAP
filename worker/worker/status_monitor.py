@@ -69,7 +69,7 @@ def check_invalid_receipt(sess):
     ).scalar()
 
     msg = []
-    msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37>Non-Valid Receipt Report :: {invalid_list}"))
+    msg.append(create_block(f"Non-Valid Receipt Report :: {invalid_list}"))
 
     send_message(IAP_ALERT_WEBHOOK_URL, "[NineChronicles.IAP] Non-Valid Receipt Report", msg)
 
@@ -80,7 +80,6 @@ def check_tx_failure(sess):
 
     msg = []
     if len(tx_failed_receipt_list) > 0:
-        msg.append(create_block(f"<@U03DRL8R1FE> <@UCKUGBH37>"))
         for receipt in tx_failed_receipt_list:
           msg.append(create_block(
               f"ID {receipt.id} :: {receipt.uuid} :: {receipt.tx_status.name}\nTx. ID: {receipt.tx_id}"
