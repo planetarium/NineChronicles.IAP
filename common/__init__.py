@@ -77,3 +77,15 @@ class Config:
 
     # Admin
     jwt_secret: str = None
+
+    # Cloudflare
+    cloudflare_assets_zone_id: str = None
+    cloudflare_assets_k_zone_id: str = None
+    cloudflare_email: str = None
+    cloudflare_api_key: str = None
+
+    # R2
+    r2_access_key_id: str = None
+    r2_secret_access_key: str = None
+    r2_account_id: str = None
+    r2_bucket: str = None

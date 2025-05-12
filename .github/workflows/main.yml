@@ -29,6 +29,14 @@ jobs:
       HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CLOUDFLARE_ASSETS_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_ZONE_ID }}
+      CLOUDFLARE_ASSETS_K_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_K_ZONE_ID }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
 
   build_frontend:
     uses: ./.github/workflows/build_frontend.yml
@@ -63,6 +71,14 @@ jobs:
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
       HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CLOUDFLARE_ASSETS_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_ZONE_ID }}
+      CLOUDFLARE_ASSETS_K_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_K_ZONE_ID }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
 
   deploy_without_approval:
     # This is for preview / internal deployment
@@ -93,6 +109,14 @@ jobs:
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
       HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CLOUDFLARE_ASSETS_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_ZONE_ID }}
+      CLOUDFLARE_ASSETS_K_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_K_ZONE_ID }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
 
   approval:
     runs-on: ubuntu-latest
@@ -135,3 +159,11 @@ jobs:
       REFUND_SHEET_ID : ${{ secrets.REFUND_SHEET_ID }}
       HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CLOUDFLARE_ASSETS_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_ZONE_ID }}
+      CLOUDFLARE_ASSETS_K_ZONE_ID: ${{ secrets.CLOUDFLARE_ASSETS_K_ZONE_ID }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
