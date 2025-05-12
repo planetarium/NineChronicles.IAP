@@ -61,6 +61,15 @@ else:
     except Exception as e:
         headless_gql_jwt_secret = os.environ.get("HEADLESS_GQL_JWT_SECRET", "")
 
+    try:
+        jwt_secret = fetch_parameter(
+            os.environ.get("REGION_NAME"),
+            f"{stage}_9c_IAP_JWT_SECRET",
+            True
+        )["Value"]
+    except Exception as e:
+        jwt_secret = os.environ.get("JWT_SECRET", "")
+
 # Prepare settings
 DEBUG = config("DEBUG", cast=bool, default=False)
 LOGGING_LEVEL = logging.getLevelName(config("LOGGING_LEVEL", default="INFO"))
@@ -82,4 +91,4 @@ REGION_NAME = config("REGION_NAME")
 
 SEASON_PASS_JWT_SECRET = season_pass_jwt_secret or config("SEASON_PASS_JWT_SECRET")
 HEADLESS_JWT_GQL_SECRET = headless_gql_jwt_secret or config("HEADLESS_GQL_JWT_SECRET")
-JWT_SECRET = config("JWT_SECRET")
+JWT_SECRET = jwt_secret or config("JWT_SECRET")

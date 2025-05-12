@@ -74,3 +74,6 @@ class Config:
     # Voucher
     voucher_url: str = None
     voucher_jwt_secret: str = None
+
+    # Admin
+    jwt_secret: str = None

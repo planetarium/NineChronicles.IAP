@@ -82,6 +82,7 @@ class WorkerStack(Stack):
                     shared_stack.adhoc_kms_key_id_arn,
                     shared_stack.voucher_jwt_secret_arn,
                     shared_stack.headless_gql_jwt_secret_arn,
+                    shared_stack.jwt_secret_arn,
                 ]
             )
         )
