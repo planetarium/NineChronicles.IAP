@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from typing import Optional, List, Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Security
+from fastapi.security import HTTPBearer
 from sqlalchemy import select, Date, desc
 from sqlalchemy.orm import joinedload
 
@@ -11,10 +12,14 @@ from common.utils.google import update_google_price
 from iap import settings
 from iap.dependencies import session
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
+from iap.utils import verify_token
+
+security = HTTPBearer()
 
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
+    dependencies=[Depends(verify_token), Security(security)],  # 모든 admin 엔드포인트에 인증 필요
 )
 
 
@@ -47,7 +52,7 @@ def fetch_refunded(
     """
     # List refunded receipts
     ---
-    
+
     Get list of refunded receipts. This only returns user-refunded receipts.
     """
     if not start:
