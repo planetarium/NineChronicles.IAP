@@ -1,10 +1,11 @@
 import os
 import csv
+from typing import Tuple
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from common.models.product import Product, FungibleItemProduct
 from sqlalchemy.exc import SQLAlchemyError
-from common.models.product import FungibleItemProduct
 
 # ✅ .env 파일 로드
 load_dotenv()
@@ -13,72 +14,104 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 FUNGIBLE_ITEM_FILE_PATH = os.getenv("FUNGIBLE_ITEM_FILE_PATH")
 
-# ✅ SQLAlchemy 엔진 및 세션 생성
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def parse_int(value: str) -> int | None:
+    """문자열을 int로 변환합니다."""
+    try:
+        return int(value.replace(",", "")) if value.strip() else None
+    except ValueError:
+        return None
 
-def parse_int(value: str):
-    return int(value) if value.strip() else None
+def process_fungible_item_row(db: Session, row: dict) -> bool:
+    """
+    대체 가능 아이템 데이터를 처리합니다.
 
-def compare_and_update_fungible_item(db: Session, csv_data: dict):
-    """ 기존 DB 데이터와 CSV 데이터를 비교 후, CLI를 통해 업데이트 여부 결정 """
+    Args:
+        db: 데이터베이스 세션
+        row: CSV 행 데이터
+
+    Returns:
+        bool: 데이터가 추가되거나 업데이트되면 True
+    """
+    csv_data = {
+        "product_id": parse_int(row["product_id"]),
+        "sheet_item_id": parse_int(row["sheet_item_id"]),
+        "name": row["name"],
+        "fungible_item_id": row["fungible_item_id"],
+        "amount": parse_int(row["amount"].replace(",", "")),
+    }
+
+    # 기존 데이터 확인
     existing_item = db.query(FungibleItemProduct).filter(
         FungibleItemProduct.product_id == csv_data["product_id"],
         FungibleItemProduct.fungible_item_id == csv_data["fungible_item_id"]
     ).first()
 
     if existing_item:
+        # 변경사항 확인
         changes = {}
-
         for key, value in csv_data.items():
             if getattr(existing_item, key) != value:
                 changes[key] = (getattr(existing_item, key), value)
 
         if changes:
-            print(f"\n🔍 기존 FungibleItemProduct 변경 사항 발견 (Product ID: {existing_item.product_id}, Item ID: {existing_item.fungible_item_id}):")
+            print(f"\n🔍 Product ID {csv_data['product_id']} - Item ID {csv_data['fungible_item_id']} 변경 사항 발견:")
             for field, (old, new) in changes.items():
                 print(f"  - {field}: 기존({old}) → 변경({new})")
-
-            confirm = input("변경을 적용하시겠습니까? (y/n): ").strip().lower()
-            if confirm == "y":
-                for field, (_, new_value) in changes.items():
-                    setattr(existing_item, field, new_value)
-                db.commit()
-                print(f"✅ FungibleItemProduct 업데이트 완료! (Product ID: {existing_item.product_id}, Item ID: {existing_item.fungible_item_id})")
-            else:
-                print("⏩ 변경 사항이 적용되지 않았습니다.")
+                setattr(existing_item, field, new)
+            print(f"✅ 업데이트 완료!")
+            return True
+        return False
     else:
+        # 새로운 데이터 추가
         new_item = FungibleItemProduct(**csv_data)
         db.add(new_item)
-        print(f"🆕 새로운 FungibleItemProduct 추가 (Product ID: {csv_data['product_id']}, Item ID: {csv_data['fungible_item_id']})")
+        print(f"🆕 새로운 FungibleItem 추가: Product ID {csv_data['product_id']} - Item ID {csv_data['fungible_item_id']}")
+        return True
 
-def import_fungible_items():
-    db: Session = SessionLocal()
+def import_fungible_items_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
+    """
+    CSV 파일에서 대체 가능 아이템 데이터를 가져와 데이터베이스에 임포트합니다.
+
+    Args:
+        db: 데이터베이스 세션
+        csv_path: CSV 파일 경로
+
+    Returns:
+        Tuple[int, int]: (처리된 데이터 수, 변경된 데이터 수)
+    """
+    processed_count = 0
+    changed_count = 0
+
     try:
-        with open(FUNGIBLE_ITEM_FILE_PATH, mode="r", encoding="utf-8") as file:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
-
             for row in reader:
-                csv_data = {
-                    "product_id": parse_int(row["product_id"]),
-                    "sheet_item_id": parse_int(row["sheet_item_id"]),
-                    "name": row["name"],
-                    "fungible_item_id": row["fungible_item_id"],
-                    "amount": parse_int(row["amount"].replace(",", ""))
-                }
-
-                compare_and_update_fungible_item(db, csv_data)
+                processed_count += 1
+                if process_fungible_item_row(db, row):
+                    changed_count += 1
 
             db.commit()
-            print("\n✅ FungibleItemProduct 데이터 동기화 완료!")
-
-    except SQLAlchemyError as e:
-        print(f"❌ DB 오류 발생: {e}")
-        db.rollback()
+            print(f"\n✅ FungibleItem 데이터 동기화 완료! (처리: {processed_count}, 변경: {changed_count})")
+            return processed_count, changed_count
 
     except Exception as e:
-        print(f"❌ 일반 오류 발생: {e}")
+        db.rollback()
+        raise e
 
+def import_fungible_items():
+    """CLI 도구용 임포트 함수"""
+    if not FUNGIBLE_ITEM_FILE_PATH:
+        raise ValueError("FUNGIBLE_ITEM_FILE_PATH environment variable is required")
+
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is required")
+
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db: Session = SessionLocal()
+
+    try:
+        import_fungible_items_from_csv(db, FUNGIBLE_ITEM_FILE_PATH)
     finally:
         db.close()
         print("🔌 DB 연결이 종료되었습니다.")
