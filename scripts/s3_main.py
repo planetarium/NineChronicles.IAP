@@ -31,18 +31,21 @@ CLOUDFRONT_DISTRIBUTION_2 = os.getenv("CLOUDFRONT_DISTRIBUTION_2")
 s3_client = boto3.client("s3")
 cloudfront_client = boto3.client("cloudfront")
 
-def upload_to_s3():
+def upload_to_s3(l10n_file_path: str=L10N_FILE_PATH) -> bool:
     """ S3에 product.csv 업로드 """
-    if not os.path.exists(L10N_FILE_PATH):
-        print(f"❌ {L10N_FILE_PATH} 파일이 존재하지 않습니다. 업로드를 중단합니다.")
-        return
+    if not os.path.exists(l10n_file_path):
+        print(f"❌ {l10n_file_path} 파일이 존재하지 않습니다. 업로드를 중단합니다.")
+        return False
 
+    success = True
     for s3_key in S3_KEYS:
         try:
-            s3_client.upload_file(L10N_FILE_PATH, S3_BUCKET, s3_key)
+            s3_client.upload_file(l10n_file_path, S3_BUCKET, s3_key)
             print(f"✅ S3 업로드 완료: s3://{S3_BUCKET}/{s3_key}")
         except Exception as e:
             print(f"❌ S3 업로드 실패 (s3://{S3_BUCKET}/{s3_key}): {e}")
+            success = False
+    return success
 
 def upload_images_to_s3():
     """ IMAGES_FOLDER_PATH 내의 모든 이미지 파일을 S3에 업로드 """
