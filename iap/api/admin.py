@@ -17,6 +17,7 @@ from iap.schemas.product import ProductSchema
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 from iap.utils import verify_token
 from scripts.products import import_products_from_csv
+from scripts.category_product import import_category_products_from_csv
 
 security = HTTPBearer()
 
@@ -32,6 +33,9 @@ class PaginatedProductResponse(BaseModel):
 
 class ImportProductsRequest(BaseModel):
     environment: str
+    csv_content: str
+
+class ImportCategoryProductsRequest(BaseModel):
     csv_content: str
 
 # @router.post("/update-price")
@@ -151,4 +155,41 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             os.unlink(temp_path)
 
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/products/categories/import")
+def import_category_products_endpoint(request: ImportCategoryProductsRequest, sess=Depends(session)):
+    """
+    CSV 데이터에서 카테고리-상품 관계 정보를 가져와 데이터베이스에 임포트합니다.
+
+    Args:
+        csv_content: CSV 파일 내용 (문자열)
+    """
+    try:
+        # 임시 CSV 파일 생성
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
+            temp_file.write(request.csv_content)
+            temp_path = temp_file.name
+
+        try:
+            # 임포트 실행
+            processed_count, added_count = import_category_products_from_csv(
+                sess,
+                temp_path
+            )
+
+            return {
+                "message": "카테고리-상품 관계 데이터가 성공적으로 임포트되었습니다.",
+                "processed_count": processed_count,
+                "added_count": added_count
+            }
+        finally:
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail=str(e))
