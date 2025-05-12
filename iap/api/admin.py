@@ -20,6 +20,8 @@ from scripts.products import import_products_from_csv
 from scripts.category_product import import_category_products_from_csv
 from scripts.fungible_asset import import_fungible_assets_from_csv
 from scripts.fungible_item import import_fungible_items_from_csv
+from scripts.r2 import CDN_URLS, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2
+from scripts.s3_main import upload_to_s3, invalidate_cloudfront
 
 security = HTTPBearer()
 
@@ -44,6 +46,9 @@ class ImportFungibleAssetsRequest(BaseModel):
     csv_content: str
 
 class ImportFungibleItemsRequest(BaseModel):
+    csv_content: str
+
+class UploadCsvToR2Request(BaseModel):
     csv_content: str
 
 # @router.post("/update-price")
@@ -267,6 +272,88 @@ def import_fungible_items_endpoint(request: ImportFungibleItemsRequest, sess=Dep
                 "message": "대체 가능 아이템 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,
                 "changed_count": changed_count
+            }
+        finally:
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/r2/product")
+def upload_product_csv_to_r2_endpoint(request: UploadCsvToR2Request):
+    """
+    CSV 파일을 R2에 업로드하고 캐시를 초기화합니다.
+
+    Args:
+        csv_content: CSV 파일 내용 (문자열)
+    """
+    try:
+        # 임시 CSV 파일 생성
+        import os
+
+        temp_path = "product.csv"
+        with open(temp_path, "w") as temp_file:
+            temp_file.write(request.csv_content)
+
+
+        try:
+             # R2에 업로드
+            results = []
+            for r2_key in R2_PRODUCT_KEYS:
+                upload_csv_to_r2(temp_path, r2_key)
+
+            # 캐시 무효화
+            for zone_id, cdn_url in CDN_URLS.items():
+                result = purge_cache(zone_id, cdn_url, r2_key)
+                results.append(result)
+
+            cache_result = all(results)
+            if cache_result:
+                message = "Product 번역어 파일이 성공적으로 업로드되었습니다."
+            else:
+                message = "Product 번역어 파일 업로드 실패"
+            return {
+                "message": message
+            }
+        finally:
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+# TODO R2 마이그레이션 완료후 S3 엔드포인트 삭제
+@router.post("/s3/product")
+def upload_product_csv_to_s3_endpoint(request: UploadCsvToR2Request):
+    """
+    CSV 파일을 S3에 업로드하고 CloudFront 캐시를 초기화합니다.
+
+    Args:
+        csv_content: CSV 파일 내용 (문자열)
+    """
+    try:
+        # 임시 CSV 파일 생성
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
+            temp_file.write(request.csv_content)
+            temp_path = temp_file.name
+
+        try:
+            # S3에 업로드
+            success = upload_to_s3(temp_path)
+            if not success:
+                raise HTTPException(status_code=400, detail="S3 업로드 실패")
+
+            # CloudFront 캐시 초기화
+            invalidate_cloudfront()
+
+            return {
+                "message": "CSV 파일이 성공적으로 업로드되었고 캐시 초기화가 요청되었습니다."
             }
         finally:
             # 임시 파일 삭제
