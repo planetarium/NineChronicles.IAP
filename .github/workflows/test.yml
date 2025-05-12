@@ -19,6 +19,8 @@ on:
         required: true
       SLACK_WEBHOOK_URL:
         required: true
+      JWT_SECRET:
+        required: true
 
 jobs:
   test:
@@ -90,6 +92,7 @@ jobs:
           APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
           SEASON_PASS_JWT_SECRET: ${{ secrets.SEASON_PASS_JWT_SECRET }}
           HEADLESS_GQL_JWT_SECRET: ${{ secrets.HEADLESS_GQL_JWT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           poetry run pytest tests
 
