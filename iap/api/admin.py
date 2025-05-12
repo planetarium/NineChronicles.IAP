@@ -18,6 +18,7 @@ from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 from iap.utils import verify_token
 from scripts.products import import_products_from_csv
 from scripts.category_product import import_category_products_from_csv
+from scripts.fungible_asset import import_fungible_assets_from_csv
 
 security = HTTPBearer()
 
@@ -36,6 +37,9 @@ class ImportProductsRequest(BaseModel):
     csv_content: str
 
 class ImportCategoryProductsRequest(BaseModel):
+    csv_content: str
+
+class ImportFungibleAssetsRequest(BaseModel):
     csv_content: str
 
 # @router.post("/update-price")
@@ -185,6 +189,43 @@ def import_category_products_endpoint(request: ImportCategoryProductsRequest, se
                 "message": "카테고리-상품 관계 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,
                 "added_count": added_count
+            }
+        finally:
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/products/fungible-assets/import")
+def import_fungible_assets_endpoint(request: ImportFungibleAssetsRequest, sess=Depends(session)):
+    """
+    CSV 데이터에서 대체 가능 자산 정보를 가져와 데이터베이스에 임포트합니다.
+
+    Args:
+        csv_content: CSV 파일 내용 (문자열)
+    """
+    try:
+        # 임시 CSV 파일 생성
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
+            temp_file.write(request.csv_content)
+            temp_path = temp_file.name
+
+        try:
+            # 임포트 실행
+            processed_count, changed_count = import_fungible_assets_from_csv(
+                sess,
+                temp_path
+            )
+
+            return {
+                "message": "대체 가능 자산 데이터가 성공적으로 임포트되었습니다.",
+                "processed_count": processed_count,
+                "changed_count": changed_count
             }
         finally:
             # 임시 파일 삭제
