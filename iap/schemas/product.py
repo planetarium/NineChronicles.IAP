@@ -57,6 +57,7 @@ class FungibleItemSchema(BaseSchema):
 
 
 class ProductSchema(SimpleProductSchema):
+    id: int
     purchase_count: int = 0
     rarity: ProductRarity
     size: ProductAssetUISize

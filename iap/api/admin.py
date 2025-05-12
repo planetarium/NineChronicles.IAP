@@ -3,14 +3,17 @@ from typing import Optional, List, Annotated
 
 from fastapi import APIRouter, Depends, Query, Security
 from fastapi.security import HTTPBearer
-from sqlalchemy import select, Date, desc
+from pydantic import BaseModel
+from sqlalchemy import func, select, Date, desc
 from sqlalchemy.orm import joinedload
 
 from common.enums import Store, ReceiptStatus
+from common.models.product import Product
 from common.models.receipt import Receipt
 from common.utils.google import update_google_price
 from iap import settings
 from iap.dependencies import session
+from iap.schemas.product import ProductSchema
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 from iap.utils import verify_token
 
@@ -22,6 +25,9 @@ router = APIRouter(
     dependencies=[Depends(verify_token), Security(security)],  # 모든 admin 엔드포인트에 인증 필요
 )
 
+class PaginatedProductResponse(BaseModel):
+    total: int
+    items: List[ProductSchema]
 
 # @router.post("/update-price")
 # def update_price(store: Store, sess=Depends(session)):
@@ -74,3 +80,31 @@ def receipt_list(page: int = 0, pp: int = 50, sess=Depends(session)):
         .order_by(desc(Receipt.purchased_at))
         .offset(pp * page).limit(pp)
     ).fetchall()
+
+
+@router.get("/products", response_model=PaginatedProductResponse)
+def product_list(
+    limit: int = Query(default=20, ge=1, le=100),  # 한 페이지당 기본 20개, 최대 100개
+    offset: int = Query(default=0, ge=0),  # 시작 위치
+    sess=Depends(session)
+):
+    """상품 정보를 조회합니다.
+
+    Args:
+        limit: 한 페이지당 반환할 항목 수 (기본값: 20, 최대: 100)
+        offset: 시작 위치 (기본값: 0)
+    """
+    # 기본 쿼리 생성
+    base_query = select(Product).order_by(desc(Product.created_at))
+
+    # 전체 결과 수 계산
+    total_count = sess.scalar(select(func.count()).select_from(base_query.subquery()))
+
+    # 페이지네이션 적용
+    products = sess.scalars(base_query.offset(offset).limit(limit)).all()
+
+    # 페이지네이션 정보 추가
+    return PaginatedProductResponse(
+        total=total_count,
+        items=products,
+    )
