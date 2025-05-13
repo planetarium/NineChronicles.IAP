@@ -21,6 +21,7 @@ pydantic="^2.6.4"
 bencodex = "^1.0.1"
 pyjwt = "^2.8.0"
 fastapi-cache2 = "^0.2.1"
+python-dotenv = "^1.0.1"
 
 [tool.poetry.group.iap.dependencies]
 # IAP API
@@ -43,7 +44,6 @@ pytest = "^7.4.4"
 alembic = "^1.13.1"
 aws-cdk-lib = "2.166.0"
 constructs = "^10.2.70"
-python-dotenv = "^1.0.1"
 fastapi-debug-toolbar = "^0.6.2"
 
 [build-system]
