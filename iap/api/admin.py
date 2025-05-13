@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional, List, Annotated
 
-from fastapi import APIRouter, Depends, Query, Security, HTTPException
+from fastapi import APIRouter, Depends, Query, Security, HTTPException, File, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import func, select, Date, desc
@@ -20,8 +20,12 @@ from scripts.products import import_products_from_csv
 from scripts.category_product import import_category_products_from_csv
 from scripts.fungible_asset import import_fungible_assets_from_csv
 from scripts.fungible_item import import_fungible_items_from_csv
-from scripts.r2 import CDN_URLS, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2
-from scripts.s3_main import upload_to_s3, invalidate_cloudfront
+from scripts.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
+from scripts.s3_main import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
+import zipfile
+import io
+import tempfile
+import os
 
 security = HTTPBearer()
 
@@ -361,4 +365,168 @@ def upload_product_csv_to_s3_endpoint(request: UploadCsvToR2Request):
 
     except Exception as e:
         print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/r2/images")
+async def upload_multiple_images_to_r2(files: List[UploadFile] = File(...)):
+    """
+    여러 이미지 파일을 R2에 업로드합니다.
+
+    Args:
+        files: 이미지 파일 리스트 (multipart/form-data)
+
+    Note:
+        - PNG 파일만 업로드 가능
+        - 파일당 최대 크기: 10MB
+    """
+    try:
+        results = []
+        r2_keys = []
+        for file in files:
+            # PNG 파일 검증
+            if not file.filename or not file.filename.lower().endswith('.png'):
+                results.append({
+                    "filename": file.filename or "unknown",
+                    "status": "failed",
+                    "error": "PNG 파일만 업로드 가능합니다."
+                })
+                continue
+
+            # 파일 크기 검증 (10MB 제한)
+            MAX_SIZE = 10 * 1024 * 1024  # 10MB
+            content = await file.read()
+            if len(content) > MAX_SIZE:
+                results.append({
+                    "filename": file.filename,
+                    "status": "failed",
+                    "error": "파일이 너무 큽니다 (최대 10MB)"
+                })
+                continue
+
+            try:
+                # 이미지를 임시 파일로 저장
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                    temp_file.write(content)
+                    temp_path = temp_file.name
+
+                try:
+                    # R2에 업로드
+                    is_list_image = file.filename.endswith("_s.png")
+                    file_name = file.filename.replace("_s.png", ".png") if is_list_image else file.filename
+                    if is_list_image:
+                        for folder in R2_IMAGE_LIST_FOLDER:
+                            r2_key = f"{folder}{file_name}"
+                            upload_image_to_r2(temp_path, r2_key)
+                            results.append({
+                                "filename": file.filename,
+                                "status": "success"
+                            })
+                            r2_keys.append(r2_key)
+                    else:
+                        for folder in R2_IMAGE_DETAIL_FOLDER:
+                            r2_key = f"{folder}{file_name}"
+                            upload_image_to_r2(temp_path, r2_key)
+                            results.append({
+                                "filename": file.filename,
+                                "status": "success"
+                            })
+                            r2_keys.append(r2_key)
+                finally:
+                    # 임시 파일 삭제
+                    os.unlink(temp_path)
+
+            except Exception as e:
+                results.append({
+                    "filename": file.filename,
+                    "status": "failed",
+                    "error": str(e)
+                })
+
+        # 캐시 무효화
+        for zone_id, cdn_url in CDN_URLS.items():
+            for r2_key in r2_keys:
+                purge_cache(zone_id, cdn_url, r2_key)
+
+        success_count = sum(1 for r in results if r["status"] == "success")
+        failed_count = len(results) - success_count
+
+        return {
+            "message": f"{success_count}개의 이미지가 업로드되었습니다. {failed_count}개 실패.",
+            "results": results
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# TODO R2 마이그레이션 완료후 S3 엔드포인트 삭제
+@router.post("/s3/images")
+async def upload_multiple_images_to_s3(files: List[UploadFile] = File(...)):
+    """
+    여러 이미지 파일을 S3에 업로드합니다.
+
+    Args:
+        files: 이미지 파일 리스트 (multipart/form-data)
+
+    Note:
+        - PNG 파일만 업로드 가능
+        - 파일당 최대 크기: 10MB
+    """
+    try:
+        results = []
+        for file in files:
+            # PNG 파일 검증
+            if not file.filename or not file.filename.lower().endswith('.png'):
+                results.append({
+                    "filename": file.filename or "unknown",
+                    "status": "failed",
+                    "error": "PNG 파일만 업로드 가능합니다."
+                })
+                continue
+
+            # 파일 크기 검증 (10MB 제한)
+            MAX_SIZE = 10 * 1024 * 1024  # 10MB
+            content = await file.read()
+            if len(content) > MAX_SIZE:
+                results.append({
+                    "filename": file.filename,
+                    "status": "failed",
+                    "error": "파일이 너무 큽니다 (최대 10MB)"
+                })
+                continue
+
+            try:
+                # 이미지를 임시 파일로 저장
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                    temp_file.write(content)
+                    temp_path = temp_file.name
+
+                try:
+                    # S3에 업로드
+                    upload_image_to_s3(temp_path, file.filename)
+                    results.append({
+                        "filename": file.filename,
+                        "status": "success"
+                    })
+                finally:
+                    # 임시 파일 삭제
+                    os.unlink(temp_path)
+
+            except Exception as e:
+                results.append({
+                    "filename": file.filename,
+                    "status": "failed",
+                    "error": str(e)
+                })
+
+        # CloudFront 캐시 초기화
+        invalidate_cloudfront()
+
+        success_count = sum(1 for r in results if r["status"] == "success")
+        failed_count = len(results) - success_count
+        return {
+            "message": f"{success_count}개의 이미지가 업로드되었습니다. {failed_count}개 실패.",
+            "results": results
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

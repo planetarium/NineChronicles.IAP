@@ -58,21 +58,24 @@ def upload_images_to_s3():
             local_file_path = os.path.join(root, file)
             file_name = os.path.basename(file)
 
-            # ✅ `_s`가 포함된 파일은 list 폴더로 업로드 (파일명에서 `_s` 제거)
-            if "_s" in file_name:
-                upload_folders = S3_IMAGE_LIST_FOLDER
-                s3_file_name = file_name.replace("_s", "")
-            else:
-                upload_folders = S3_IMAGE_DETAIL_FOLDER
-                s3_file_name = file_name
+            upload_image_to_s3(local_file_path, file_name)
 
-            for folder in upload_folders:
-                s3_key = folder + s3_file_name
-                try:
-                    s3_client.upload_file(local_file_path, S3_BUCKET, s3_key)
-                    print(f"✅ S3 이미지 업로드 완료: s3://{S3_BUCKET}/{s3_key}")
-                except Exception as e:
-                    print(f"❌ S3 이미지 업로드 실패 (s3://{S3_BUCKET}/{s3_key}): {e}")
+def upload_image_to_s3(file_path: str, file_name: str):
+    # ✅ `_s`가 포함된 파일은 list 폴더로 업로드 (파일명에서 `_s` 제거)
+    if "_s" in file_name:
+        upload_folders = S3_IMAGE_LIST_FOLDER
+        s3_file_name = file_name.replace("_s", "")
+    else:
+        upload_folders = S3_IMAGE_DETAIL_FOLDER
+        s3_file_name = file_name
+
+    for folder in upload_folders:
+        s3_key = folder + s3_file_name
+        try:
+            s3_client.upload_file(file_path, S3_BUCKET, s3_key)
+            print(f"✅ S3 이미지 업로드 완료: s3://{S3_BUCKET}/{s3_key}")
+        except Exception as e:
+            print(f"❌ S3 이미지 업로드 실패 (s3://{S3_BUCKET}/{s3_key}): {e}")
 
 def invalidate_cloudfront():
     """ CloudFront 캐시 무효화 """
