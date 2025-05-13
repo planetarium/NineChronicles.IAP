@@ -7,23 +7,16 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, Date, desc
 from sqlalchemy.orm import joinedload
 
-from common.enums import Store, ReceiptStatus
+from common.enums import ReceiptStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.google import update_google_price
-from iap import settings
+from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_products_from_csv
+from common.utils.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
+from common.utils.s3 import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
 from iap.utils import verify_token
-from scripts.products import import_products_from_csv
-from scripts.category_product import import_category_products_from_csv
-from scripts.fungible_asset import import_fungible_assets_from_csv
-from scripts.fungible_item import import_fungible_items_from_csv
-from scripts.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
-from scripts.s3_main import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
-import zipfile
-import io
 import tempfile
 import os
 
