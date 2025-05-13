@@ -1,6 +1,8 @@
 IAP_LAMBDA_EXCLUDE = [
     "!iap",
     "!iap/**",
+    "!scripts",
+    "!scripts/**",
     "iap/layer",
     "iap/docs.py",
     "iap/poetry.lock",
