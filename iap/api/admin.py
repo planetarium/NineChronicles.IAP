@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 from common.enums import ReceiptStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_fungible_items_from_csv, import_products_from_csv
+from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_fungible_items_from_csv, import_products_from_csv, import_prices_from_csv
 from common.utils.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from common.utils.s3 import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
 from iap.dependencies import session
@@ -43,6 +43,9 @@ class ImportFungibleAssetsRequest(BaseModel):
     csv_content: str
 
 class ImportFungibleItemsRequest(BaseModel):
+    csv_content: str
+
+class ImportPricesRequest(BaseModel):
     csv_content: str
 
 class UploadCsvToR2Request(BaseModel):
@@ -269,6 +272,40 @@ def import_fungible_items_endpoint(request: ImportFungibleItemsRequest, sess=Dep
                 "message": "대체 가능 아이템 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,
                 "changed_count": changed_count
+            }
+        finally:
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/prices/import")
+def import_prices_endpoint(request: ImportPricesRequest, sess=Depends(session)):
+    """
+    CSV 데이터에서 가격 정보를 가져와 데이터베이스에 임포트합니다.
+
+    Args:
+        csv_content: CSV 파일 내용 (문자열)
+    """
+    try:
+        # 임시 CSV 파일 생성
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
+            temp_file.write(request.csv_content)
+            temp_path = temp_file.name
+
+        try:
+            # 비대화형 모드로 임포트 실행
+            processed_count, updated_count = import_prices_from_csv(
+                sess,
+                temp_path
+            )
+
+            return {
+                "message": "가격 데이터가 성공적으로 임포트되었습니다.",
+                "processed_count": processed_count,
+                "updated_count": updated_count
             }
         finally:
             # 임시 파일 삭제

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Tuple
 from sqlalchemy.orm import Session
 import csv
-from common.models.product import FungibleAssetProduct, FungibleItemProduct, Product, ProductRarity, ProductAssetUISize, ProductType, category_product_table
+from common.models.product import FungibleAssetProduct, FungibleItemProduct, Product, ProductRarity, ProductAssetUISize, ProductType, category_product_table, Price, Store
 
 def parse_boolean(value: str) -> bool:
     return value.strip().upper() == "TRUE"
@@ -351,6 +351,87 @@ def import_fungible_items_from_csv(db: Session, csv_path: str) -> Tuple[int, int
             db.commit()
             print(f"\n✅ FungibleItem 데이터 동기화 완료! (처리: {processed_count}, 변경: {changed_count})")
             return processed_count, changed_count
+
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def process_price_row(db: Session, row: dict) -> bool:
+    """
+    가격 정보를 처리합니다.
+
+    Args:
+        db: 데이터베이스 세션
+        row: CSV 행 데이터
+
+    Returns:
+        bool: 업데이트되었으면 True, 변경사항이 없으면 False
+    """
+    product_id = int(row["product_id"])
+    store = Store[row["store"]]
+
+    # 기존 가격 정보 확인
+    existing_price = db.query(Price).filter(
+        Price.product_id == product_id,
+        Price.store == store
+    ).first()
+
+    price_data = {
+        "product_id": product_id,
+        "store": store,
+        "currency": row["currency"],
+        "price": parse_float(row["price"]),
+        "active": parse_boolean(row["active"]),
+        "discount": parse_float(row["discount"]) or 0,
+        "regular_price": parse_float(row["regular_price"]) or 0
+    }
+
+    if existing_price:
+        # 변경사항 확인
+        changed = False
+        for key, value in price_data.items():
+            if getattr(existing_price, key) != value:
+                setattr(existing_price, key, value)
+                changed = True
+
+        if changed:
+            print(f"✅ Product {product_id}의 {store.value} 스토어 가격 정보가 업데이트되었습니다.")
+            return True
+        else:
+            print(f"⏩ Product {product_id}의 {store.value} 스토어 가격 정보에 변경사항이 없습니다.")
+            return False
+    else:
+        # 새로운 가격 정보 추가
+        new_price = Price(**price_data)
+        db.add(new_price)
+        print(f"🆕 Product {product_id}의 {store.value} 스토어 가격 정보가 추가되었습니다.")
+        return True
+
+def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
+    """
+    CSV 파일에서 가격 정보를 가져와 데이터베이스에 임포트합니다.
+
+    Args:
+        db: 데이터베이스 세션
+        csv_path: CSV 파일 경로
+
+    Returns:
+        Tuple[int, int]: (처리된 가격 정보 수, 업데이트된 가격 정보 수)
+    """
+    processed_count = 0
+    updated_count = 0
+
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                processed_count += 1
+                if process_price_row(db, row):
+                    updated_count += 1
+
+            db.commit()
+            print(f"\n✅ 가격 정보 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")
+            return processed_count, updated_count
 
     except Exception as e:
         db.rollback()
