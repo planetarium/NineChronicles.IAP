@@ -16,10 +16,16 @@ def parse_enum(enum_class, value: str):
     return None
 
 def parse_int(value: str):
-    return int(value) if value.strip() else None
+    if not value.strip():
+        return None
+    # 콤마 제거 후 int로 변환
+    return int(value.replace(",", ""))
 
 def parse_float(value: str):
-    return float(value) if value.strip() else None
+    if not value.strip():
+        return None
+    # 콤마 제거 후 float으로 변환
+    return float(value.replace(",", ""))
 
 def parse_datetime(value: str):
     try:

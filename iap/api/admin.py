@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 from common.enums import ReceiptStatus
 from common.models.product import Product
 from common.models.receipt import Receipt
-from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_products_from_csv
+from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_fungible_items_from_csv, import_products_from_csv
 from common.utils.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from common.utils.s3 import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
 from iap.dependencies import session
@@ -288,15 +288,15 @@ def upload_product_csv_to_r2_endpoint(request: UploadCsvToR2Request):
     """
     try:
         # 임시 CSV 파일 생성
+        import tempfile
         import os
 
-        temp_path = "product.csv"
-        with open(temp_path, "w") as temp_file:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
             temp_file.write(request.csv_content)
-
+            temp_path = temp_file.name
 
         try:
-             # R2에 업로드
+            # R2에 업로드
             results = []
             for r2_key in R2_PRODUCT_KEYS:
                 upload_csv_to_r2(temp_path, r2_key)
