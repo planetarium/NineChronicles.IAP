@@ -166,4 +166,5 @@ class APIStack(Stack):
                 data_trace_enabled=True,
             ),
             domain_name=custom_domain,
+            binary_media_types=["*/*"],
         )
