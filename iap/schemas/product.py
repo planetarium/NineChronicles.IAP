@@ -3,7 +3,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel as BaseSchema, model_validator
 
-from common.enums import ProductRarity, ProductAssetUISize, ProductType
+from common.enums import ProductRarity, ProductAssetUISize, ProductType, Store
 
 
 class SimpleProductSchema(BaseSchema):
@@ -27,6 +27,7 @@ class SimpleProductSchema(BaseSchema):
 
 
 class PriceSchema(BaseSchema):
+    store: Store
     currency: str
     price: float
 
@@ -72,7 +73,7 @@ class ProductSchema(SimpleProductSchema):
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
 
-    # price_list: List[PriceSchema]
+    price_list: List[PriceSchema]
 
     @model_validator(mode="after")
     def default_values(self):
