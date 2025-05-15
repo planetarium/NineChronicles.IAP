@@ -50,7 +50,8 @@ class APIStack(Stack):
                     shared_stack.apple_credential_arn,
                     shared_stack.kms_key_id_arn,
                     shared_stack.season_pass_jwt_secret_arn,
-                    f"arn:aws:ssm:{config.region_name}:{config.account_id}:parameter/{config.stage}_9c_SEASON_PASS_HOST"
+                    f"arn:aws:ssm:{config.region_name}:{config.account_id}:parameter/{config.stage}_9c_SEASON_PASS_HOST",
+                    shared_stack.jwt_secret_arn,
                 ]
             )
         )
@@ -106,6 +107,15 @@ class APIStack(Stack):
             "PLANET_URL": config.planet_url,
             "BRIDGE_DATA": config.bridge_data,
             "HEADLESS_GQL_JWT_SECRET": config.headless_gql_jwt_secret,
+            "JWT_SECRET": config.jwt_secret,
+            "CLOUDFLARE_ASSETS_ZONE_ID": config.cloudflare_assets_zone_id,
+            "CLOUDFLARE_ASSETS_K_ZONE_ID": config.cloudflare_assets_k_zone_id,
+            "CLOUDFLARE_EMAIL": config.cloudflare_email,
+            "CLOUDFLARE_API_KEY": config.cloudflare_api_key,
+            "R2_ACCESS_KEY_ID": config.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": config.r2_secret_access_key,
+            "R2_ACCOUNT_ID": config.r2_account_id,
+            "R2_BUCKET": config.r2_bucket,
         }
 
         # Lambda Function
@@ -156,4 +166,5 @@ class APIStack(Stack):
                 data_trace_enabled=True,
             ),
             domain_name=custom_domain,
+            binary_media_types=["*/*"],
         )

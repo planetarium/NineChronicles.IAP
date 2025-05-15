@@ -1,8 +1,11 @@
 import datetime
+import logging
 from collections import defaultdict
-from typing import Optional
+from typing import Annotated, Optional
 
 import jwt
+from fastapi import HTTPException, Header
+from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import func, Date, cast, select
 from sqlalchemy.sql.functions import count
 
@@ -145,3 +148,64 @@ def upsert_mileage(sess, product: Product, receipt: Receipt, mileage: Optional[M
     sess.add(mileage)
     sess.add(receipt)
     return receipt
+
+
+def verify_token(authorization: Annotated[str, Header()]):
+    """
+    Verify required API must use this.
+    This function verifies `Authorization` Bearer JWT type header.
+
+    ### How to creat token
+    1. Create token data
+        ```
+        now = datetime.now(tz=timezone.utc)
+        data = {
+            "iat": now,
+            "exp": now + timedelta(hours=1),  # Header with longer lifetime than 1 hour is refused.
+            "aud": "iap"  # Fixed value
+        }
+        ```
+    2. Create JWT with given secret key
+        ```
+        token_secret = os.environ.get("JWT_TOKEN_SECRET")
+        token = jwt.encode(data, token_secrete, algorithm="HS256")
+        ```
+
+    3. Use JWT as Bearer Authorization token
+        ```
+        headers = {
+            "Authorization": "Barer {token}".format(token=token)
+        }
+        requests.post(URL, headers=headers)
+        ```
+    JWT verification will check these conditions:
+    - Token must be encoded with given secret key
+    - Token must be encoded using `HS256` algorithm
+    - Token `iat` (Issued at) must be past timestamp
+    - Token lifetime must be shorter than 1 hour
+    - Token `exp` (Expires at) must be future timestamp
+    - Token `aud` (Audience) must be `iap`
+
+    API will return `401 Not Authorized` if any of these check fails.
+    """
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    try:
+        prefix, body = authorization.split(" ")
+        if prefix != "Bearer":
+            raise Exception("Invalid token type. Use `Bearer [TOKEN]`.")
+        token_data = jwt.decode(
+            body, settings.JWT_SECRET, audience="iap", algorithms=["HS256"]
+        )
+        if (
+            datetime.datetime.fromtimestamp(token_data["iat"], tz=datetime.timezone.utc)
+            + datetime.timedelta(hours=1)
+        ) < datetime.datetime.fromtimestamp(token_data["exp"], tz=datetime.timezone.utc):
+            raise ExpiredSignatureError("Too long token lifetime")
+        if datetime.datetime.fromtimestamp(token_data["iat"], tz=datetime.timezone.utc) > now:
+            raise ExpiredSignatureError("Invalid token issue timestamp")
+        if datetime.datetime.fromtimestamp(token_data["exp"], tz=datetime.timezone.utc) < now:
+            raise ExpiredSignatureError("Token expired")
+
+    except Exception as e:
+        logging.warning(e)
+        raise HTTPException(status_code=401, detail="Not Authorized")

@@ -102,7 +102,8 @@ class SharedStack(Stack):
             ("APPLE_CREDENTIAL", True),
             ("SEASON_PASS_JWT_SECRET", True),
             ("VOUCHER_JWT_SECRET", True),
-            ("HEADLESS_GQL_JWT_SECRET", True)
+            ("HEADLESS_GQL_JWT_SECRET", True),
+            ("JWT_SECRET", True),
         )
         ssm = boto3.client("ssm", region_name=config.region_name,
                            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
