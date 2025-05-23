@@ -214,7 +214,6 @@ def handle(event, context):
             check_token_balance(planet_id)
 
     try:
-        check_invalid_receipt(sess)
         check_halt_tx(sess)
         check_tx_failure(sess)
     finally:
