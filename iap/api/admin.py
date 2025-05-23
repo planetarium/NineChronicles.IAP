@@ -1,18 +1,21 @@
 from datetime import datetime, timedelta
 from typing import Optional, List, Annotated
+from enum import Enum
 
 from fastapi import APIRouter, Depends, Query, Security, HTTPException, File, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy import func, select, Date, desc
+from sqlalchemy import func, select, Date, desc, and_
 from sqlalchemy.orm import joinedload
 
-from common.enums import ReceiptStatus
+from common.enums import ReceiptStatus, Store
 from common.models.product import Product
 from common.models.receipt import Receipt
+from common.utils.apple import get_tx_ids
 from common.utils.import_utils import import_category_products_from_csv, import_fungible_assets_from_csv, import_fungible_items_from_csv, import_products_from_csv, import_prices_from_csv
 from common.utils.r2 import CDN_URLS, R2_IMAGE_DETAIL_FOLDER, R2_IMAGE_LIST_FOLDER, R2_PRODUCT_KEYS, purge_cache, upload_csv_to_r2, upload_image_to_r2
 from common.utils.s3 import upload_image_to_s3, upload_to_s3, invalidate_cloudfront
+from iap import settings
 from iap.dependencies import session
 from iap.schemas.product import ProductSchema
 from iap.schemas.receipt import RefundedReceiptSchema, FullReceiptSchema
@@ -50,6 +53,14 @@ class ImportPricesRequest(BaseModel):
 
 class UploadCsvToR2Request(BaseModel):
     csv_content: str
+
+class SortOrder(str, Enum):
+    ASC = "asc"
+    DESC = "desc"
+
+class ReceiptSearchResponse(BaseModel):
+    total: int
+    items: List[FullReceiptSchema]
 
 # @router.post("/update-price")
 # def update_price(store: Store, sess=Depends(session)):
@@ -560,3 +571,75 @@ async def upload_multiple_images_to_s3(files: List[UploadFile] = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/receipts", response_model=ReceiptSearchResponse)
+def search_receipts(
+    start_date: Optional[datetime] = Query(None, description="검색 시작 날짜 (ISO 형식)"),
+    end_date: Optional[datetime] = Query(None, description="검색 종료 날짜 (ISO 형식)"),
+    status: Optional[ReceiptStatus] = Query(None, description="영수증 상태로 필터링"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
+    agent_addr: Optional[str] = Query(None, description="에이전트 주소로 필터링"),
+    store: Optional[Store] = Query(None, description="스토어 타입으로 필터링"),
+    order_id: Optional[str] = Query(None, description="주문 ID로 필터링"),
+    apple_order_id: Optional[str] = Query(None, description="애플 주문 ID로 필터링"),
+    page: int = Query(0, ge=0, description="페이지 번호"),
+    page_size: int = Query(50, ge=1, le=100, description="페이지당 항목 수"),
+    sess=Depends(session)
+):
+    """
+    영수증 목록을 검색하고 필터링합니다.
+
+    - 날짜 범위로 검색 가능
+    - 상태별 필터링 가능
+    - 행성 ID로 필터링 가능
+    - 에이전트 주소로 필터링 가능
+    - 스토어 타입으로 필터링 가능
+    - 주문 ID로 필터링 가능
+    - 애플 주문 ID로 필터링 가능
+    - 정렬 옵션 지원
+    - 페이지네이션 지원
+    """
+    query = select(Receipt).options(joinedload(Receipt.product))
+
+    # 필터 조건 적용
+    conditions = []
+
+    if start_date:
+        conditions.append(Receipt.purchased_at >= start_date)
+    if end_date:
+        conditions.append(Receipt.purchased_at <= end_date)
+    if status:
+        conditions.append(Receipt.status == status)
+    if planet_id:
+        conditions.append(Receipt.planet_id == planet_id)
+    if agent_addr:
+        if not agent_addr.startswith("0x"):
+            target_addr = "0x" + agent_addr
+        else:
+            target_addr = agent_addr
+        conditions.append(Receipt.agent_addr == target_addr.lower())
+    if store:
+        conditions.append(Receipt.store == store)
+    if order_id:
+        conditions.append(Receipt.order_id == order_id)
+    if apple_order_id:
+        tx_ids = get_tx_ids(apple_order_id, settings.APPLE_CREDENTIAL, settings.APPLE_BUNDLE_ID, settings.APPLE_KEY_ID, settings.APPLE_ISSUER_ID)
+        conditions.append(Receipt.order_id.in_(tx_ids))
+    if conditions:
+        query = query.where(and_(*conditions))
+
+    query = query.order_by(desc(Receipt.purchased_at))
+
+    # 전체 결과 수 계산
+    total_count = sess.scalar(select(func.count()).select_from(query.subquery()))
+
+    # 페이지네이션 적용
+    query = query.offset(page * page_size).limit(page_size)
+
+    # 결과 조회
+    receipts = sess.scalars(query).all()
+
+    return ReceiptSearchResponse(
+        total=total_count,
+        items=receipts
+    )
