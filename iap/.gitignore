@@ -1,7 +1,0 @@
-# AWS Lambda
-layer/
-## requirements.txt is just for lambda layer
-requirements.txt
-
-# Settings
-settings/local.py

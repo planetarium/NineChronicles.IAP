@@ -1,2 +1,0 @@
-WORKER_LAMBDA_EXCLUDE = [
-]

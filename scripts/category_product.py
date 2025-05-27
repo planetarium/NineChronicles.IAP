@@ -3,10 +3,9 @@ import csv
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from common.models.product import Product, Category
+from shared.models.product import Product, Category
 from sqlalchemy.exc import SQLAlchemyError
-from common.models.product import category_product_table
-from typing import Tuple
+from shared.models.product import category_product_table
 
 # ✅ .env 파일 로드
 load_dotenv()

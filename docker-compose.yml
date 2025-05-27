@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: iap_postgres
+    environment:
+      POSTGRES_USER: local_test
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: iap
+    ports:
+      - "5432:5432"
+    volumes:
+      - iap_postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: iap_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: local_test
+      RABBITMQ_DEFAULT_PASS: password
+    ports:
+      - "5672:5672"   
+      - "15672:15672" 
+    volumes:
+      - iap_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - app-network
+      
+  redis:
+    image: redis:latest
+    container_name: iap_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - iap_redis_data:/data
+    networks:
+      - app-network
+      
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.Api
+    container_name: iap_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.api
+    environment:
+      - API_PG_DSN=postgresql://local_test:password@postgres:5432/iap
+      - API_AMQP_DSN=amqp://local_test:password@rabbitmq:5672/
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_REDIS_DSN=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+    networks:
+      - app-network
+
+  celery-product-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.Worker
+    container_name: iap_celery_product_worker
+    command: celery -A app.celery_app worker --loglevel=info -Q product_queue --concurrency=1 -n product_worker@%h
+    env_file:
+      - .env.worker
+    environment:
+      - WORKER_PG_DSN=postgresql://local_test:password@postgres:5432/iap
+      - WORKER_REDIS_DSN=redis://redis:6379/0
+      - WORKER_BROKER_URL=pyamqp://local_test:password@rabbitmq:5672/
+      - WORKER_RESULT_BACKEND=redis://redis:6379/0
+      - C_FORCE_ROOT=true
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+    networks:
+      - app-network
+
+volumes:
+  iap_postgres_data:
+  iap_rabbitmq_data:
+  iap_redis_data:
+
+networks:
+  app-network:
+    driver: bridge
