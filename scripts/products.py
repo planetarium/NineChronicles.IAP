@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from common.models.product import Product, ProductRarity, ProductAssetUISize, ProductType
+from shared.models.product import Product, ProductRarity, ProductAssetUISize, ProductType
 from sqlalchemy.exc import SQLAlchemyError
 
 # ✅ .env 파일 로드

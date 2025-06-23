@@ -4,7 +4,7 @@ from typing import Tuple
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from common.models.product import Product, FungibleAssetProduct
+from shared.models.product import FungibleAssetProduct
 from sqlalchemy.exc import SQLAlchemyError
 
 # ✅ .env 파일 로드

@@ -1,0 +1,33 @@
+{
+    "folders": [
+        {
+            "name": "root",
+            "path": "../"
+        },
+        {
+            "name": "worker",
+            "path": "../apps/worker"
+        },
+        {
+            "name": "api",
+            "path": "../apps/api"
+        },
+        {
+            "name": "shared",
+            "path": "../apps/shared"
+        },
+    ],
+    "settings": {
+        "[python]": {
+            "editor.defaultFormatter": "charliermarsh.ruff",
+            "editor.formatOnSave": true,
+            "editor.codeActionsOnSave": {
+                "source.organizeImports": "explicit"
+            },
+        },
+        "isort.args": [
+            "--profile",
+            "black"
+        ],
+    }
+}
