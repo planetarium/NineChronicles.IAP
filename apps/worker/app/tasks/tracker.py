@@ -110,7 +110,7 @@ def track_tx(self) -> str:
         if msg:
             receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
-        logger.info(f"[TIME] 트랜잭션 처리 {idx}/{len(receipt_list)}: {(time.time() - tx_start) * 1000:.1f}ms")
+        logger.info(f"[TIME] 트랜잭션 처리 {len(receipt_list)}: {(time.time() - tx_start) * 1000:.1f}ms")
 
     commit_start = time.time()
     sess.commit()
