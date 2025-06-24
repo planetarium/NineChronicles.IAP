@@ -46,12 +46,9 @@ def process(url: str, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str
             )
         )
     )
-    logger.info(f"[TIME] GQL 쿼리 준비: {(time.time() - query_start) * 1000:.1f}ms")
 
     execute_start = time.time()
     resp = client.execute(query)
-    logger.info(f"[TIME] GQL 쿼리 실행: {(time.time() - execute_start) * 1000:.1f}ms")
-    logger.debug(resp)
 
     if "errors" in resp:
         logger.error(f"GQL failed to get transaction status: {resp['errors']}")
@@ -85,7 +82,6 @@ def track_tx(self) -> str:
 
     db_start = time.time()
     sess = scoped_session(sessionmaker(bind=engine))
-    logger.info(f"[TIME] DB 세션 생성: {(time.time() - db_start) * 1000:.1f}ms")
 
     query_start = time.time()
     receipt_list = sess.scalars(
@@ -97,7 +93,6 @@ def track_tx(self) -> str:
         .order_by(Receipt.id)
         .limit(LIMIT)
     ).fetchall()
-    logger.info(f"[TIME] DB 쿼리 실행: {(time.time() - query_start) * 1000:.1f}ms")
 
     result = defaultdict(list)
     for receipt in receipt_list:
@@ -110,11 +105,9 @@ def track_tx(self) -> str:
         if msg:
             receipt.msg = "\n".join([receipt.msg or "", msg])
         sess.add(receipt)
-        logger.info(f"[TIME] 트랜잭션 처리 {len(receipt_list)}: {(time.time() - tx_start) * 1000:.1f}ms")
 
     commit_start = time.time()
     sess.commit()
-    logger.info(f"[TIME] DB 커밋: {(time.time() - commit_start) * 1000:.1f}ms")
 
     logger.info(f"{len(receipt_list)} transactions are found to track status")
     for status, tx_list in result.items():
@@ -127,4 +120,3 @@ def track_tx(self) -> str:
         else:
             logger.info(f"{len(tx_list)} transactions are changed to {status}")
 
-    logger.info(f"[TIME] 전체 실행 시간: {(time.time() - start_time) * 1000:.1f}ms")
