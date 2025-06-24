@@ -31,6 +31,7 @@ def get_gql_client(url: str) -> GQL:
 
 def process(url: str, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
     client = GQL(url, config.headless_jwt_secret)
+    query_start = time.time()
     query = dsl_gql(
         DSLQuery(
             client.ds.StandaloneQuery.transaction.select(
