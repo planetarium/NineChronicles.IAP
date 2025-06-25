@@ -50,7 +50,7 @@ def get_null_tx_status_receipts(session) -> List[Dict]:
         FROM receipt r
         JOIN product p ON p.id = r.product_id
         WHERE r.tx_status IS NULL
-        AND r.created_at <= '2025-06-25 17:17'
+        AND r.created_at < NOW() - INTERVAL '10 minutes'
         AND r.created_at >= '2025-01-01'
         AND p.google_sku NOT LIKE '%pass%'
         AND r.status = 'VALID'
