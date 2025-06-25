@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 import structlog
+from shared.schemas.message import SendProductMessage
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -39,6 +40,49 @@ def get_pending_receipts(session) -> List[Dict]:
         )
 
     return result
+
+
+def get_null_tx_status_receipts(session) -> List[Dict]:
+    """tx_status가 NULL이고 특정 조건에 맞는 영수증들을 조회"""
+    query = text(
+        """
+        SELECT r.uuid
+        FROM receipt r
+        JOIN product p ON p.id = r.product_id
+        WHERE r.tx_status IS NULL
+        AND r.created_at <= '2025-06-25 17:17'
+        AND r.created_at >= '2025-01-01'
+        AND p.google_sku NOT LIKE '%pass%'
+        AND r.status = 'VALID'
+        ORDER BY r.id DESC
+        """
+    )
+
+    result = []
+    for row in session.execute(query):
+        result.append(
+            {
+                "uuid": row[0],
+            }
+        )
+
+    return result
+
+
+def send_uuid_to_worker(uuid: str) -> bool:
+    """워커에 uuid만 보내서 처리하도록 요청"""
+    try:
+        send_product_message = SendProductMessage(uuid=uuid)
+        task = app.send_task(
+            "iap.send_product",
+            args=[send_product_message.model_dump()],
+            queue="product_queue",
+        )
+        logger.info(f"UUID {uuid}를 워커에 전송했습니다. task_id: {task.id}")
+        return True
+    except Exception as e:
+        logger.error(f"UUID {uuid} 워커 전송 실패: {e}")
+        return False
 
 
 def stage_transaction(planet_id: str, tx: str) -> Optional[str]:
@@ -137,6 +181,25 @@ def retryer(self):
                 update_receipt_status(sess, receipt_id, tx_id)
             else:
                 logger.info(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
+
+        null_tx_receipts = get_null_tx_status_receipts(sess)
+        logger.info(f"tx_status가 NULL인 영수증 {len(null_tx_receipts)}개 발견")
+
+        if null_tx_receipts:
+            logger.info("tx_status가 NULL인 영수증들을 워커에 전송합니다.")
+
+            success_count = 0
+            for receipt in null_tx_receipts:
+                uuid = receipt["uuid"]
+
+                logger.info(f"영수증 {receipt_id} (uuid: {uuid} 워커 전송 중")
+
+                if send_uuid_to_worker(uuid):
+                    success_count += 1
+
+            logger.info(
+                f"워커 전송 완료: {success_count}/{len(null_tx_receipts)}개 성공"
+            )
 
     finally:
         sess.close()
