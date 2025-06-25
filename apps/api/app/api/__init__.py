@@ -28,8 +28,7 @@ for view in __all__:
 @router.get("/balance/{planet}")
 def get_balance(planet: str):
     """Report IAP Garage stock"""
-    target_planet = config.gql_url_map[planet.upper()]
-    url = target_planet["url"]
+    url = config.gql_url_map[planet]
     gql = GQL(url, jwt_secret=config.headless_jwt_secret)
     query = """
 query balanceQuery(
@@ -99,11 +98,18 @@ query balanceQuery(
   }
 }"""
 
-    resp = requests.post(url, json={"query": query}, headers={"Authorization": f"Bearer {gql.create_token()}"})
+    resp = requests.post(
+        url,
+        json={"query": query},
+        headers={"Authorization": f"Bearer {gql.create_token()}"},
+    )
     data = resp.json()["data"]["stateQuery"]
 
     msg = {}
     for name, balance in data.items():
-        msg[name] = {"ticker": balance["currency"]["ticker"], "quantity": float(balance["quantity"])}
+        msg[name] = {
+            "ticker": balance["currency"]["ticker"],
+            "quantity": float(balance["quantity"]),
+        }
 
     return msg
