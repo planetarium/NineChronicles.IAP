@@ -1,7 +1,7 @@
 import json
 import time
 from collections import defaultdict
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
 
 import structlog
 from gql.dsl import DSLQuery, dsl_gql
@@ -23,11 +23,13 @@ engine = create_engine(config.pg_dsn, pool_size=5, max_overflow=5)
 # GQL 클라이언트 캐시
 _gql_clients: Dict[str, GQL] = {}
 
+
 def get_gql_client(url: str) -> GQL:
     """URL별로 캐싱된 GQL 클라이언트를 반환합니다."""
     if url not in _gql_clients:
-        _gql_clients[url] = GQL(url, HEADLESS_GQL_JWT_SECRET)
+        _gql_clients[url] = GQL(url, config.headless_jwt_secret)
     return _gql_clients[url]
+
 
 def process(url: str, tx_id: str) -> Tuple[str, Optional[TxStatus], Optional[str]]:
     client = GQL(url, config.headless_jwt_secret)
@@ -119,4 +121,3 @@ def track_tx(self) -> str:
             logger.info(f"{len(tx_list)} transactions are still staged.")
         else:
             logger.info(f"{len(tx_list)} transactions are changed to {status}")
-
