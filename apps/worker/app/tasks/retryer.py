@@ -145,6 +145,25 @@ def retryer(self):
     sess = scoped_session(sessionmaker(bind=engine))
 
     try:
+        null_tx_receipts = get_null_tx_status_receipts(sess)
+        logger.info(f"tx_status가 NULL인 영수증 {len(null_tx_receipts)}개 발견")
+
+        if null_tx_receipts:
+            logger.info("tx_status가 NULL인 영수증들을 워커에 전송합니다.")
+
+            success_count = 0
+            for receipt in null_tx_receipts:
+                uuid = receipt["uuid"]
+
+                logger.info(f"영수증 (uuid: {uuid} 워커 전송 중")
+
+                if send_uuid_to_worker(uuid):
+                    success_count += 1
+
+            logger.info(
+                f"워커 전송 완료: {success_count}/{len(null_tx_receipts)}개 성공"
+            )
+
         receipts = get_pending_receipts(sess)
         logger.info(
             f"처리할 영수증 {len(receipts)}개 발견 (생성된 지 10분 이상 지난 것들만)"
@@ -181,25 +200,6 @@ def retryer(self):
                 update_receipt_status(sess, receipt_id, tx_id)
             else:
                 logger.info(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
-
-        null_tx_receipts = get_null_tx_status_receipts(sess)
-        logger.info(f"tx_status가 NULL인 영수증 {len(null_tx_receipts)}개 발견")
-
-        if null_tx_receipts:
-            logger.info("tx_status가 NULL인 영수증들을 워커에 전송합니다.")
-
-            success_count = 0
-            for receipt in null_tx_receipts:
-                uuid = receipt["uuid"]
-
-                logger.info(f"영수증 {receipt_id} (uuid: {uuid} 워커 전송 중")
-
-                if send_uuid_to_worker(uuid):
-                    success_count += 1
-
-            logger.info(
-                f"워커 전송 완료: {success_count}/{len(null_tx_receipts)}개 성공"
-            )
 
     finally:
         sess.close()
