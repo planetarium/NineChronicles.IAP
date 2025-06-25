@@ -62,7 +62,7 @@ def get_null_tx_status_receipts(session) -> List[Dict]:
     for row in session.execute(query):
         result.append(
             {
-                "uuid": row[0],
+                "uuid": str(row[0]),
             }
         )
 
