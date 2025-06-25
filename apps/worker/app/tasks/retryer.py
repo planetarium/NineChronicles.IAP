@@ -96,7 +96,7 @@ def update_receipt_status(session, receipt_id: int, tx_id: str):
     retry_backoff=True,
     queue="background_job_queue",
 )
-def retryer():
+def retryer(self):
     """보류 중인 영수증 처리"""
 
     sess = scoped_session(sessionmaker(bind=engine))

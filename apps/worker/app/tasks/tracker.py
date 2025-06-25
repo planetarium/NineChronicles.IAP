@@ -16,7 +16,7 @@ from app.config import config
 
 logger = structlog.get_logger(__name__)
 
-LIMIT = 5
+LIMIT = 50
 
 engine = create_engine(config.pg_dsn, pool_size=5, max_overflow=5)
 
