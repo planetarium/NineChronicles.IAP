@@ -248,7 +248,7 @@ query balanceQuery(
     retry_backoff=True,
     queue="background_job_queue",
 )
-def status_monitor():
+def status_monitor(self):
     sess = scoped_session(sessionmaker(bind=engine))
     if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
         for planet_id in config.converted_gql_url_map.keys():

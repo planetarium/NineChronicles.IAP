@@ -1,15 +1,14 @@
-import argparse
-import logging
 from typing import Dict, List, Optional, Tuple
 
 import requests
+import structlog
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from app.celery_app import app
 from app.config import config
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 engine = create_engine(config.pg_dsn, pool_size=5, max_overflow=5)
 
@@ -84,7 +83,7 @@ def update_receipt_status(session, receipt_id: int, tx_id: str):
     )
     session.execute(query, {"tx_id": tx_id, "receipt_id": receipt_id})
     session.commit()
-    print(f"receipt_id={receipt_id}의 상태를 STAGED로 업데이트, tx_id={tx_id}")
+    logger.info(f"receipt_id={receipt_id}의 상태를 STAGED로 업데이트, tx_id={tx_id}")
 
 
 @app.task(
@@ -103,20 +102,22 @@ def retryer(self):
 
     try:
         receipts = get_pending_receipts(sess)
-        print(f"처리할 영수증 {len(receipts)}개 발견 (생성된 지 10분 이상 지난 것들만)")
+        logger.info(
+            f"처리할 영수증 {len(receipts)}개 발견 (생성된 지 10분 이상 지난 것들만)"
+        )
 
         if not receipts:
-            print("처리할 영수증이 없습니다.")
+            logger.info("처리할 영수증이 없습니다.")
             return
 
         created_count = sum(1 for r in receipts if r["tx_status"] == "CREATED")
         staged_count = sum(1 for r in receipts if r["tx_status"] == "STAGED")
         invalid_count = sum(1 for r in receipts if r["tx_status"] == "INVALID")
-        print(
+        logger.info(
             f"CREATED 상태: {created_count}개, STAGED 상태: {staged_count}개, INVALID 상태: {invalid_count}개"
         )
 
-        print("nonce 오름차순으로 처리를 시작합니다.")
+        logger.info("nonce 오름차순으로 처리를 시작합니다.")
 
         for receipt in receipts:
             receipt_id = receipt["id"]
@@ -126,7 +127,7 @@ def retryer(self):
             nonce = receipt["nonce"]
             created_at = receipt["created_at"]
 
-            print(
+            logger.info(
                 f"영수증 {receipt_id} 처리 중 (planet_id: {planet_id}, 현재 상태: {tx_status}, nonce: {nonce}, 생성 시간: {created_at})"
             )
 
@@ -135,7 +136,7 @@ def retryer(self):
             if tx_id:
                 update_receipt_status(sess, receipt_id, tx_id)
             else:
-                print(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
+                logger.info(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
 
     finally:
         sess.close()
