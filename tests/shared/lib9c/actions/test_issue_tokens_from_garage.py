@@ -2,9 +2,9 @@ from decimal import Decimal
 
 import pytest
 
-from common.lib9c.actions.issue_tokens_from_garage import IssueTokensFromGarage, FavIssueSpec, ItemIssueSpec
-from common.lib9c.models.currency import Currency
-from common.lib9c.models.fungible_asset_value import FungibleAssetValue
+from shared.lib9c.actions.issue_tokens_from_garage import IssueTokensFromGarage, FavIssueSpec, ItemIssueSpec
+from shared.lib9c.models.currency import Currency
+from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 TEST_ID = "0d0d9e0cbc1b11eeb0dc6fd71476142a"
 TEST_FUNGIBLE_ITEM_ID = "f8faf92c9c0d0e8e06694361ea87bfc8b29a8ae8de93044b98470a57636ed0e0"  # Golden Dust

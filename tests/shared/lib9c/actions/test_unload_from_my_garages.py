@@ -2,10 +2,10 @@ from decimal import Decimal
 
 import pytest
 
-from common.lib9c.actions.unload_from_my_garages import UnloadFromMyGarages
-from common.lib9c.models.address import Address
-from common.lib9c.models.currency import Currency
-from common.lib9c.models.fungible_asset_value import FungibleAssetValue
+from shared.lib9c.actions.unload_from_my_garages import UnloadFromMyGarages
+from shared.lib9c.models.address import Address
+from shared.lib9c.models.currency import Currency
+from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 TEST_AGENT_ADDR = "0xDbF4c6d0D7C74D390fADae680f2144D885c878df"
 TEST_AVATAR_ADDR = "0x49D5FcEB955800B2c532D6319E803c7D80f817Af"

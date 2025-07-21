@@ -2,10 +2,10 @@ import datetime
 
 import bencodex
 import pytest
-from common.utils.actions import create_unload_my_garages_action_plain_value
+from shared.utils.actions import create_unload_my_garages_action_plain_value
 
-from common.utils.receipt import PlanetID
-from common.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx, get_genesis_block_hash
+from shared.enums import PlanetID
+from shared.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx, get_genesis_block_hash
 
 
 def test_get_same_byteshex():
@@ -24,9 +24,9 @@ def test_get_same_byteshex():
         b'l': 1,
         b'm': [{'decimalPlaces': b'\x12', 'minters': None, 'ticker': 'Mead'}, 10_000_000_000_000],
         b'n': 11,
-        b'p': b'\x04\x97\x0c\x06QVU|O#\xa0\x89E\xed6\xe5\x1f`4\x14\xd5K\x98\xa6\xd0\x1akpC\xb96\xc9\xef\xa9\xea4dsa\x02\x02\x89|\xa6\xa8u\xc3\xcf\x0b\xe8\x8aV4\xdd(Lx\xed\x1bM\x95\x8c\xf6HV', 
-        b's': b'\x0e\x19\xa9\x92\xad\x97kI\x86\t\x88\x13\xdf\xcd$\xb0wZ\xc0\xaa', 
-        b't': '2023-11-22T01:56:33.194530Z', 
+        b'p': b'\x04\x97\x0c\x06QVU|O#\xa0\x89E\xed6\xe5\x1f`4\x14\xd5K\x98\xa6\xd0\x1akpC\xb96\xc9\xef\xa9\xea4dsa\x02\x02\x89|\xa6\xa8u\xc3\xcf\x0b\xe8\x8aV4\xdd(Lx\xed\x1bM\x95\x8c\xf6HV',
+        b's': b'\x0e\x19\xa9\x92\xad\x97kI\x86\t\x88\x13\xdf\xcd$\xb0wZ\xc0\xaa',
+        b't': '2023-11-22T01:56:33.194530Z',
         b'u': []
     }
 

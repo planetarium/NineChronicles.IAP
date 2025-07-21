@@ -1,6 +1,6 @@
 import pytest
 
-from iap.schemas.product import FungibleAssetValueSchema, FungibleItemSchema
+from shared.schemas.product import FungibleAssetValueSchema, FungibleItemSchema
 
 
 @pytest.mark.parametrize(

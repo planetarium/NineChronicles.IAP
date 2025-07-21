@@ -1,7 +1,7 @@
 import pytest
 
-from common.lib9c.models.currency import Currency
-from common.lib9c.models.fungible_asset_value import FungibleAssetValue
+from shared.lib9c.models.currency import Currency
+from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 TEST_DATASET = [
     ("NCG", 2, ["47d082a115c63e7b58b1532d20e631538eafadde"], False, 0,
