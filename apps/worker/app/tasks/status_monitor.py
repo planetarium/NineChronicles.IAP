@@ -214,6 +214,10 @@ query balanceQuery(
       address: $address,
       currency: {ticker: "Item_NT_800201", decimalPlaces: 0, minters: [], }
     ) { currency {ticker} quantity }
+    SacredHammer: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_600306", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
   }
 }"""
 
