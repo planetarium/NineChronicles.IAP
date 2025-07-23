@@ -1,7 +1,7 @@
 import pytest
 
-from common.lib9c.models.address import Address
-from common.lib9c.models.currency import Currency
+from shared.lib9c.models.address import Address
+from shared.lib9c.models.currency import Currency
 
 TEST_DATASET = [
     ("NCG", 2, ["47d082a115c63e7b58b1532d20e631538eafadde"], False,

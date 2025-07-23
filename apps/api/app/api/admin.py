@@ -1,6 +1,7 @@
 import os
 import tempfile
 from datetime import datetime, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, List, Optional
 
@@ -12,6 +13,7 @@ from shared.models.product import Product
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
+from shared.models.product import Price
 from sqlalchemy import Date, and_, desc, func, select
 from sqlalchemy.orm import joinedload
 
@@ -89,6 +91,49 @@ class ReceiptSearchResponse(BaseModel):
     items: List[FullReceiptSchema]
 
 
+class UserReceiptCheckResponse(BaseModel):
+    agent_address: str
+    avatar_address: str
+    year: int
+    month: int
+    has_purchases: bool
+    total_amount: float
+    purchase_count: int
+    details: List[dict]
+
+
+class CouragePassCheckResponse(BaseModel):
+    agent_address: str
+    avatar_address: str
+    year: int
+    month: int
+    has_courage_pass: bool
+    courage_pass_count: int
+    courage_pass_details: List[dict]
+
+
+class AdventureBossPassCheckResponse(BaseModel):
+    agent_address: str
+    avatar_address: str
+    year: int
+    month: int
+    has_adventure_boss_pass: bool
+    adventure_boss_pass_count: int
+    adventure_boss_pass_details: List[dict]
+
+
+class NonPassPurchaseCheckResponse(BaseModel):
+    agent_address: str
+    avatar_address: str
+    year: int
+    month: int
+    total_amount: Decimal
+    purchase_count: int
+    meets_amount_threshold: bool
+    meets_count_threshold: bool
+    non_pass_purchases: List[dict]
+
+
 # @router.post("/update-price")
 # def update_price(store: Store, sess=Depends(session)):
 #     updated_product_count, updated_price_count = (0, 0)
@@ -128,14 +173,14 @@ def fetch_refunded(
     Get list of refunded receipts. This only returns user-refunded receipts.
     """
     if not start:
-        start = (datetime.utcnow() - timedelta(hours=24)).date()
+        start_date = (datetime.utcnow() - timedelta(hours=24)).date()
     else:
-        start = datetime.fromtimestamp(start)
+        start_date = datetime.fromtimestamp(start)
 
     return sess.scalars(
         select(Receipt)
         .where(Receipt.status == ReceiptStatus.REFUNDED_BY_BUYER)
-        .where(Receipt.updated_at.cast(Date) >= start)
+        .where(Receipt.updated_at.cast(Date) >= start_date)
         .order_by(desc(Receipt.updated_at))
         .limit(limit)
     ).fetchall()
@@ -711,3 +756,297 @@ def search_receipts(
     receipts = sess.scalars(query).all()
 
     return ReceiptSearchResponse(total=total_count, items=receipts)
+
+
+@router.get("/user-receipts/courage-pass", response_model=CouragePassCheckResponse)
+def check_courage_pass_purchases(
+    agent_address: str = Query(..., description="9c agent 주소"),
+    avatar_address: str = Query(..., description="9c avatar 주소"),
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    sess=Depends(session),
+):
+    """
+    해당 년월 유료 커리지패스 구매확인
+
+    Args:
+        agent_address: 9c agent 주소
+        avatar_address: 9c avatar 주소
+        year: 조회할 연도
+        month: 조회할 월
+
+    Returns:
+        커리지패스 구매 여부와 상세 정보
+    """
+    # 주소 형식 정규화
+    if not agent_address.startswith("0x"):
+        agent_address = "0x" + agent_address
+    if not avatar_address.startswith("0x"):
+        avatar_address = "0x" + avatar_address
+
+    agent_address = agent_address.lower()
+    avatar_address = avatar_address.lower()
+
+    # 커리지패스 구매 내역 조회
+    courage_pass_receipts = Receipt.get_user_receipts_by_month(
+        session=sess,
+        agent_addr=agent_address,
+        avatar_addr=avatar_address,
+        year=year,
+        month=month,
+        include_product=True,
+        only_paid_products=True,
+        sku_pattern="couragepass\\d+premium"
+    )
+
+    courage_pass_details = []
+    for receipt in courage_pass_receipts:
+        if receipt.product:
+            courage_pass_details.append({
+                "order_id": receipt.order_id,
+                "purchased_at": receipt.purchased_at.isoformat(),
+                "google_sku": receipt.product.google_sku,
+                "product_name": receipt.product.name,
+                "amount": receipt.amount if hasattr(receipt, 'amount') else None
+            })
+
+    return CouragePassCheckResponse(
+        agent_address=agent_address,
+        avatar_address=avatar_address,
+        year=year,
+        month=month,
+        has_courage_pass=len(courage_pass_receipts) > 0,
+        courage_pass_count=len(courage_pass_receipts),
+        courage_pass_details=courage_pass_details
+    )
+
+
+@router.get("/user-receipts/adventure-boss-pass", response_model=AdventureBossPassCheckResponse)
+def check_adventure_boss_pass_purchases(
+    agent_address: str = Query(..., description="9c agent 주소"),
+    avatar_address: str = Query(..., description="9c avatar 주소"),
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    sess=Depends(session),
+):
+    """
+    해당 년월 유료 어드벤쳐보스패스 구매확인
+
+    Args:
+        agent_address: 9c agent 주소
+        avatar_address: 9c avatar 주소
+        year: 조회할 연도
+        month: 조회할 월
+
+    Returns:
+        어드벤쳐보스패스 구매 여부와 상세 정보
+    """
+    # 주소 형식 정규화
+    if not agent_address.startswith("0x"):
+        agent_address = "0x" + agent_address
+    if not avatar_address.startswith("0x"):
+        avatar_address = "0x" + avatar_address
+
+    agent_address = agent_address.lower()
+    avatar_address = avatar_address.lower()
+
+    # 어드벤쳐보스패스 구매 내역 조회
+    adventure_boss_pass_receipts = Receipt.get_user_receipts_by_month(
+        session=sess,
+        agent_addr=agent_address,
+        avatar_addr=avatar_address,
+        year=year,
+        month=month,
+        include_product=True,
+        only_paid_products=True,
+        sku_pattern="adventurebosspass\\d+premium"
+    )
+
+    adventure_boss_pass_details = []
+    for receipt in adventure_boss_pass_receipts:
+        if receipt.product:
+            adventure_boss_pass_details.append({
+                "order_id": receipt.order_id,
+                "purchased_at": receipt.purchased_at.isoformat(),
+                "google_sku": receipt.product.google_sku,
+                "product_name": receipt.product.name,
+                "amount": receipt.amount if hasattr(receipt, 'amount') else None
+            })
+
+    return AdventureBossPassCheckResponse(
+        agent_address=agent_address,
+        avatar_address=avatar_address,
+        year=year,
+        month=month,
+        has_adventure_boss_pass=len(adventure_boss_pass_receipts) > 0,
+        adventure_boss_pass_count=len(adventure_boss_pass_receipts),
+        adventure_boss_pass_details=adventure_boss_pass_details
+    )
+
+
+@router.get("/user-receipts/non-pass-amount", response_model=NonPassPurchaseCheckResponse)
+def check_non_pass_purchase_amount(
+    agent_address: str = Query(..., description="9c agent 주소"),
+    avatar_address: str = Query(..., description="9c avatar 주소"),
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+        amount_threshold: Decimal = Query(Decimal("100.0"), description="금액 임계값 (기본값: 100.0)"),
+    sess=Depends(session),
+):
+    """
+    해당 년월 패스관련상품을 제외한 구매한 금액이 100$이상인지 확인
+
+    Args:
+        agent_address: 9c agent 주소
+        avatar_address: 9c avatar 주소
+        year: 조회할 연도
+        month: 조회할 월
+        amount_threshold: 금액 임계값 (기본값: 100.0)
+
+    Returns:
+        패스 제외 구매 금액과 임계값 충족 여부
+    """
+    # 주소 형식 정규화
+    if not agent_address.startswith("0x"):
+        agent_address = "0x" + agent_address
+    if not avatar_address.startswith("0x"):
+        avatar_address = "0x" + avatar_address
+
+    agent_address = agent_address.lower()
+    avatar_address = avatar_address.lower()
+
+    # 패스 제외 구매 내역 조회
+    non_pass_receipts = Receipt.get_user_receipts_by_month(
+        session=sess,
+        agent_addr=agent_address,
+        avatar_addr=avatar_address,
+        year=year,
+        month=month,
+        include_product=True,
+        only_paid_products=True,
+        exclude_sku_patterns=[
+            "adventurebosspass\\d+premium",
+            "couragepass\\d+premium"
+        ]
+    )
+
+    # 총 금액 계산
+    total_amount = Decimal("0.0")
+    non_pass_purchases = []
+
+    for receipt in non_pass_receipts:
+        if receipt.product:
+            # 가격 정보 조회
+            price_query = sess.query(Price).filter(
+                and_(
+                    Price.product_id == receipt.product.id,
+                    Price.price > 0
+                )
+            ).first()
+
+            amount = Decimal(str(price_query.price)) if price_query else Decimal("0.0")
+            total_amount += amount
+
+            non_pass_purchases.append({
+                "order_id": receipt.order_id,
+                "purchased_at": receipt.purchased_at.isoformat(),
+                "google_sku": receipt.product.google_sku,
+                "product_name": receipt.product.name,
+                "amount": amount
+            })
+
+    return NonPassPurchaseCheckResponse(
+        agent_address=agent_address,
+        avatar_address=avatar_address,
+        year=year,
+        month=month,
+        total_amount=total_amount,
+        purchase_count=len(non_pass_receipts),
+        meets_amount_threshold=total_amount >= amount_threshold,
+        meets_count_threshold=len(non_pass_receipts) >= 1,
+        non_pass_purchases=non_pass_purchases
+    )
+
+
+@router.get("/user-receipts/non-pass-count", response_model=NonPassPurchaseCheckResponse)
+def check_non_pass_purchase_count(
+    agent_address: str = Query(..., description="9c agent 주소"),
+    avatar_address: str = Query(..., description="9c avatar 주소"),
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    count_threshold: int = Query(1, ge=1, description="구매 건수 임계값 (기본값: 1)"),
+    sess=Depends(session),
+):
+    """
+    해당 년월 패스관련상품을 제외한 구매건이 1건이상인지 확인
+
+    Args:
+        agent_address: 9c agent 주소
+        avatar_address: 9c avatar 주소
+        year: 조회할 연도
+        month: 조회할 월
+        count_threshold: 구매 건수 임계값 (기본값: 1)
+
+    Returns:
+        패스 제외 구매 건수와 임계값 충족 여부
+    """
+    # 주소 형식 정규화
+    if not agent_address.startswith("0x"):
+        agent_address = "0x" + agent_address
+    if not avatar_address.startswith("0x"):
+        avatar_address = "0x" + avatar_address
+
+    agent_address = agent_address.lower()
+    avatar_address = avatar_address.lower()
+
+    # 패스 제외 구매 내역 조회
+    non_pass_receipts = Receipt.get_user_receipts_by_month(
+        session=sess,
+        agent_addr=agent_address,
+        avatar_addr=avatar_address,
+        year=year,
+        month=month,
+        include_product=True,
+        only_paid_products=True,
+        exclude_sku_patterns=[
+            "adventurebosspass\\d+premium",
+            "couragepass\\d+premium"
+        ]
+    )
+
+    # 총 금액 계산
+    total_amount = Decimal("0.0")
+    non_pass_purchases = []
+
+    for receipt in non_pass_receipts:
+        if receipt.product:
+            # 가격 정보 조회
+            price_query = sess.query(Price).filter(
+                and_(
+                    Price.product_id == receipt.product.id,
+                    Price.price > 0
+                )
+            ).first()
+
+            amount = Decimal(str(price_query.price)) if price_query else Decimal("0.0")
+            total_amount += amount
+
+            non_pass_purchases.append({
+                "order_id": receipt.order_id,
+                "purchased_at": receipt.purchased_at.isoformat(),
+                "google_sku": receipt.product.google_sku,
+                "product_name": receipt.product.name,
+                "amount": amount
+            })
+
+    return NonPassPurchaseCheckResponse(
+        agent_address=agent_address,
+        avatar_address=avatar_address,
+        year=year,
+        month=month,
+        total_amount=total_amount,
+        purchase_count=len(non_pass_receipts),
+        meets_amount_threshold=total_amount >= Decimal("100.0"),  # 기본 금액 임계값
+        meets_count_threshold=len(non_pass_receipts) >= count_threshold,
+        non_pass_purchases=non_pass_purchases
+    )

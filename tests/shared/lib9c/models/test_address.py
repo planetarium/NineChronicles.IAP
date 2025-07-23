@@ -1,6 +1,6 @@
 import pytest
 
-from common.lib9c.models.address import Address
+from shared.lib9c.models.address import Address
 
 
 @pytest.mark.parametrize("addr",

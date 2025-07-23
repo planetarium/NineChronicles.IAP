@@ -1,6 +1,6 @@
 import pytest
 
-from common.utils.address import format_addr
+from shared.utils.address import format_addr
 
 
 @pytest.mark.parametrize("address", [

@@ -3,9 +3,9 @@ from decimal import Decimal
 
 import pytest
 
-from common.lib9c.actions.claim_items import ClaimItems
-from common.lib9c.models.address import Address
-from common.lib9c.models.fungible_asset_value import FungibleAssetValue
+from shared.lib9c.actions.claim_items import ClaimItems
+from shared.lib9c.models.address import Address
+from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 
 TEST_ID = "0d0d9e0cbc1b11eeb0dc6fd71476142a"
 TEST_DATA = [

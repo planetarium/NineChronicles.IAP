@@ -1,8 +1,11 @@
 import uuid
+import re
+from datetime import datetime
+from typing import List, Optional
 
-from sqlalchemy import UUID, Column, DateTime, ForeignKey, Integer, LargeBinary, Text
+from sqlalchemy import UUID, Column, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, extract
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import backref, relationship, joinedload
 
 from shared.enums import PlanetID, ReceiptStatus, Store, TxStatus
 from shared.models.base import AutoIdMixin, Base, TimeStampMixin
@@ -83,3 +86,89 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         nullable=True,
         doc="Any error message while doing action. Please append, Do not replace.",
     )
+
+    @classmethod
+    def get_user_receipts_by_month(
+        cls,
+        session,
+        agent_addr: str,
+        avatar_addr: str,
+        year: int,
+        month: int,
+        include_product: bool = True,
+        only_paid_products: bool = True,
+        sku_pattern: Optional[str] = None,
+        exclude_sku_patterns: Optional[List[str]] = None
+    ) -> List["Receipt"]:
+        """
+        특정 유저의 특정 월 구매 영수증 목록을 조회합니다.
+
+        Args:
+            session: SQLAlchemy 세션
+            agent_addr: 9c agent 주소
+            avatar_addr: 9c avatar 주소
+            year: 조회할 연도
+            month: 조회할 월 (1-12)
+            include_product: product 정보를 함께 불러올지 여부 (기본값: True)
+            only_paid_products: 가격이 0보다 큰 상품만 필터링할지 여부 (기본값: True)
+            sku_pattern: 포함할 google_sku 패턴 (정규표현식, 예: "adventurebosspass\\d+premium")
+            exclude_sku_patterns: 제외할 google_sku 패턴 리스트 (정규표현식 리스트)
+
+        Returns:
+            List[Receipt]: 해당 월에 해당 유저가 구매한 영수증 목록 (product 정보 포함)
+        """
+        from shared.models.product import Price
+
+        query = session.query(cls).filter(
+            and_(
+                cls.agent_addr == agent_addr,
+                cls.avatar_addr == avatar_addr,
+                extract('year', cls.purchased_at) == year,
+                extract('month', cls.purchased_at) == month,
+            )
+        )
+
+        # 가격이 0보다 큰 상품만 필터링
+        if only_paid_products:
+            query = query.join(cls.product).join(Price).filter(Price.price > 0)
+
+        query = query.order_by(cls.purchased_at.desc())
+
+        if include_product:
+            query = query.options(joinedload(cls.product))
+
+        # 결과를 가져온 후 Python에서 SKU 패턴 필터링
+        receipts = query.all()
+
+        # SKU 패턴 필터링
+        if sku_pattern or exclude_sku_patterns:
+            filtered_receipts = []
+
+            for receipt in receipts:
+                if not receipt.product:
+                    continue
+
+                product_sku = receipt.product.google_sku
+                if not product_sku:
+                    continue
+
+                # 제외 패턴 확인
+                if exclude_sku_patterns:
+                    should_exclude = False
+                    for pattern in exclude_sku_patterns:
+                        if re.search(pattern, product_sku, re.IGNORECASE):
+                            should_exclude = True
+                            break
+                    if should_exclude:
+                        continue
+
+                # 포함 패턴 확인
+                if sku_pattern:
+                    if not re.search(sku_pattern, product_sku, re.IGNORECASE):
+                        continue
+
+                filtered_receipts.append(receipt)
+
+            return filtered_receipts
+
+        return receipts

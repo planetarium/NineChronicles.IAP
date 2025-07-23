@@ -2,8 +2,8 @@ import pytest
 import requests
 from sqlalchemy import select
 
-from common.enums import ProductRarity, ProductAssetUISize
-from common.models.product import Product, Category
+from shared.enums import ProductRarity, ProductAssetUISize
+from shared.models.product import Product, Category
 
 HOST_DICT = {
     "local": "https://dhyrkl3xgx6tk.cloudfront.net",
