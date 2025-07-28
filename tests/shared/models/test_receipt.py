@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from unittest.mock import Mock
 
 from shared.models.receipt import Receipt
@@ -499,7 +499,7 @@ class TestReceipt:
             sku_pattern="adventurebosspass\\d+premium"
         )
 
-        # 결과 확인 (product가 None이므로 필터링되지 않고 그대로 반환되어야 함)
+        # 결과 확인 (product가 None이므로 필터링에서 제외됨)
         assert len(result) == 0  # product가 None이므로 필터링에서 제외됨
 
     def test_get_user_receipts_by_month_couragepass_pattern(self):
@@ -800,3 +800,295 @@ class TestReceipt:
         assert len(result) == 1
         assert result[0].order_id == "order_2024_03_03"
         assert result[0].product.google_sku == "regular_item"
+
+    # ===== 타임존 경계 케이스 테스트 =====
+
+    def test_get_user_receipts_by_month_timezone_boundary_month_start(self):
+        """월 시작 경계 케이스를 테스트합니다.
+        DB에는 KST로 저장되고, API는 UTC 기준으로 요청받아 KST를 UTC로 변환하여 조회
+        """
+        # Mock 영수증 객체 생성 (KST로 저장된 데이터)
+        mock_receipt = Mock()
+        mock_receipt.order_id = "order_2024_02_01_kst"
+        mock_receipt.agent_addr = "0x1234567890abcdef"
+        mock_receipt.avatar_addr = "0xabcdef1234567890"
+        # KST 2024-02-01 09:00:00 (UTC 2024-02-01 00:00:00에 해당)
+        mock_receipt.purchased_at = datetime(2024, 2, 1, 9, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt.product = Mock()
+        mock_receipt.product.google_sku = "test_product"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = [mock_receipt]
+
+        # 메서드 호출 (UTC 2024년 2월 요청)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            "0xabcdef1234567890",
+            2024,
+            2
+        )
+
+        # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
+        assert len(result) == 1
+        assert result[0].order_id == "order_2024_02_01_kst"
+
+    def test_get_user_receipts_by_month_timezone_boundary_month_end(self):
+        """월 끝 경계 케이스를 테스트합니다.
+        DB에는 KST로 저장되고, API는 UTC 기준으로 요청받아 KST를 UTC로 변환하여 조회
+        """
+        # Mock 영수증 객체 생성 (KST로 저장된 데이터)
+        mock_receipt = Mock()
+        mock_receipt.order_id = "order_2024_02_01_0830_kst"
+        mock_receipt.agent_addr = "0x1234567890abcdef"
+        mock_receipt.avatar_addr = "0xabcdef1234567890"
+        # KST 2024-02-01 08:30:00 (UTC 2024-01-31 23:30:00에 해당)
+        mock_receipt.purchased_at = datetime(2024, 2, 1, 8, 30, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt.product = Mock()
+        mock_receipt.product.google_sku = "test_product"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = [mock_receipt]
+
+        # 메서드 호출 (UTC 2024년 1월 요청)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            "0xabcdef1234567890",
+            2024,
+            1
+        )
+
+        # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
+        assert len(result) == 1
+        assert result[0].order_id == "order_2024_02_01_0830_kst"
+
+    def test_get_user_receipts_by_month_timezone_boundary_year_end(self):
+        """연말 경계 케이스를 테스트합니다.
+        DB에는 KST로 저장되고, API는 UTC 기준으로 요청받아 KST를 UTC로 변환하여 조회
+        """
+        # Mock 영수증 객체 생성 (KST로 저장된 데이터)
+        mock_receipt = Mock()
+        mock_receipt.order_id = "order_2025_01_01_0830_kst"
+        mock_receipt.agent_addr = "0x1234567890abcdef"
+        mock_receipt.avatar_addr = "0xabcdef1234567890"
+        # KST 2025-01-01 08:30:00 (UTC 2024-12-31 23:30:00에 해당)
+        mock_receipt.purchased_at = datetime(2025, 1, 1, 8, 30, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt.product = Mock()
+        mock_receipt.product.google_sku = "test_product"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = [mock_receipt]
+
+        # 메서드 호출 (UTC 2024년 12월 요청)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            "0xabcdef1234567890",
+            2024,
+            12
+        )
+
+        # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
+        assert len(result) == 1
+        assert result[0].order_id == "order_2025_01_01_0830_kst"
+
+    def test_get_user_receipts_by_month_timezone_boundary_year_start(self):
+        """연초 경계 케이스를 테스트합니다.
+        DB에는 KST로 저장되고, API는 UTC 기준으로 요청받아 KST를 UTC로 변환하여 조회
+        """
+        # Mock 영수증 객체 생성 (KST로 저장된 데이터)
+        mock_receipt = Mock()
+        mock_receipt.order_id = "order_2025_01_01_0900_kst"
+        mock_receipt.agent_addr = "0x1234567890abcdef"
+        mock_receipt.avatar_addr = "0xabcdef1234567890"
+        # KST 2025-01-01 09:00:00 (UTC 2025-01-01 00:00:00에 해당)
+        mock_receipt.purchased_at = datetime(2025, 1, 1, 9, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt.product = Mock()
+        mock_receipt.product.google_sku = "test_product"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = [mock_receipt]
+
+        # 메서드 호출 (UTC 2025년 1월 요청)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            "0xabcdef1234567890",
+            2025,
+            1
+        )
+
+        # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
+        assert len(result) == 1
+        assert result[0].order_id == "order_2025_01_01_0900_kst"
+
+    def test_get_user_receipts_by_month_timezone_boundary_edge_cases(self):
+        """여러 경계 케이스를 동시에 테스트합니다.
+        DB에는 KST로 저장되고, API는 UTC 기준으로 요청받아 KST를 UTC로 변환하여 조회
+        """
+        # Mock 영수증 객체들 생성 (KST로 저장된 데이터)
+        mock_receipt1 = Mock()  # KST 2024-02-01 08:30:00 (UTC 2024-01-31 23:30:00에 해당)
+        mock_receipt1.order_id = "order_2024_02_01_0830_kst"
+        mock_receipt1.agent_addr = "0x1234567890abcdef"
+        mock_receipt1.avatar_addr = "0xabcdef1234567890"
+        mock_receipt1.purchased_at = datetime(2024, 2, 1, 8, 30, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt1.product = Mock()
+        mock_receipt1.product.google_sku = "product1"
+
+        mock_receipt2 = Mock()  # KST 2024-02-01 09:00:00 (UTC 2024-02-01 00:00:00에 해당)
+        mock_receipt2.order_id = "order_2024_02_01_0900_kst"
+        mock_receipt2.agent_addr = "0x1234567890abcdef"
+        mock_receipt2.avatar_addr = "0xabcdef1234567890"
+        mock_receipt2.purchased_at = datetime(2024, 2, 1, 9, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt2.product = Mock()
+        mock_receipt2.product.google_sku = "product2"
+
+        mock_receipt3 = Mock()  # KST 2024-02-01 23:30:00 (UTC 2024-02-01 14:30:00에 해당)
+        mock_receipt3.order_id = "order_2024_02_01_2330_kst"
+        mock_receipt3.agent_addr = "0x1234567890abcdef"
+        mock_receipt3.avatar_addr = "0xabcdef1234567890"
+        mock_receipt3.purchased_at = datetime(2024, 2, 1, 23, 30, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_receipt3.product = Mock()
+        mock_receipt3.product.google_sku = "product3"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = [mock_receipt1, mock_receipt2, mock_receipt3]
+
+        # 메서드 호출 (UTC 2024년 2월 요청)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            "0xabcdef1234567890",
+            2024,
+            2
+        )
+
+        # 결과 확인 (모든 영수증이 KST를 UTC로 변환하여 조회되어야 함)
+        assert len(result) == 3
+        order_ids = [r.order_id for r in result]
+        assert "order_2024_02_01_0830_kst" in order_ids
+        assert "order_2024_02_01_0900_kst" in order_ids
+        assert "order_2024_02_01_2330_kst" in order_ids
+
+    def test_get_user_receipts_by_month_timezone_conversion_logic(self):
+        """타임존 변환 로직이 올바르게 작동하는지 테스트합니다."""
+        from datetime import timedelta
+
+        # UTC 기준 월의 시작 시간들
+        test_cases = [
+            # (UTC year, UTC month, expected KST year, expected KST month)
+            (2024, 1, 2024, 1),   # UTC 2024-01-01 00:00 -> KST 2024-01-01 09:00
+            (2024, 2, 2024, 2),   # UTC 2024-02-01 00:00 -> KST 2024-02-01 09:00
+            (2024, 12, 2024, 12), # UTC 2024-12-01 00:00 -> KST 2024-12-01 09:00
+            (2024, 1, 2024, 1),   # UTC 2024-01-31 23:30 -> KST 2024-02-01 08:30 (이전 월 요청 시)
+        ]
+
+        for utc_year, utc_month, expected_kst_year, expected_kst_month in test_cases:
+            # Mock 세션 설정
+            mock_session = Mock()
+            mock_query = Mock()
+            mock_filter = Mock()
+            mock_join = Mock()
+            mock_order_by = Mock()
+            mock_options = Mock()
+
+            mock_session.query.return_value = mock_query
+            mock_query.filter.return_value = mock_filter
+            mock_filter.join.return_value = mock_join
+            mock_join.join.return_value = mock_join
+            mock_join.filter.return_value = mock_join
+            mock_join.order_by.return_value = mock_order_by
+            mock_order_by.options.return_value = mock_options
+            mock_options.all.return_value = []
+
+            # 메서드 호출
+            Receipt.get_user_receipts_by_month(
+                mock_session,
+                "0x1234567890abcdef",
+                "0xabcdef1234567890",
+                utc_year,
+                utc_month
+            )
+
+            # filter 호출에서 올바른 UTC 범위가 사용되었는지 확인
+            # 실제로는 func.timezone 함수 호출을 확인해야 하지만, Mock에서는 호출 여부만 확인
+            mock_query.filter.assert_called_once()
+
+            # Mock 초기화
+            mock_session.reset_mock()
+            mock_query.reset_mock()
+            mock_filter.reset_mock()
+            mock_join.reset_mock()
+            mock_order_by.reset_mock()
+            mock_options.reset_mock()

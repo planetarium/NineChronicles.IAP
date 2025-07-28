@@ -1,9 +1,9 @@
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy import UUID, Column, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, extract
+from sqlalchemy import UUID, Column, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, extract, func
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.orm import backref, relationship, joinedload
 
@@ -102,13 +102,15 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
     ) -> List["Receipt"]:
         """
         특정 유저의 특정 월 구매 영수증 목록을 조회합니다.
+        클라이언트는 UTC 기준으로 year, month를 전달하고,
+        DB에 저장된 KST 시간을 UTC로 변환하여 조회합니다.
 
         Args:
             session: SQLAlchemy 세션
             agent_addr: 9c agent 주소
             avatar_addr: 9c avatar 주소
-            year: 조회할 연도
-            month: 조회할 월 (1-12)
+            year: 조회할 연도 (UTC 기준)
+            month: 조회할 월 (1-12, UTC 기준)
             include_product: product 정보를 함께 불러올지 여부 (기본값: True)
             only_paid_products: 가격이 0보다 큰 상품만 필터링할지 여부 (기본값: True)
             sku_pattern: 포함할 google_sku 패턴 (정규표현식, 예: "adventurebosspass\\d+premium")
@@ -119,12 +121,22 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         """
         from shared.models.product import Price
 
+        # UTC 기준 해당 월의 시작과 끝 시간
+        utc_start = datetime(year, month, 1)
+        if month == 12:
+            utc_end = datetime(year + 1, 1, 1)
+        else:
+            utc_end = datetime(year, month + 1, 1)
+
+        # DB에 저장된 KST 시간을 UTC로 변환하여 조회
+        # KST = UTC + 9시간이므로, KST 시간에서 9시간을 빼면 UTC 시간
+        # PostgreSQL의 timezone 함수를 사용하여 KST를 UTC로 변환
         query = session.query(cls).filter(
             and_(
                 cls.agent_addr == agent_addr,
                 cls.avatar_addr == avatar_addr,
-                extract('year', cls.purchased_at) == year,
-                extract('month', cls.purchased_at) == month,
+                func.timezone('UTC', cls.purchased_at) >= utc_start,
+                func.timezone('UTC', cls.purchased_at) < utc_end,
             )
         )
 
