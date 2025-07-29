@@ -150,37 +150,34 @@ def retryer(self):
             f"처리할 영수증 {len(receipts)}개 발견 (생성된 지 10분 이상 지난 것들만)"
         )
 
-        if not receipts:
-            logger.info("처리할 영수증이 없습니다.")
-            return
-
-        created_count = sum(1 for r in receipts if r["tx_status"] == "CREATED")
-        staged_count = sum(1 for r in receipts if r["tx_status"] == "STAGED")
-        invalid_count = sum(1 for r in receipts if r["tx_status"] == "INVALID")
-        logger.info(
-            f"CREATED 상태: {created_count}개, STAGED 상태: {staged_count}개, INVALID 상태: {invalid_count}개"
-        )
-
-        logger.info("nonce 오름차순으로 처리를 시작합니다.")
-
-        for receipt in receipts:
-            receipt_id = receipt["id"]
-            tx = receipt["tx"]
-            planet_id = bytes(receipt["planet_id"]).decode()
-            tx_status = receipt["tx_status"]
-            nonce = receipt["nonce"]
-            created_at = receipt["created_at"]
-
+        if receipts:
+            created_count = sum(1 for r in receipts if r["tx_status"] == "CREATED")
+            staged_count = sum(1 for r in receipts if r["tx_status"] == "STAGED")
+            invalid_count = sum(1 for r in receipts if r["tx_status"] == "INVALID")
             logger.info(
-                f"영수증 {receipt_id} 처리 중 (planet_id: {planet_id}, 현재 상태: {tx_status}, nonce: {nonce}, 생성 시간: {created_at})"
+                f"CREATED 상태: {created_count}개, STAGED 상태: {staged_count}개, INVALID 상태: {invalid_count}개"
             )
 
-            tx_id = stage_transaction(planet_id, tx)
+            logger.info("nonce 오름차순으로 처리를 시작합니다.")
 
-            if tx_id:
-                update_receipt_status(sess, receipt_id, tx_id)
-            else:
-                logger.info(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
+            for receipt in receipts:
+                receipt_id = receipt["id"]
+                tx = receipt["tx"]
+                planet_id = bytes(receipt["planet_id"]).decode()
+                tx_status = receipt["tx_status"]
+                nonce = receipt["nonce"]
+                created_at = receipt["created_at"]
+
+                logger.info(
+                    f"영수증 {receipt_id} 처리 중 (planet_id: {planet_id}, 현재 상태: {tx_status}, nonce: {nonce}, 생성 시간: {created_at})"
+                )
+
+                tx_id = stage_transaction(planet_id, tx)
+
+                if tx_id:
+                    update_receipt_status(sess, receipt_id, tx_id)
+                else:
+                    logger.info(f"영수증 {receipt_id}에 대한 트랜잭션 스테이징 실패")
 
         null_tx_receipts = get_null_tx_status_receipts(sess)
         logger.info(f"tx_status가 NULL인 영수증 {len(null_tx_receipts)}개 발견")
