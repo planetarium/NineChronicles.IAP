@@ -1,21 +1,21 @@
-from typing import List, Any
+from typing import Any, List
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     Integer,
     Numeric,
-    Text,
-    DateTime,
     Table,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import ENUM
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy.orm import Mapped, relationship
 
 from shared.consts import AVATAR_BOUND_TICKER
-from shared.enums import Store, ProductAssetUISize, ProductRarity, ProductType
+from shared.enums import ProductAssetUISize, ProductRarity, ProductType, Store
 from shared.models.base import AutoIdMixin, Base, TimeStampMixin
 
 category_product_table = Table(
@@ -40,12 +40,12 @@ class Category(AutoIdMixin, TimeStampMixin, Base):
     order = Column(Integer, nullable=False)
     active = Column(Boolean, nullable=False, default=False)
     open_timestamp = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
         doc="Open timestamp of this product. If null, it's already opened.",
     )
     close_timestamp = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
         doc="Close timestamp of this product. If null, it'll be opened forever.",
     )
@@ -106,12 +106,12 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         doc="Discount by percent. (Use 30 for 30% discount)",
     )
     open_timestamp = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
         doc="Open timestamp of this product. If null, it's already opened.",
     )
     close_timestamp = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
         doc="Close timestamp of this product. If null, it'll be opened forever.",
     )
