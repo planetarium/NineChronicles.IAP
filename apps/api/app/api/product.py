@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -21,12 +21,18 @@ router = APIRouter(
 
 
 @router.get("", response_model=List[CategorySchema])
-def product_list(agent_addr: str,
-                 x_iap_packagename: Annotated[PackageName | None, Header()] = PackageName.NINE_CHRONICLES_M,
-                 planet_id: str = "", sess=Depends(session),
-                 ):
+def product_list(
+    agent_addr: str,
+    x_iap_packagename: Annotated[
+        PackageName | None, Header()
+    ] = PackageName.NINE_CHRONICLES_M,
+    planet_id: str = "",
+    sess=Depends(session),
+):
     if not planet_id:
-        planet_id = PlanetID.ODIN if config.stage == "mainnet" else PlanetID.ODIN_INTERNAL
+        planet_id = (
+            PlanetID.ODIN if config.stage == "mainnet" else PlanetID.ODIN_INTERNAL
+        )
     else:
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
 
@@ -35,20 +41,29 @@ def product_list(agent_addr: str,
         raise HTTPException(status_code=404, detail="available product not found")
 
     agent_addr = format_addr(agent_addr)
-    all_category_list = sess.scalars(
-        select(Category)
-        .options(
-            joinedload(Category.product_list).joinedload(Product.fav_list),
-            joinedload(Category.product_list).joinedload(Product.fungible_item_list),
+    all_category_list = (
+        sess.scalars(
+            select(Category)
+            .options(
+                joinedload(Category.product_list).joinedload(Product.fav_list),
+                joinedload(Category.product_list).joinedload(
+                    Product.fungible_item_list
+                ),
+            )
+            .where(Category.active.is_(True))
         )
-        .where(Category.active.is_(True))
-    ).unique().fetchall()
+        .unique()
+        .fetchall()
+    )
 
     category_schema_list = []
     purchase_history = get_purchase_history(sess, planet_id, agent_addr)
     for category in all_category_list:
         # Do not show Mileage category for thor chain
-        if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) and category.name == "Mileage":
+        if (
+            planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL)
+            and category.name == "Mileage"
+        ):
             continue
 
         cat_schema = CategorySchema.model_validate(category)
@@ -60,9 +75,15 @@ def product_list(agent_addr: str,
             if x_iap_packagename == PackageName.NINE_CHRONICLES_K:
                 schema.apple_sku = product.apple_sku_k
 
-            if (not product.active or
-                    ((product.open_timestamp and product.open_timestamp > datetime.now()) or
-                     (product.close_timestamp and product.close_timestamp <= datetime.now()))
+            if not product.active or (
+                (
+                    product.open_timestamp
+                    and product.open_timestamp > datetime.now(timezone.utc)
+                )
+                or (
+                    product.close_timestamp
+                    and product.close_timestamp <= datetime.now(timezone.utc)
+                )
             ):
                 schema.active = False
                 schema.buyable = False

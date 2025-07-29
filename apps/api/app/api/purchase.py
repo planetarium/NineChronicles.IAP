@@ -2,7 +2,7 @@ import base64
 import logging
 import os
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from math import floor
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -408,9 +408,9 @@ def request_product(
     receipt.status = ReceiptStatus.VALID
     logger.info(f"Send voucher request: {receipt.uuid}")
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     if (product.open_timestamp and product.open_timestamp > now) or (
-        product.close_timestamp and product.close_timestamp < datetime.now()
+        product.close_timestamp and product.close_timestamp < datetime.now(timezone.utc)
     ):
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
@@ -577,7 +577,7 @@ def free_product(
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
         order_id=order_id,
-        purchased_at=datetime.utcnow(),
+        purchased_at=datetime.now(timezone.utc),
         product_id=product.id if product is not None else None,
         planet_id=receipt_data.planetId.value,
     )
@@ -606,8 +606,10 @@ def free_product(
             ),
         )
 
-    if (product.open_timestamp and product.open_timestamp > datetime.now()) or (
-        product.close_timestamp and product.close_timestamp < datetime.now()
+    if (
+        product.open_timestamp and product.open_timestamp > datetime.now(timezone.utc)
+    ) or (
+        product.close_timestamp and product.close_timestamp < datetime.now(timezone.utc)
     ):
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
@@ -697,7 +699,7 @@ def mileage_product(
         agent_addr=receipt_data.agentAddress.lower(),
         avatar_addr=receipt_data.avatarAddress.lower(),
         order_id=order_id,
-        purchased_at=datetime.utcnow(),
+        purchased_at=datetime.now(timezone.utc),
         product_id=product.id if product is not None else None,
         planet_id=receipt_data.planetId.value,
     )
@@ -737,8 +739,10 @@ def mileage_product(
             ),
         )
 
-    if (product.open_timestamp and product.open_timestamp > datetime.now()) or (
-        product.close_timestamp and product.close_timestamp < datetime.now()
+    if (
+        product.open_timestamp and product.open_timestamp > datetime.now(timezone.utc)
+    ) or (
+        product.close_timestamp and product.close_timestamp < datetime.now(timezone.utc)
     ):
         receipt.status = ReceiptStatus.TIME_LIMIT
         raise_error(sess, receipt, ValueError(f"Not in product opening time"))
