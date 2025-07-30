@@ -53,7 +53,7 @@ app.conf.update(
         },
         "retryer-every-minutes": {
             "task": "iap.retryer",
-            "schedule": crontab(minute="*/10"),
+            "schedule": crontab(minute="*/1"),
             "options": {"queue": "background_job_queue"},
         },
     },
