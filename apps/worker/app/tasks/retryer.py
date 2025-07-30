@@ -191,7 +191,7 @@ def retryer(self):
 
                 logger.info(f"영수증 (uuid: {uuid} 워커 전송 중")
 
-                if send_uuid_to_worker(uuid):
+                if send_uuid_to_worker(str(uuid)):
                     success_count += 1
 
             logger.info(
