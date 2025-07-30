@@ -189,7 +189,7 @@ def retryer(self):
             for receipt in null_tx_receipts:
                 uuid = receipt["uuid"]
 
-                logger.info(f"영수증 {receipt_id} (uuid: {uuid} 워커 전송 중")
+                logger.info(f"영수증 (uuid: {uuid} 워커 전송 중")
 
                 if send_uuid_to_worker(uuid):
                     success_count += 1
