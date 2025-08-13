@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import AmqpDsn, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from shared.enums import PlanetID
+from shared.enums import PackageName, PlanetID
 
 
 class Settings(BaseSettings):
@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     iap_garage_webhook_url: Optional[str] = None
     iap_alert_webhook_url: Optional[str] = None
+
+    google_credential: Optional[str] = None
+    google_package_dict: dict[PackageName, str] = {
+        PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
+        PackageName.NINE_CHRONICLES_K: "com.planetariumlabs.ninechroniclesmobilek",
+    }
 
     @property
     def converted_gql_url_map(self) -> dict[PlanetID, str]:
