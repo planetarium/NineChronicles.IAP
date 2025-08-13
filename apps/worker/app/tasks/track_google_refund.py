@@ -7,6 +7,7 @@ import requests
 import structlog
 from shared.utils.google import get_google_client
 
+import app
 from app.config import config
 
 logger = structlog.get_logger(__name__)
@@ -124,6 +125,19 @@ def handle(event, context):
         logger.info(
             f"{package_name.value} 패키지에서 {len(voided_purchases)}개의 최근 환불 데이터를 처리했습니다."
         )
+
+
+@app.task(
+    name="iap.track_google_refund",
+    bind=True,
+    max_retries=10,
+    default_retry_delay=60,
+    acks_late=True,
+    retry_backoff=True,
+    queue="background_job_queue",
+)
+def track_google_refund(self):
+    handle(self, None)
 
 
 if __name__ == "__main__":
