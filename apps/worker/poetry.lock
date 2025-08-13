@@ -2785,7 +2785,7 @@ crt = ["botocore[crt] (>=1.37.4,<2.0a.0)"]
 
 [[package]]
 name = "shared"
-version = "1.0.7"
+version = "1.0.8"
 description = "Shared library for iap service"
 optional = false
 python-versions = "^3.11"
@@ -3301,4 +3301,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "b1274fad6913c2b72d974320ec265e36d994277bea31b4aabb1147fb0b7d024c"
+content-hash = "f3bd6c91a2e578f7a11c1cbcd3881057a48162c0d1dfe469e4723b2627b44c30"
