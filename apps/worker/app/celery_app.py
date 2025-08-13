@@ -56,6 +56,11 @@ app.conf.update(
             "schedule": crontab(minute="*/1"),
             "options": {"queue": "background_job_queue"},
         },
+        "track-google-refund-every-minutes": {
+            "task": "iap.track_google_refund",
+            "schedule": crontab(minute="*/60"),
+            "options": {"queue": "background_job_queue"},
+        },
     },
 )
 

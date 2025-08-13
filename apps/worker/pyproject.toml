@@ -19,6 +19,7 @@ pydantic-settings = "^2.8.1"
 shared = { path = "../shared" }
 celery = { extras = ["redis"], version = "^5.4" }
 flower = "^2.0.1"
+requests = "^2.31.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0,<7.2"
