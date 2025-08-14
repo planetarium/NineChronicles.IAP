@@ -2,7 +2,7 @@ import base64
 import logging
 import os
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from math import floor
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -27,7 +27,7 @@ from shared.utils.apple import get_jwt
 from shared.validator.apple import validate_apple
 from shared.validator.common import get_order_data
 from shared.validator.google import ack_google, validate_google
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import joinedload, with_loader_criteria
 from starlette.responses import JSONResponse
 
@@ -156,6 +156,29 @@ def check_purchase_limit(
 
     return receipt
 
+
+@router.get("/invalid-receipt-count", response_model=int)
+def check_invalid_receipt(
+    sess=Depends(session),
+):
+    """Notify all invalid receipt"""
+    invalid_list = (
+        sess.query(func.count(Receipt.id))
+        .filter(
+            Receipt.created_at
+            <= (datetime.now(tz=timezone.utc) - timedelta(minutes=1)),
+            Receipt.status.in_(
+                [
+                    ReceiptStatus.INIT,
+                    ReceiptStatus.VALIDATION_REQUEST,
+                    ReceiptStatus.INVALID,
+                ]
+            ),
+        )
+        .scalar()
+    )
+
+    return len(invalid_list)
 
 @router.post("/retry", response_model=ReceiptDetailSchema)
 def retry_product(
