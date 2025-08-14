@@ -162,7 +162,7 @@ def check_invalid_receipt(
     sess=Depends(session),
 ):
     """Notify all invalid receipt"""
-    invalid_list = (
+    invalid_list_count = (
         sess.query(func.count(Receipt.id))
         .filter(
             Receipt.created_at
@@ -178,7 +178,7 @@ def check_invalid_receipt(
         .scalar()
     )
 
-    return len(invalid_list)
+    return invalid_list_count
 
 @router.post("/retry", response_model=ReceiptDetailSchema)
 def retry_product(
