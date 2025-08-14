@@ -260,7 +260,7 @@ def status_monitor(self):
 
     try:
         check_halt_tx(sess)
-        check_tx_failure(sess)
+        # check_tx_failure(sess)
     finally:
         if sess is not None:
             sess.close()

@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, List, Optional
@@ -1050,3 +1050,26 @@ def check_non_pass_purchase_count(
         meets_count_threshold=len(non_pass_receipts) >= count_threshold,
         non_pass_purchases=non_pass_purchases
     )
+
+@router.get("/user-receipts/invalid-receipt-count", response_model=int)
+def check_invalid_receipt(
+    sess=Depends(session),
+):
+    """Notify all invalid receipt"""
+    invalid_list = (
+        sess.query(func.count(Receipt.id))
+        .filter(
+            Receipt.created_at
+            <= (datetime.now(tz=timezone.utc) - timedelta(minutes=1)),
+            Receipt.status.in_(
+                [
+                    ReceiptStatus.INIT,
+                    ReceiptStatus.VALIDATION_REQUEST,
+                    ReceiptStatus.INVALID,
+                ]
+            ),
+        )
+        .scalar()
+    )
+
+    return len(invalid_list)
