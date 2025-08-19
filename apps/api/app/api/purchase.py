@@ -2,7 +2,7 @@ import base64
 import logging
 import os
 import urllib.parse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from math import floor
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -11,7 +11,14 @@ import requests
 import structlog
 from fastapi import APIRouter, Depends, Header, Query
 from shared._graphql import GQL
-from shared.enums import PackageName, PlanetID, ProductType, ReceiptStatus, Store
+from shared.enums import (
+    PackageName,
+    PlanetID,
+    ProductType,
+    ReceiptStatus,
+    Store,
+    TxStatus,
+)
 from shared.models.product import Price, Product
 from shared.models.receipt import Receipt
 from shared.models.user import AvatarLevel
@@ -165,20 +172,16 @@ def check_invalid_receipt(
     invalid_list_count = (
         sess.query(func.count(Receipt.id))
         .filter(
+            Receipt.status == ReceiptStatus.VALID,
+            Receipt.tx_status.in_([TxStatus.INVALID, TxStatus.STAGED]),
             Receipt.created_at
-            <= (datetime.now(tz=timezone.utc) - timedelta(minutes=1)),
-            Receipt.status.in_(
-                [
-                    ReceiptStatus.INIT,
-                    ReceiptStatus.VALIDATION_REQUEST,
-                    ReceiptStatus.INVALID,
-                ]
-            ),
+            <= (datetime.now(tz=timezone.utc) - timedelta(minutes=5)),
         )
         .scalar()
     )
 
     return invalid_list_count
+
 
 @router.post("/retry", response_model=ReceiptDetailSchema)
 def retry_product(
