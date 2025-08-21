@@ -135,8 +135,8 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             and_(
                 cls.agent_addr == agent_addr,
                 cls.avatar_addr == avatar_addr,
-                func.timezone('UTC', cls.purchased_at) >= utc_start,
-                func.timezone('UTC', cls.purchased_at) < utc_end,
+                func.timezone('UTC', cls.created_at) >= utc_start,
+                func.timezone('UTC', cls.created_at) < utc_end,
             )
         )
 
@@ -144,7 +144,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         if only_paid_products:
             query = query.join(cls.product).join(Price).filter(Price.price > 0)
 
-        query = query.order_by(cls.purchased_at.desc())
+        query = query.order_by(cls.created_at.desc())
 
         if include_product:
             query = query.options(joinedload(cls.product))
