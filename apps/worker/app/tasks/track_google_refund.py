@@ -7,7 +7,7 @@ import requests
 import structlog
 from shared.utils.google import get_google_client
 
-import app
+from app.celery_app import app
 from app.config import config
 
 logger = structlog.get_logger(__name__)
