@@ -845,8 +845,8 @@ def purchase_history(
     """
     q = (
         select(Receipt)
-        .where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID)
         .join(Receipt.product)  # Receipt -> Product
+        .where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID, Product.product_type == ProductType.IAP)
         .options(
             joinedload(Receipt.product).joinedload(Product.price_list),
             with_loader_criteria(Price, Price.currency == "USD"),
