@@ -108,6 +108,12 @@ def handle(message: SendProductMessage):
     """
     results = []
     sess = scoped_session(sessionmaker(bind=engine))
+
+    receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
+    if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
+        logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
+        return
+
     account = Account(config.kms_key_id)
     gql_dict = {
         planet: GQL(url, config.headless_jwt_secret)
@@ -124,9 +130,6 @@ def handle(message: SendProductMessage):
     }
     nonce_dict = {}
     target_list = []
-
-    # Set nonce first before process
-    receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
 
     logger.debug(f"UUID : {message.uuid}")
     if not receipt:
