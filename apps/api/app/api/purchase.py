@@ -171,11 +171,19 @@ def check_invalid_receipt(
     """Notify all invalid receipt"""
     invalid_list_count = (
         sess.query(func.count(Receipt.id))
+        .join(Product)
         .filter(
             Receipt.status == ReceiptStatus.VALID,
-            Receipt.tx_status.in_([TxStatus.INVALID, TxStatus.STAGED]),
+            or_(
+                Receipt.tx_status.in_(
+                    [TxStatus.INVALID, TxStatus.STAGED, TxStatus.FAILURE]
+                ),
+                Receipt.tx_status.is_(None),
+            ),
+            Product.google_sku.notlike("%pass%"),
             Receipt.created_at
             <= (datetime.now(tz=timezone.utc) - timedelta(minutes=5)),
+            Receipt.created_at >= datetime(2025, 1, 1),
         )
         .scalar()
     )
@@ -846,7 +854,11 @@ def purchase_history(
     q = (
         select(Receipt)
         .join(Receipt.product)  # Receipt -> Product
-        .where(Receipt.agent_addr == agent_addr, Receipt.status == ReceiptStatus.VALID, Product.product_type == ProductType.IAP)
+        .where(
+            Receipt.agent_addr == agent_addr,
+            Receipt.status == ReceiptStatus.VALID,
+            Product.product_type == ProductType.IAP,
+        )
         .options(
             joinedload(Receipt.product).joinedload(Product.price_list),
             with_loader_criteria(Price, Price.currency == "USD"),
