@@ -29,7 +29,7 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
         return bytes.fromhex(receipt.tx)
 
     logger.debug(f"Looking for product with ID: {receipt.product_id} for receipt: {receipt.uuid}")
-    logger.debug(f"Session state: active={sess.is_active}, in_transaction={sess.in_transaction()}")
+    logger.debug(f"Session state: active={sess.is_active}")
 
     # First try a simple query without joins to see if the product exists
     simple_product = sess.scalar(select(Product).where(Product.id == receipt.product_id))
