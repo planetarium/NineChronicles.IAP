@@ -15,7 +15,7 @@ from shared.models.receipt import Receipt
 from shared.schemas.message import SendProductMessage
 from shared.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx
 from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
+from sqlalchemy.orm import Session, joinedload, selectinload, scoped_session, sessionmaker
 
 from app.celery_app import app
 from app.config import config
@@ -28,12 +28,73 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
     if receipt.tx is not None:
         return bytes.fromhex(receipt.tx)
 
-    product = sess.scalar(
-        select(Product)
-        .options(joinedload(Product.fav_list))
-        .options(joinedload(Product.fungible_item_list))
-        .where(Product.id == receipt.product_id)
-    )
+    logger.debug(f"Looking for product with ID: {receipt.product_id} for receipt: {receipt.uuid}")
+    logger.debug(f"Session state: active={sess.is_active}, in_transaction={sess.in_transaction()}")
+
+    # First try a simple query without joins to see if the product exists
+    simple_product = sess.scalar(select(Product).where(Product.id == receipt.product_id))
+    logger.debug(f"Simple product lookup result: {simple_product}")
+
+    if simple_product is None:
+        error_msg = f"Product not found for product_id: {receipt.product_id} in receipt: {receipt.uuid}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Test joinedload to confirm the issue (for debugging)
+    try:
+        joinedload_product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list))
+            .options(joinedload(Product.fungible_item_list))
+            .where(Product.id == receipt.product_id)
+        )
+        logger.debug(f"joinedload result: {joinedload_product}")
+        if joinedload_product is None:
+            logger.warning("joinedload returned None - this confirms the LEFT JOIN issue!")
+    except Exception as e:
+        logger.debug(f"joinedload test failed: {e}")
+
+    # Use selectinload to avoid joinedload issues with mixed NULL/non-NULL results
+    # This is especially important when fav_count=0 and item_count=1
+    try:
+        product = sess.scalar(
+            select(Product)
+            .options(selectinload(Product.fav_list))
+            .options(selectinload(Product.fungible_item_list))
+            .where(Product.id == receipt.product_id)
+        )
+        logger.debug(f"Product lookup with selectinload result: {product}")
+
+        # Check if product exists but relationships are empty
+        if product is not None:
+            logger.debug(f"Product found - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+        else:
+            logger.warning("selectinload returned None, this should not happen if simple query worked")
+
+    except Exception as e:
+        logger.warning(f"selectinload failed: {e}, falling back to separate queries")
+        # Fallback: load product and related data separately
+        product = simple_product
+        # Explicitly load the relationships using separate queries
+        try:
+            sess.refresh(product, ['fav_list', 'fungible_item_list'])
+            logger.debug(f"After refresh - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+        except Exception as refresh_error:
+            logger.warning(f"refresh failed: {refresh_error}, using manual loading")
+            # Manual loading as last resort
+            from shared.models.product import FungibleAssetProduct, FungibleItemProduct
+            product.fav_list = sess.scalars(
+                select(FungibleAssetProduct).where(FungibleAssetProduct.product_id == product.id)
+            ).all()
+            product.fungible_item_list = sess.scalars(
+                select(FungibleItemProduct).where(FungibleItemProduct.product_id == product.id)
+            ).all()
+            logger.debug(f"After manual loading - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+
+    if product is None:
+        error_msg = f"Product not found for product_id: {receipt.product_id} in receipt: {receipt.uuid}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     package_name = PackageName(receipt.package_name)
     avatar_address = Address(receipt.avatar_addr)
@@ -51,12 +112,18 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
     )
 
     claim_data = []
+
+    # Process fungible items
+    logger.debug(f"Processing {len(product.fungible_item_list)} fungible items")
     for item in product.fungible_item_list:
         claim_data.append(
             FungibleAssetValue.from_raw_data(
                 ticker=item.fungible_item_id, decimal_places=0, amount=item.amount * 1
             )
         )
+
+    # Process fungible assets (fav_list)
+    logger.debug(f"Processing {len(product.fav_list)} fungible assets")
     for fav in product.fav_list:
         claim_data.append(
             FungibleAssetValue.from_raw_data(
@@ -65,6 +132,8 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
                 amount=fav.amount * 1,
             )
         )
+
+    logger.debug(f"Total claim_data items: {len(claim_data)}")
 
     action = ClaimItems(
         claim_data=[
@@ -110,6 +179,18 @@ def handle(message: SendProductMessage):
     sess = scoped_session(sessionmaker(bind=engine))
 
     receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
+    logger.debug(f"Receipt lookup result for UUID {message.uuid}: {receipt}")
+
+    if not receipt:
+        # Receipt not found
+        success, msg, tx_id = (
+            False,
+            f"Receipt with UUID {message.uuid} not found in database",
+            None,
+        )
+        logger.error(msg)
+        return results
+
     if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
         logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
         return
@@ -132,15 +213,7 @@ def handle(message: SendProductMessage):
     target_list = []
 
     logger.debug(f"UUID : {message.uuid}")
-    if not receipt:
-        # Receipt not found
-        success, msg, tx_id = (
-            False,
-            f"{receipt.uuid} is not exist in Receipt",
-            None,
-        )
-        logger.error(msg)
-    elif receipt.tx_id:
+    if receipt.tx_id:
         # Tx already staged
         success, msg, tx_id = (
             False,
