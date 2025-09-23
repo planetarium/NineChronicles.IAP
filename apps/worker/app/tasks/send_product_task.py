@@ -21,7 +21,14 @@ from app.celery_app import app
 from app.config import config
 
 logger = structlog.get_logger(__name__)
-engine = create_engine(str(config.pg_dsn), pool_size=5, max_overflow=5)
+engine = create_engine(
+    str(config.pg_dsn),
+    pool_size=10,  # 기본 연결 수 증가
+    max_overflow=20,  # 오버플로우 연결 수 증가
+    pool_timeout=60,  # 연결 타임아웃 증가
+    pool_recycle=3600,  # 연결 재사용 시간 (1시간)
+    pool_pre_ping=True  # 연결 상태 확인
+)
 
 
 def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
@@ -53,6 +60,7 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
             logger.warning("joinedload returned None - this confirms the LEFT JOIN issue!")
     except Exception as e:
         logger.debug(f"joinedload test failed: {e}")
+        # Don't re-raise the exception, continue with selectinload
 
     # Use selectinload to avoid joinedload issues with mixed NULL/non-NULL results
     # This is especially important when fav_count=0 and item_count=1
@@ -178,6 +186,8 @@ def handle(message: SendProductMessage):
     results = []
     sess = scoped_session(sessionmaker(bind=engine))
 
+    try:
+
     receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
     logger.debug(f"Receipt lookup result for UUID {message.uuid}: {receipt}")
 
@@ -267,8 +277,11 @@ def handle(message: SendProductMessage):
         else:
             logger.error(json.dumps(result))
 
-    if sess is not None:
-        sess.close()
+    finally:
+        # Always close the session to prevent connection pool exhaustion
+        if sess is not None:
+            sess.close()
+            logger.debug("Session closed successfully")
 
     return results
 
