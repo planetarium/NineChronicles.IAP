@@ -187,95 +187,94 @@ def handle(message: SendProductMessage):
     sess = scoped_session(sessionmaker(bind=engine))
 
     try:
+        receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
+        logger.debug(f"Receipt lookup result for UUID {message.uuid}: {receipt}")
 
-    receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
-    logger.debug(f"Receipt lookup result for UUID {message.uuid}: {receipt}")
-
-    if not receipt:
-        # Receipt not found
-        success, msg, tx_id = (
-            False,
-            f"Receipt with UUID {message.uuid} not found in database",
-            None,
-        )
-        logger.error(msg)
-        return results
-
-    if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
-        logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
-        return
-
-    account = Account(config.kms_key_id)
-    gql_dict = {
-        planet: GQL(url, config.headless_jwt_secret)
-        for planet, url in config.converted_gql_url_map.items()
-    }
-    db_nonce_dict = {
-        x.planet_id: x.nonce
-        for x in sess.execute(
-            select(
-                Receipt.planet_id.label("planet_id"),
-                func.max(Receipt.nonce).label("nonce"),
-            ).group_by(Receipt.planet_id)
-        ).all()
-    }
-    nonce_dict = {}
-    target_list = []
-
-    logger.debug(f"UUID : {message.uuid}")
-    if receipt.tx_id:
-        # Tx already staged
-        success, msg, tx_id = (
-            False,
-            f"{receipt.uuid} is already treated with Tx : {receipt.tx_id}",
-            None,
-        )
-        logger.warning(msg)
-    elif receipt.tx:
-        # Tx already created
-        target_list.append((receipt, message.uuid))
-        logger.info(f"{receipt.uuid} already has created tx with nonce {receipt.nonce}")
-    else:
-        # Fresh receipt
-        receipt.tx_status = TxStatus.CREATED
-        if receipt.nonce is None:
-            receipt.nonce = max(  # max nonce of
-                nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                    receipt.planet_id,
-                    gql_dict[receipt.planet_id].get_next_nonce(account.address),
-                ),
-                db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+        if not receipt:
+            # Receipt not found
+            success, msg, tx_id = (
+                False,
+                f"Receipt with UUID {message.uuid} not found in database",
+                None,
             )
-        receipt.tx = create_tx(sess, account, receipt).hex()
-        nonce_dict[receipt.planet_id] = receipt.nonce + 1
-        target_list.append((receipt, message.uuid))
-        logger.info(f"{receipt.uuid}: Tx created with nonce: {receipt.nonce}")
-        sess.add(receipt)
-    sess.commit()
+            logger.error(msg)
+            return results
 
-    # Stage created tx
-    logger.info(f"Stage {len(target_list)} receipts")
-    for _receipt, _uuid in target_list:
-        success, msg, tx_id = stage_tx(_receipt)
-        _receipt.tx_id = tx_id
-        _receipt.tx_status = TxStatus.STAGED
-        sess.add(_receipt)
+        if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
+            logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
+            return
+
+        account = Account(config.kms_key_id)
+        gql_dict = {
+            planet: GQL(url, config.headless_jwt_secret)
+            for planet, url in config.converted_gql_url_map.items()
+        }
+        db_nonce_dict = {
+            x.planet_id: x.nonce
+            for x in sess.execute(
+                select(
+                    Receipt.planet_id.label("planet_id"),
+                    func.max(Receipt.nonce).label("nonce"),
+                ).group_by(Receipt.planet_id)
+            ).all()
+        }
+        nonce_dict = {}
+        target_list = []
+
+        logger.debug(f"UUID : {message.uuid}")
+        if receipt.tx_id:
+            # Tx already staged
+            success, msg, tx_id = (
+                False,
+                f"{receipt.uuid} is already treated with Tx : {receipt.tx_id}",
+                None,
+            )
+            logger.warning(msg)
+        elif receipt.tx:
+            # Tx already created
+            target_list.append((receipt, message.uuid))
+            logger.info(f"{receipt.uuid} already has created tx with nonce {receipt.nonce}")
+        else:
+            # Fresh receipt
+            receipt.tx_status = TxStatus.CREATED
+            if receipt.nonce is None:
+                receipt.nonce = max(  # max nonce of
+                    nonce_dict.get(  # current handling nonce (or nonce in blockchain)
+                        receipt.planet_id,
+                        gql_dict[receipt.planet_id].get_next_nonce(account.address),
+                    ),
+                    db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+                )
+            receipt.tx = create_tx(sess, account, receipt).hex()
+            nonce_dict[receipt.planet_id] = receipt.nonce + 1
+            target_list.append((receipt, message.uuid))
+            logger.info(f"{receipt.uuid}: Tx created with nonce: {receipt.nonce}")
+            sess.add(receipt)
         sess.commit()
 
-        result = {
-            "sqs_message_id": _uuid,
-            "success": success,
-            "message": msg,
-            "uuid": str(_receipt.uuid) if _receipt else None,
-            "tx_id": str(_receipt.tx_id) if _receipt else None,
-            "nonce": str(_receipt.nonce) if _receipt else None,
-            "order_id": str(_receipt.order_id) if _receipt else None,
-        }
-        results.append(result)
-        if success:
-            logger.info(json.dumps(result))
-        else:
-            logger.error(json.dumps(result))
+        # Stage created tx
+        logger.info(f"Stage {len(target_list)} receipts")
+        for _receipt, _uuid in target_list:
+            success, msg, tx_id = stage_tx(_receipt)
+            _receipt.tx_id = tx_id
+            _receipt.tx_status = TxStatus.STAGED
+            sess.add(_receipt)
+            sess.commit()
+
+            result = {
+                "sqs_message_id": _uuid,
+                "success": success,
+                "message": msg,
+                "uuid": str(_receipt.uuid) if _receipt else None,
+                "tx_id": str(_receipt.tx_id) if _receipt else None,
+                "nonce": str(_receipt.nonce) if _receipt else None,
+                "order_id": str(_receipt.order_id) if _receipt else None,
+            }
+            results.append(result)
+            if success:
+                logger.info(json.dumps(result))
+            else:
+                logger.error(json.dumps(result))
 
     finally:
         # Always close the session to prevent connection pool exhaustion
