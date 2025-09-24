@@ -11,17 +11,24 @@ from app.config import config
 
 logger = structlog.get_logger(__name__)
 
-engine = create_engine(config.pg_dsn, pool_size=5, max_overflow=5)
+engine = create_engine(
+    config.pg_dsn,
+    pool_size=10,  # 기본 연결 수 증가
+    max_overflow=20,  # 오버플로우 연결 수 증가
+    pool_timeout=60,  # 연결 타임아웃 증가
+    pool_recycle=3600,  # 연결 재사용 시간 (1시간)
+    pool_pre_ping=True  # 연결 상태 확인
+)
 
 
 def get_pending_receipts(session) -> List[Dict]:
     """CREATED, STAGED 또는 INVALID 상태이고 tx가 있는 영수증 중 생성된 지 10분 이상 지난 것들을 nonce 오름차순으로 조회"""
     query = text(
         """
-        SELECT id, tx, planet_id, nonce, tx_status, created_at 
-        FROM receipt 
-        WHERE tx_status IN ('CREATED', 'INVALID') 
-        AND tx IS NOT NULL 
+        SELECT id, tx, planet_id, nonce, tx_status, created_at
+        FROM receipt
+        WHERE tx_status IN ('CREATED', 'INVALID')
+        AND tx IS NOT NULL
         AND created_at < NOW() - INTERVAL '10 minutes'
         """
     )

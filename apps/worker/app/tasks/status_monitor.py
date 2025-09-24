@@ -15,7 +15,14 @@ from app.config import config
 
 logger = structlog.get_logger(__name__)
 
-engine = create_engine(config.pg_dsn, pool_size=5, max_overflow=5)
+engine = create_engine(
+    config.pg_dsn,
+    pool_size=10,  # 기본 연결 수 증가
+    max_overflow=20,  # 오버플로우 연결 수 증가
+    pool_timeout=60,  # 연결 타임아웃 증가
+    pool_recycle=3600,  # 연결 재사용 시간 (1시간)
+    pool_pre_ping=True  # 연결 상태 확인
+)
 
 
 def send_message(url: str, title: str, blocks: List):
@@ -254,13 +261,15 @@ query balanceQuery(
 )
 def status_monitor(self):
     sess = scoped_session(sessionmaker(bind=engine))
-    if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
-        for planet_id in config.converted_gql_url_map.keys():
-            check_token_balance(planet_id)
 
     try:
+        if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
+            for planet_id in config.converted_gql_url_map.keys():
+                check_token_balance(planet_id)
+
         check_halt_tx(sess)
         # check_tx_failure(sess)
     finally:
         if sess is not None:
             sess.close()
+            logger.debug("status_monitor session closed successfully")

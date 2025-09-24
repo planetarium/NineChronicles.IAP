@@ -15,25 +15,94 @@ from shared.models.receipt import Receipt
 from shared.schemas.message import SendProductMessage
 from shared.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx
 from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import Session, joinedload, scoped_session, sessionmaker
+from sqlalchemy.orm import Session, joinedload, selectinload, scoped_session, sessionmaker
 
 from app.celery_app import app
 from app.config import config
 
 logger = structlog.get_logger(__name__)
-engine = create_engine(str(config.pg_dsn), pool_size=5, max_overflow=5)
+engine = create_engine(
+    str(config.pg_dsn),
+    pool_size=10,  # 기본 연결 수 증가
+    max_overflow=20,  # 오버플로우 연결 수 증가
+    pool_timeout=60,  # 연결 타임아웃 증가
+    pool_recycle=3600,  # 연결 재사용 시간 (1시간)
+    pool_pre_ping=True  # 연결 상태 확인
+)
 
 
 def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
     if receipt.tx is not None:
         return bytes.fromhex(receipt.tx)
 
-    product = sess.scalar(
-        select(Product)
-        .options(joinedload(Product.fav_list))
-        .options(joinedload(Product.fungible_item_list))
-        .where(Product.id == receipt.product_id)
-    )
+    logger.debug(f"Looking for product with ID: {receipt.product_id} for receipt: {receipt.uuid}")
+    logger.debug(f"Session state: active={sess.is_active}")
+
+    # First try a simple query without joins to see if the product exists
+    simple_product = sess.scalar(select(Product).where(Product.id == receipt.product_id))
+    logger.debug(f"Simple product lookup result: {simple_product}")
+
+    if simple_product is None:
+        error_msg = f"Product not found for product_id: {receipt.product_id} in receipt: {receipt.uuid}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Test joinedload to confirm the issue (for debugging)
+    try:
+        joinedload_product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list))
+            .options(joinedload(Product.fungible_item_list))
+            .where(Product.id == receipt.product_id)
+        )
+        logger.debug(f"joinedload result: {joinedload_product}")
+        if joinedload_product is None:
+            logger.warning("joinedload returned None - this confirms the LEFT JOIN issue!")
+    except Exception as e:
+        logger.debug(f"joinedload test failed: {e}")
+        # Don't re-raise the exception, continue with selectinload
+
+    # Use selectinload to avoid joinedload issues with mixed NULL/non-NULL results
+    # This is especially important when fav_count=0 and item_count=1
+    try:
+        product = sess.scalar(
+            select(Product)
+            .options(selectinload(Product.fav_list))
+            .options(selectinload(Product.fungible_item_list))
+            .where(Product.id == receipt.product_id)
+        )
+        logger.debug(f"Product lookup with selectinload result: {product}")
+
+        # Check if product exists but relationships are empty
+        if product is not None:
+            logger.debug(f"Product found - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+        else:
+            logger.warning("selectinload returned None, this should not happen if simple query worked")
+
+    except Exception as e:
+        logger.warning(f"selectinload failed: {e}, falling back to separate queries")
+        # Fallback: load product and related data separately
+        product = simple_product
+        # Explicitly load the relationships using separate queries
+        try:
+            sess.refresh(product, ['fav_list', 'fungible_item_list'])
+            logger.debug(f"After refresh - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+        except Exception as refresh_error:
+            logger.warning(f"refresh failed: {refresh_error}, using manual loading")
+            # Manual loading as last resort
+            from shared.models.product import FungibleAssetProduct, FungibleItemProduct
+            product.fav_list = sess.scalars(
+                select(FungibleAssetProduct).where(FungibleAssetProduct.product_id == product.id)
+            ).all()
+            product.fungible_item_list = sess.scalars(
+                select(FungibleItemProduct).where(FungibleItemProduct.product_id == product.id)
+            ).all()
+            logger.debug(f"After manual loading - fav_list count: {len(product.fav_list)}, fungible_item_list count: {len(product.fungible_item_list)}")
+
+    if product is None:
+        error_msg = f"Product not found for product_id: {receipt.product_id} in receipt: {receipt.uuid}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     package_name = PackageName(receipt.package_name)
     avatar_address = Address(receipt.avatar_addr)
@@ -51,12 +120,18 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
     )
 
     claim_data = []
+
+    # Process fungible items
+    logger.debug(f"Processing {len(product.fungible_item_list)} fungible items")
     for item in product.fungible_item_list:
         claim_data.append(
             FungibleAssetValue.from_raw_data(
                 ticker=item.fungible_item_id, decimal_places=0, amount=item.amount * 1
             )
         )
+
+    # Process fungible assets (fav_list)
+    logger.debug(f"Processing {len(product.fav_list)} fungible assets")
     for fav in product.fav_list:
         claim_data.append(
             FungibleAssetValue.from_raw_data(
@@ -65,6 +140,8 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
                 amount=fav.amount * 1,
             )
         )
+
+    logger.debug(f"Total claim_data items: {len(claim_data)}")
 
     action = ClaimItems(
         claim_data=[
@@ -109,93 +186,101 @@ def handle(message: SendProductMessage):
     results = []
     sess = scoped_session(sessionmaker(bind=engine))
 
-    receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
-    if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
-        logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
-        return
+    try:
+        receipt = sess.scalar(select(Receipt).where(Receipt.uuid == message.uuid))
+        logger.debug(f"Receipt lookup result for UUID {message.uuid}: {receipt}")
 
-    account = Account(config.kms_key_id)
-    gql_dict = {
-        planet: GQL(url, config.headless_jwt_secret)
-        for planet, url in config.converted_gql_url_map.items()
-    }
-    db_nonce_dict = {
-        x.planet_id: x.nonce
-        for x in sess.execute(
-            select(
-                Receipt.planet_id.label("planet_id"),
-                func.max(Receipt.nonce).label("nonce"),
-            ).group_by(Receipt.planet_id)
-        ).all()
-    }
-    nonce_dict = {}
-    target_list = []
-
-    logger.debug(f"UUID : {message.uuid}")
-    if not receipt:
-        # Receipt not found
-        success, msg, tx_id = (
-            False,
-            f"{receipt.uuid} is not exist in Receipt",
-            None,
-        )
-        logger.error(msg)
-    elif receipt.tx_id:
-        # Tx already staged
-        success, msg, tx_id = (
-            False,
-            f"{receipt.uuid} is already treated with Tx : {receipt.tx_id}",
-            None,
-        )
-        logger.warning(msg)
-    elif receipt.tx:
-        # Tx already created
-        target_list.append((receipt, message.uuid))
-        logger.info(f"{receipt.uuid} already has created tx with nonce {receipt.nonce}")
-    else:
-        # Fresh receipt
-        receipt.tx_status = TxStatus.CREATED
-        if receipt.nonce is None:
-            receipt.nonce = max(  # max nonce of
-                nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                    receipt.planet_id,
-                    gql_dict[receipt.planet_id].get_next_nonce(account.address),
-                ),
-                db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+        if not receipt:
+            # Receipt not found
+            success, msg, tx_id = (
+                False,
+                f"Receipt with UUID {message.uuid} not found in database",
+                None,
             )
-        receipt.tx = create_tx(sess, account, receipt).hex()
-        nonce_dict[receipt.planet_id] = receipt.nonce + 1
-        target_list.append((receipt, message.uuid))
-        logger.info(f"{receipt.uuid}: Tx created with nonce: {receipt.nonce}")
-        sess.add(receipt)
-    sess.commit()
+            logger.error(msg)
+            return results
 
-    # Stage created tx
-    logger.info(f"Stage {len(target_list)} receipts")
-    for _receipt, _uuid in target_list:
-        success, msg, tx_id = stage_tx(_receipt)
-        _receipt.tx_id = tx_id
-        _receipt.tx_status = TxStatus.STAGED
-        sess.add(_receipt)
+        if receipt.tx_status is not None and receipt.tx_status == TxStatus.SUCCESS:
+            logger.info(f"{message.uuid} is already sent with Tx : {receipt.tx_id}")
+            return
+
+        account = Account(config.kms_key_id)
+        gql_dict = {
+            planet: GQL(url, config.headless_jwt_secret)
+            for planet, url in config.converted_gql_url_map.items()
+        }
+        db_nonce_dict = {
+            x.planet_id: x.nonce
+            for x in sess.execute(
+                select(
+                    Receipt.planet_id.label("planet_id"),
+                    func.max(Receipt.nonce).label("nonce"),
+                ).group_by(Receipt.planet_id)
+            ).all()
+        }
+        nonce_dict = {}
+        target_list = []
+
+        logger.debug(f"UUID : {message.uuid}")
+        if receipt.tx_id:
+            # Tx already staged
+            success, msg, tx_id = (
+                False,
+                f"{receipt.uuid} is already treated with Tx : {receipt.tx_id}",
+                None,
+            )
+            logger.warning(msg)
+        elif receipt.tx:
+            # Tx already created
+            target_list.append((receipt, message.uuid))
+            logger.info(f"{receipt.uuid} already has created tx with nonce {receipt.nonce}")
+        else:
+            # Fresh receipt
+            receipt.tx_status = TxStatus.CREATED
+            if receipt.nonce is None:
+                receipt.nonce = max(  # max nonce of
+                    nonce_dict.get(  # current handling nonce (or nonce in blockchain)
+                        receipt.planet_id,
+                        gql_dict[receipt.planet_id].get_next_nonce(account.address),
+                    ),
+                    db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+                )
+            receipt.tx = create_tx(sess, account, receipt).hex()
+            nonce_dict[receipt.planet_id] = receipt.nonce + 1
+            target_list.append((receipt, message.uuid))
+            logger.info(f"{receipt.uuid}: Tx created with nonce: {receipt.nonce}")
+            sess.add(receipt)
         sess.commit()
 
-        result = {
-            "sqs_message_id": _uuid,
-            "success": success,
-            "message": msg,
-            "uuid": str(_receipt.uuid) if _receipt else None,
-            "tx_id": str(_receipt.tx_id) if _receipt else None,
-            "nonce": str(_receipt.nonce) if _receipt else None,
-            "order_id": str(_receipt.order_id) if _receipt else None,
-        }
-        results.append(result)
-        if success:
-            logger.info(json.dumps(result))
-        else:
-            logger.error(json.dumps(result))
+        # Stage created tx
+        logger.info(f"Stage {len(target_list)} receipts")
+        for _receipt, _uuid in target_list:
+            success, msg, tx_id = stage_tx(_receipt)
+            _receipt.tx_id = tx_id
+            _receipt.tx_status = TxStatus.STAGED
+            sess.add(_receipt)
+            sess.commit()
 
-    if sess is not None:
-        sess.close()
+            result = {
+                "sqs_message_id": _uuid,
+                "success": success,
+                "message": msg,
+                "uuid": str(_receipt.uuid) if _receipt else None,
+                "tx_id": str(_receipt.tx_id) if _receipt else None,
+                "nonce": str(_receipt.nonce) if _receipt else None,
+                "order_id": str(_receipt.order_id) if _receipt else None,
+            }
+            results.append(result)
+            if success:
+                logger.info(json.dumps(result))
+            else:
+                logger.error(json.dumps(result))
+
+    finally:
+        # Always close the session to prevent connection pool exhaustion
+        if sess is not None:
+            sess.close()
+            logger.debug("Session closed successfully")
 
     return results
 
