@@ -50,7 +50,7 @@ def get_purchase_history(
     # Weekday 0 == Sunday
     weekly_limit = (
         datetime.now(timezone.utc)
-        - datetime.timedelta(days=(datetime.now(timezone.utc).date().isoweekday()) % 7)
+        - timedelta(days=(datetime.now(timezone.utc).date().isoweekday()) % 7)
     ).date()
     for receipt in receipt_list:
         if receipt.date >= daily_limit:
@@ -106,7 +106,7 @@ def get_purchase_count(
     elif weekly_limit:
         start = (
             datetime.now(timezone.utc)
-            - datetime.timedelta(
+            - timedelta(
                 days=(datetime.now(timezone.utc).date().isoweekday()) % 7
             )
         ).date()
