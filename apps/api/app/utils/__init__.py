@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from typing import Annotated, Optional
 
@@ -46,11 +46,11 @@ def get_purchase_history(
     receipt_list = sess.execute(stmt).fetchall()
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
-    daily_limit = datetime.datetime.utcnow().date()
+    daily_limit = datetime.now(timezone.utc).date()
     # Weekday 0 == Sunday
     weekly_limit = (
-        datetime.datetime.utcnow()
-        - datetime.timedelta(days=(datetime.datetime.utcnow().date().isoweekday()) % 7)
+        datetime.now(timezone.utc)
+        - timedelta(days=(datetime.now(timezone.utc).date().isoweekday()) % 7)
     ).date()
     for receipt in receipt_list:
         if receipt.date >= daily_limit:
@@ -102,12 +102,12 @@ def get_purchase_count(
 
     start = None
     if daily_limit:
-        start = datetime.datetime.utcnow().date()
+        start = datetime.now(timezone.utc).date()
     elif weekly_limit:
         start = (
-            datetime.datetime.utcnow()
-            - datetime.timedelta(
-                days=(datetime.datetime.utcnow().date().isoweekday()) % 7
+            datetime.now(timezone.utc)
+            - timedelta(
+                days=(datetime.now(timezone.utc).date().isoweekday()) % 7
             )
         ).date()
     if start:
@@ -120,11 +120,11 @@ def get_purchase_count(
 
 
 def create_season_pass_jwt() -> str:
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    now = datetime.now(tz=timezone.utc)
     return jwt.encode(
         {
             "iat": now,
-            "exp": now + datetime.timedelta(minutes=10),
+            "exp": now + timedelta(minutes=10),
             "aud": "SeasonPass",
         },
         config.season_pass_jwt_secret,
@@ -219,7 +219,7 @@ def verify_token(authorization: Annotated[str, Header()]):
 
     API will return `401 Not Authorized` if any of these check fails.
     """
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    now = datetime.now(tz=timezone.utc)
     try:
         prefix, body = authorization.split(" ")
         if prefix != "Bearer":
@@ -228,19 +228,19 @@ def verify_token(authorization: Annotated[str, Header()]):
             body, config.backoffice_jwt_secret, audience="iap", algorithms=["HS256"]
         )
         if (
-            datetime.datetime.fromtimestamp(token_data["iat"], tz=datetime.timezone.utc)
-            + datetime.timedelta(hours=1)
-        ) < datetime.datetime.fromtimestamp(
-            token_data["exp"], tz=datetime.timezone.utc
+            datetime.fromtimestamp(token_data["iat"], tz=timezone.utc)
+            + timedelta(hours=1)
+        ) < datetime.fromtimestamp(
+            token_data["exp"], tz=timezone.utc
         ):
             raise ExpiredSignatureError("Too long token lifetime")
         if (
-            datetime.datetime.fromtimestamp(token_data["iat"], tz=datetime.timezone.utc)
+            datetime.fromtimestamp(token_data["iat"], tz=timezone.utc)
             > now
         ):
             raise ExpiredSignatureError("Invalid token issue timestamp")
         if (
-            datetime.datetime.fromtimestamp(token_data["exp"], tz=datetime.timezone.utc)
+            datetime.fromtimestamp(token_data["exp"], tz=timezone.utc)
             < now
         ):
             raise ExpiredSignatureError("Token expired")

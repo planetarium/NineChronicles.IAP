@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-ARG POETRY_VERSION=1.8
+ARG POETRY_VERSION=1.8.3
 
 RUN apt update && apt install -y \
     postgresql-client \
@@ -10,16 +10,21 @@ RUN apt update && apt install -y \
 
 ENV POETRY_VIRTUALENVS_CREATE=false
 ENV POETRY_VIRTUALENVS_IN_PROJECT=false
+ENV POETRY_NO_INTERACTION=1
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache
 
 RUN pip install -U pip "poetry==${POETRY_VERSION}"
 RUN poetry config virtualenvs.create false --local
+RUN poetry config installer.parallel false --local
 
 COPY ./apps/shared /app/apps/shared
 WORKDIR /app/apps/shared
 
+RUN poetry install --no-root --no-dev
+
 COPY ./apps/worker /app/apps/worker
 WORKDIR /app/apps/worker
 
-RUN poetry install --no-root
+RUN poetry install --no-root --no-dev
 
 CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
