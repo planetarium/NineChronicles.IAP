@@ -46,11 +46,12 @@ def get_purchase_history(
     receipt_list = sess.execute(stmt).fetchall()
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
-    daily_limit = datetime.now(timezone.utc).date()
+    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    daily_limit = kst_now.date()
     # Weekday 0 == Sunday
     weekly_limit = (
-        datetime.now(timezone.utc)
-        - timedelta(days=(datetime.now(timezone.utc).date().isoweekday()) % 7)
+        kst_now
+        - timedelta(days=(kst_now.date().isoweekday()) % 7)
     ).date()
     for receipt in receipt_list:
         if receipt.date >= daily_limit:
@@ -102,12 +103,14 @@ def get_purchase_count(
 
     start = None
     if daily_limit:
-        start = datetime.now(timezone.utc).date()
+        kst_now = datetime.now(timezone(timedelta(hours=9)))
+        start = kst_now.date()
     elif weekly_limit:
+        kst_now = datetime.now(timezone(timedelta(hours=9)))
         start = (
-            datetime.now(timezone.utc)
+            kst_now
             - timedelta(
-                days=(datetime.now(timezone.utc).date().isoweekday()) % 7
+                days=(kst_now.date().isoweekday()) % 7
             )
         ).date()
     if start:
