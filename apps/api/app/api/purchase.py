@@ -439,26 +439,38 @@ def request_product(
                 ),
             )
         receipt.product_id = product.id
-    ## Web
+    ## Web (Stripe)
     elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
-        if receipt_data.store == Store.WEB:
-            # Production web payment validation
-            success, msg, purchase = validate_web(
-                config.web_payment_api_url,
-                config.web_payment_credential,
-                order_id,
-                product_id,
-                receipt_data.data
-            )
-        else:
-            # Test web payment validation
-            success, msg, purchase = validate_web_test(
-                order_id,
-                product_id,
-                receipt_data.data
+        payment_intent_id = order_id
+
+        # 상품이 없으면 에러
+        if not product:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Product not found: {product_id}"),
             )
 
+        # Stripe 키 선택
+        stripe_key = (
+            config.stripe_test_secret_key
+            if receipt_data.store == Store.WEB_TEST
+            else config.stripe_secret_key
+        )
+
+        # Stripe 검증
+        success, msg, purchase = validate_web(
+            stripe_secret_key=stripe_key,
+            stripe_api_version=config.stripe_api_version,
+            payment_intent_id=payment_intent_id,
+            expected_product_id=product_id,
+            expected_amount=product.price,
+            db_product=product
+        )
+
         if success:
+            # 영수증 데이터 업데이트
             data = receipt_data.data.copy()
             data.update(**purchase.json_data)
             receipt.data = data
@@ -469,7 +481,7 @@ def request_product(
             raise_error(
                 sess,
                 receipt,
-                ValueError(f"Web payment validation failed: {msg}"),
+                ValueError(f"Stripe payment validation failed: {msg}"),
             )
     ## Test
     elif receipt_data.store == Store.TEST:

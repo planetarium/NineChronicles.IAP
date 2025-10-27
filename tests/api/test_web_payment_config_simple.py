@@ -11,10 +11,10 @@ class TestWebPaymentConfigSimple:
         with open(config_path, 'r') as f:
             config_content = f.read()
 
-        # 웹 결제 설정 필드들이 존재하는지 확인
-        assert "web_payment_api_url" in config_content
-        assert "web_payment_credential" in config_content
-        assert "web_payment_test_mode" in config_content
+        # Stripe 설정 필드들이 존재하는지 확인
+        assert "stripe_secret_key" in config_content
+        assert "stripe_test_secret_key" in config_content
+        assert "stripe_api_version" in config_content
 
     def test_api_config_cdn_host_map_web_package(self):
         """API 설정에서 CDN 호스트 맵에 웹 패키지가 포함되어 있는지 테스트"""
@@ -64,9 +64,9 @@ class TestWebPaymentConfigSimple:
 
         # 필수 필드들이 설정에 포함되어 있는지 확인
         required_fields = [
-            'web_payment_api_url',
-            'web_payment_credential',
-            'web_payment_test_mode'
+            'stripe_secret_key',
+            'stripe_test_secret_key',
+            'stripe_api_version'
         ]
 
         for field in required_fields:
@@ -80,7 +80,7 @@ class TestWebPaymentConfigSimple:
             api_config_content = f.read()
 
         # 기본값이 설정되어 있는지 확인
-        assert "web_payment_test_mode: bool = False" in api_config_content
+        assert "stripe_api_version: str = \"2025-09-30.clover\"" in api_config_content
 
     def test_web_payment_config_type_annotations(self):
         """웹 결제 설정 타입 어노테이션 테스트"""
@@ -90,6 +90,6 @@ class TestWebPaymentConfigSimple:
             api_config_content = f.read()
 
         # 타입 어노테이션이 올바르게 설정되어 있는지 확인
-        assert "web_payment_api_url: str" in api_config_content
-        assert "web_payment_credential: str" in api_config_content
-        assert "web_payment_test_mode: bool" in api_config_content
+        assert "stripe_secret_key: str" in api_config_content
+        assert "stripe_test_secret_key: str" in api_config_content
+        assert "stripe_api_version: str" in api_config_content

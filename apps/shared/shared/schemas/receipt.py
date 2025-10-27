@@ -66,15 +66,15 @@ class ApplePurchaseSchema(BaseSchema):
 
 
 class WebPurchaseSchema(BaseSchema):
-    orderId: str
-    productId: str
-    purchaseDate: datetime
-    amount: float
+    orderId: str  # payment_intent id (pi_xxx)
+    productId: str  # metadata에서 추출
+    purchaseDate: datetime  # created timestamp
+    amount: int  # 센트 단위
     currency: str
-    status: str
-    paymentMethod: str
-    transactionId: Optional[str] = None
-    customerId: Optional[str] = None
+    status: str  # succeeded, requires_payment_method, etc
+    paymentMethod: Optional[str] = None
+    metadata: Dict[str, str] = {}  # Stripe metadata
+    livemode: bool = False
 
     @property
     def json_data(self) -> dict:

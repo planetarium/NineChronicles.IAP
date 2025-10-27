@@ -110,6 +110,28 @@ class TestWebPurchaseSchema:
                 paymentMethod="credit_card"
             )
 
+    def test_web_purchase_schema_with_metadata(self):
+        """Stripe metadata 포함 테스트"""
+        purchase = WebPurchaseSchema(
+            orderId="pi_test123",
+            productId="320",
+            purchaseDate=datetime.now(timezone.utc),
+            amount=1299,
+            currency="usd",
+            status="succeeded",
+            paymentMethod="pm_123",
+            metadata={
+                "productId": "320",
+                "userId": "user123",
+                "avatarAddress": "0x1234"
+            },
+            livemode=False
+        )
+
+        assert purchase.metadata["productId"] == "320"
+        assert purchase.livemode is False
+        assert purchase.amount == 1299
+
         with pytest.raises(ValueError):
             WebPurchaseSchema(
                 orderId="web_order_123",

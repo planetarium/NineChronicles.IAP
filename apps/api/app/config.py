@@ -36,10 +36,10 @@ class Settings(BaseSettings):
     apple_issuer_id: str
     apple_validation_url: str
 
-    # Web payment configuration
-    web_payment_api_url: str
-    web_payment_credential: str
-    web_payment_test_mode: bool = False
+    # Stripe configuration (기존 web_payment_* 설정 대체)
+    stripe_secret_key: str
+    stripe_test_secret_key: str
+    stripe_api_version: str = "2025-09-30.clover"
 
     stage: str = "development"
     debug: bool = False

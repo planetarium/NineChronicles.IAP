@@ -83,13 +83,15 @@ class TestWebPaymentAPI:
     def test_web_payment_validation_success(self, mock_validate_web, web_payment_data):
         # Mock successful validation
         mock_purchase = WebPurchaseSchema(
-            orderId="web_order_123",
-            productId="web_product_456",
+            orderId="pi_test123",
+            productId="320",
             purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            amount=9.99,
-            currency="USD",
-            status="completed",
-            paymentMethod="credit_card"
+            amount=1299,  # 센트 단위
+            currency="usd",
+            status="succeeded",
+            paymentMethod="pm_123",
+            metadata={"productId": "320", "userId": "user123"},
+            livemode=False
         )
         mock_validate_web.return_value = (True, "", mock_purchase)
 
@@ -97,11 +99,12 @@ class TestWebPaymentAPI:
 
         # Test validation call
         success, msg, purchase = mock_validate_web(
-            "https://api.payment.com/validate",
-            "test_credential",
-            "web_order_123",
-            "web_product_456",
-            web_payment_data["data"]
+            stripe_secret_key="sk_test_123",
+            stripe_api_version="2025-09-30.clover",
+            payment_intent_id="pi_test123",
+            expected_product_id="320",
+            expected_amount=12.99,
+            db_product=Mock()
         )
 
         assert success is True
@@ -112,27 +115,32 @@ class TestWebPaymentAPI:
     def test_web_test_payment_validation_success(self, mock_validate_web_test, web_test_payment_data):
         # Mock successful test validation
         mock_purchase = WebPurchaseSchema(
-            orderId="web_test_order_123",
-            productId="web_test_product_456",
+            orderId="pi_test123",
+            productId="320",
             purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            amount=9.99,
-            currency="USD",
-            status="completed",
-            paymentMethod="test_card"
+            amount=1299,  # 센트 단위
+            currency="usd",
+            status="succeeded",
+            paymentMethod="pm_123",
+            metadata={"productId": "320", "userId": "user123"},
+            livemode=False
         )
-        mock_validate_web_test.return_value = (True, "Test web payment validation successful", mock_purchase)
+        mock_validate_web_test.return_value = (True, "", mock_purchase)
 
         receipt_schema = ReceiptSchema(**web_test_payment_data)
 
         # Test validation call
         success, msg, purchase = mock_validate_web_test(
-            "web_test_order_123",
-            "web_test_product_456",
-            web_test_payment_data["data"]
+            stripe_secret_key="sk_test_123",
+            stripe_api_version="2025-09-30.clover",
+            payment_intent_id="pi_test123",
+            expected_product_id="320",
+            expected_amount=12.99,
+            db_product=Mock()
         )
 
         assert success is True
-        assert "Test web payment validation successful" in msg
+        assert msg == ""
         assert isinstance(purchase, WebPurchaseSchema)
 
     def test_web_payment_data_structure(self, web_payment_data):

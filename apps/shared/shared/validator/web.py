@@ -1,123 +1,99 @@
-import requests
+import stripe
+from datetime import datetime, timezone
 from typing import Tuple, Optional
+
 from shared.schemas.receipt import WebPurchaseSchema
 
 
 def validate_web(
-    api_url: str,
-    credential: str,
-    order_id: str,
-    product_id: str,
-    payment_data: dict
+    stripe_secret_key: str,
+    stripe_api_version: str,
+    payment_intent_id: str,
+    expected_product_id: str,
+    expected_amount: float,
+    db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:
     """
-    Validate web payment receipt through external payment service API
+    Stripe Python SDK로 결제 검증
 
     Args:
-        api_url: External payment service API URL
-        credential: API authentication credential
-        order_id: Order ID to validate
-        product_id: Product ID to validate
-        payment_data: Additional payment data for validation
+        stripe_secret_key: Stripe secret key (sk_live_xxx or sk_test_xxx)
+        stripe_api_version: Stripe API version
+        payment_intent_id: Payment Intent ID (pi_xxx)
+        expected_product_id: 예상 상품 ID
+        expected_amount: 예상 금액 (달러 단위)
+        db_product: Product 모델 인스턴스
 
     Returns:
-        Tuple of (success, message, WebPurchaseSchema)
+        (success, error_message, WebPurchaseSchema)
     """
     try:
-        headers = {
-            "Authorization": f"Bearer {credential}",
-            "Content-Type": "application/json"
-        }
+        # Stripe SDK 설정
+        stripe.api_key = stripe_secret_key
+        stripe.api_version = stripe_api_version
 
-        payload = {
-            "orderId": order_id,
-            "productId": product_id,
-            "paymentData": payment_data
-        }
+        # PaymentIntent 조회
+        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
 
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        # 1. 결제 상태 확인
+        if payment_intent.status != "succeeded":
+            return False, f"Payment not succeeded: {payment_intent.status}", None
 
-        if response.status_code != 200:
-            return (
-                False,
-                f"Payment validation failed with status {response.status_code}: {response.text}",
-                None
-            )
+        # 2. metadata에서 productId 확인
+        metadata = payment_intent.metadata or {}
+        metadata_product_id = metadata.get("productId")
 
-        data = response.json()
+        if metadata_product_id != expected_product_id:
+            return False, f"Product ID mismatch: expected {expected_product_id}, got {metadata_product_id}", None
 
-        # Check if payment is successful
-        if data.get("status") != "completed":
-            return (
-                False,
-                f"Payment status is not completed: {data.get('status')}",
-                None
-            )
+        # 3. 금액 검증 (센트 단위로 비교)
+        stripe_amount = payment_intent.amount
+        expected_amount_cents = int(expected_amount * 100)
 
-        # Validate order ID matches
-        if data.get("orderId") != order_id:
-            return (
-                False,
-                f"Order ID mismatch: expected {order_id}, got {data.get('orderId')}",
-                None
-            )
+        if stripe_amount != expected_amount_cents:
+            return False, f"Amount mismatch: expected {expected_amount_cents}, got {stripe_amount}", None
 
-        # Create WebPurchaseSchema from response
-        web_purchase = WebPurchaseSchema(
-            orderId=data["orderId"],
-            productId=data["productId"],
-            purchaseDate=data["purchaseDate"],
-            amount=data["amount"],
-            currency=data["currency"],
-            status=data["status"],
-            paymentMethod=data["paymentMethod"],
-            transactionId=data.get("transactionId"),
-            customerId=data.get("customerId")
+        # 4. WebPurchaseSchema 생성
+        purchase = WebPurchaseSchema(
+            orderId=payment_intent.id,
+            productId=metadata_product_id,
+            purchaseDate=datetime.fromtimestamp(payment_intent.created, tz=timezone.utc),
+            amount=stripe_amount,
+            currency=payment_intent.currency,
+            status=payment_intent.status,
+            paymentMethod=payment_intent.payment_method,
+            metadata=dict(metadata),
+            livemode=payment_intent.livemode
         )
 
-        return True, "", web_purchase
+        return True, "", purchase
 
-    except requests.exceptions.Timeout:
-        return False, "Payment validation request timed out", None
-    except requests.exceptions.RequestException as e:
-        return False, f"Payment validation request failed: {str(e)}", None
+    except stripe.InvalidRequestError as e:
+        return False, f"Invalid Stripe request: {str(e)}", None
+    except stripe.AuthenticationError as e:
+        return False, f"Stripe authentication failed: {str(e)}", None
+    except stripe.StripeError as e:
+        return False, f"Stripe API error: {str(e)}", None
     except Exception as e:
-        return False, f"Error occurred validating web payment: {str(e)}", None
+        return False, f"Error validating Stripe payment: {str(e)}", None
 
 
 def validate_web_test(
-    order_id: str,
-    product_id: str,
-    payment_data: dict
+    stripe_secret_key: str,
+    stripe_api_version: str,
+    payment_intent_id: str,
+    expected_product_id: str,
+    expected_amount: float,
+    db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:
     """
-    Validate web payment receipt for test environment (mock validation)
-
-    Args:
-        order_id: Order ID to validate
-        product_id: Product ID to validate
-        payment_data: Additional payment data for validation
-
-    Returns:
-        Tuple of (success, message, WebPurchaseSchema)
+    Stripe test mode로 검증 (validate_web와 동일, test key 사용)
     """
-    try:
-        # Mock validation for test environment
-        from datetime import datetime
-
-        web_purchase = WebPurchaseSchema(
-            orderId=order_id,
-            productId=product_id,
-            purchaseDate=datetime.now(),
-            amount=payment_data.get("amount", 0.0),
-            currency=payment_data.get("currency", "USD"),
-            status="completed",
-            paymentMethod=payment_data.get("paymentMethod", "test"),
-            transactionId=f"test_tx_{order_id}",
-            customerId=payment_data.get("customerId")
-        )
-
-        return True, "Test web payment validation successful", web_purchase
-
-    except Exception as e:
-        return False, f"Error occurred validating test web payment: {str(e)}", None
+    return validate_web(
+        stripe_secret_key,
+        stripe_api_version,
+        payment_intent_id,
+        expected_product_id,
+        expected_amount,
+        db_product
+    )
