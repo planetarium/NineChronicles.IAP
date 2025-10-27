@@ -117,7 +117,8 @@ class TestHandle:
         self, mock_datetime, mock_send_alert, mock_config, mock_get_client
     ):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile"
+            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
+            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -153,7 +154,8 @@ class TestHandle:
     @patch("app.tasks.track_google_refund.datetime")
     def test_handle_no_refunds(self, mock_datetime, mock_config, mock_get_client):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile"
+            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
+            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -178,7 +180,8 @@ class TestHandle:
     @patch("app.tasks.track_google_refund.datetime")
     def test_handle_api_parameters(self, mock_datetime, mock_config, mock_get_client):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile"
+            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
+            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)

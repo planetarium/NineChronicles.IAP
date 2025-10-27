@@ -138,3 +138,48 @@ class TestGetOrderData:
         assert product_id == 0
         assert isinstance(purchased_at, datetime)
         assert purchased_at.tzinfo == timezone.utc
+
+    def test_get_order_data_web_store(self):
+        receipt_data = Mock(spec=ReceiptSchema)
+        receipt_data.store = Store.WEB
+        receipt_data.data = {
+            "orderId": "web_order_123",
+            "productId": "web_product_456",
+            "purchaseTime": 1640995200,
+        }
+
+        order_id, product_id, purchased_at = get_order_data(receipt_data)
+
+        assert order_id == "web_order_123"
+        assert product_id == "web_product_456"
+        assert purchased_at == datetime.fromtimestamp(1640995200, tz=timezone.utc)
+
+    def test_get_order_data_web_test_store(self):
+        receipt_data = Mock(spec=ReceiptSchema)
+        receipt_data.store = Store.WEB_TEST
+        receipt_data.data = {
+            "orderId": "web_test_order_789",
+            "productId": "web_test_product_101",
+            "purchaseTime": 1640995200,
+        }
+
+        order_id, product_id, purchased_at = get_order_data(receipt_data)
+
+        assert order_id == "web_test_order_789"
+        assert product_id == "web_test_product_101"
+        assert purchased_at == datetime.fromtimestamp(1640995200, tz=timezone.utc)
+
+    def test_get_order_data_web_store_missing_purchase_time(self):
+        receipt_data = Mock(spec=ReceiptSchema)
+        receipt_data.store = Store.WEB
+        receipt_data.data = {
+            "orderId": "web_order_123",
+            "productId": "web_product_456",
+        }
+
+        order_id, product_id, purchased_at = get_order_data(receipt_data)
+
+        assert order_id == "web_order_123"
+        assert product_id == "web_product_456"
+        assert isinstance(purchased_at, datetime)
+        assert purchased_at.tzinfo == timezone.utc

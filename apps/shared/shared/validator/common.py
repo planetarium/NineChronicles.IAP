@@ -20,7 +20,7 @@ def get_order_data(
         order_id = receipt_data.order.get("orderId")
         product_id = receipt_data.order.get("productId")
         purchased_at = datetime.fromtimestamp(
-            receipt_data.order.get("purchaseTime") // 1000, 
+            receipt_data.order.get("purchaseTime") // 1000,
             tz=timezone.utc
         )  # Remove millisecond
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
@@ -29,6 +29,15 @@ def get_order_data(
         # Apple does not provide productId in receipt data
         product_id = 0
         purchased_at = datetime.now(timezone.utc)
+    elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
+        order_id = receipt_data.data.get("orderId")
+        product_id = receipt_data.data.get("productId")
+        # Web payment data should include purchaseTime in timestamp format
+        purchase_time = receipt_data.data.get("purchaseTime")
+        if isinstance(purchase_time, (int, float)):
+            purchased_at = datetime.fromtimestamp(purchase_time, tz=timezone.utc)
+        else:
+            purchased_at = datetime.now(timezone.utc)
     else:
         raise ValueError(f"{receipt_data.store.name} is unsupported store.")
 

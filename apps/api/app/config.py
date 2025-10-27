@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     cdn_host_map: dict[str, str] = {
         "com.planetariumlabs.ninechroniclesmobile": "http://localhost",
         "com.planetariumlabs.ninechroniclesmobilek": "http://localhost",
+        "com.planetariumlabs.ninechroniclesweb": "http://localhost",
     }
 
     backoffice_jwt_secret: str
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     apple_key_id: str
     apple_issuer_id: str
     apple_validation_url: str
+
+    # Web payment configuration
+    web_payment_api_url: str
+    web_payment_credential: str
+    web_payment_test_mode: bool = False
 
     stage: str = "development"
     debug: bool = False

@@ -34,6 +34,7 @@ from shared.utils.apple import get_jwt
 from shared.validator.apple import validate_apple
 from shared.validator.common import get_order_data
 from shared.validator.google import ack_google, validate_google
+from shared.validator.web import validate_web, validate_web_test
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import joinedload, with_loader_criteria
 from starlette.responses import JSONResponse
@@ -312,6 +313,21 @@ def request_product(
         #     .where(Product.active.is_(True), Product.apple_sku == product_id)
         # )
         pass
+    elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
+        # Validate package name for web payment - only NINE_CHRONICLES_WEB is allowed
+        if x_iap_packagename != PackageName.NINE_CHRONICLES_WEB:
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Invalid package name for web payment: {x_iap_packagename}. Only NINE_CHRONICLES_WEB is allowed."),
+            )
+
+        product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list))
+            .options(joinedload(Product.fungible_item_list))
+            .where(Product.active.is_(True), Product.google_sku == product_id)
+        )
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(
             select(Product)
@@ -336,7 +352,7 @@ def request_product(
     sess.commit()
     sess.refresh(receipt)
 
-    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
+    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST, Store.WEB, Store.WEB_TEST) and not product:
         receipt.status = ReceiptStatus.INVALID
         raise_error(
             sess,
@@ -423,6 +439,38 @@ def request_product(
                 ),
             )
         receipt.product_id = product.id
+    ## Web
+    elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
+        if receipt_data.store == Store.WEB:
+            # Production web payment validation
+            success, msg, purchase = validate_web(
+                config.web_payment_api_url,
+                config.web_payment_credential,
+                order_id,
+                product_id,
+                receipt_data.data
+            )
+        else:
+            # Test web payment validation
+            success, msg, purchase = validate_web_test(
+                order_id,
+                product_id,
+                receipt_data.data
+            )
+
+        if success:
+            data = receipt_data.data.copy()
+            data.update(**purchase.json_data)
+            receipt.data = data
+            receipt.purchased_at = purchase.purchaseDate
+            receipt.product_id = product.id
+        else:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Web payment validation failed: {msg}"),
+            )
     ## Test
     elif receipt_data.store == Store.TEST:
         if config.stage == "mainnet":
