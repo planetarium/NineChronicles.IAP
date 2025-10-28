@@ -31,7 +31,7 @@ class TestWebPaymentErrorCases:
         receipt_data.store = Store.WEB
         receipt_data.data = {
             # orderId 누락
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": 1640995200
         }
 
@@ -61,7 +61,7 @@ class TestWebPaymentErrorCases:
         receipt_data.store = Store.WEB
         receipt_data.data = {
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": "invalid_timestamp"  # 잘못된 타입
         }
 
@@ -77,7 +77,7 @@ class TestWebPaymentErrorCases:
         receipt_data.store = Store.WEB
         receipt_data.data = {
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": -1  # 음수 시간
         }
 
@@ -93,7 +93,7 @@ class TestWebPaymentErrorCases:
         receipt_data.store = Store.WEB
         receipt_data.data = {
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": 999999999999999  # 매우 큰 시간
         }
 
@@ -129,7 +129,7 @@ class TestWebPaymentErrorCases:
         receipt_data.store = 999  # 잘못된 스토어 타입
         receipt_data.data = {
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": 1640995200
         }
 
@@ -178,7 +178,7 @@ class TestWebPaymentErrorCases:
         # Store 필드가 없고 데이터에도 WebPayment가 없는 경우
         data = {
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": 1640995200
         }
 
@@ -194,7 +194,7 @@ class TestWebPaymentErrorCases:
         data = {
             "Store": "WebPayment",
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": 1,
             "purchaseTime": "1640995200",  # 문자열
             "amount": "9.99",  # 문자열
             "currency": "USD",

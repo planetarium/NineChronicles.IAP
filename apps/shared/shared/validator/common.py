@@ -32,8 +32,8 @@ def get_order_data(
     elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
         order_id = receipt_data.data.get("orderId")
         product_id = receipt_data.data.get("productId")
-        # Web payment data should include purchaseTime in timestamp format
-        purchase_time = receipt_data.data.get("purchaseTime")
+        # Web payment data should include purchaseDate (from Stripe validation) or purchaseTime (from client)
+        purchase_time = receipt_data.data.get("purchaseDate") or receipt_data.data.get("purchaseTime")
         if isinstance(purchase_time, (int, float)):
             purchased_at = datetime.fromtimestamp(purchase_time, tz=timezone.utc)
         else:

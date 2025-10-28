@@ -326,7 +326,7 @@ def request_product(
             select(Product)
             .options(joinedload(Product.fav_list))
             .options(joinedload(Product.fungible_item_list))
-            .where(Product.active.is_(True), Product.google_sku == product_id)
+            .where(Product.active.is_(True), Product.id == product_id)
         )
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(

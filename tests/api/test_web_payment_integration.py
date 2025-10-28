@@ -19,7 +19,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -37,7 +37,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_test_order_123",
-                "productId": "web_test_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -54,7 +54,7 @@ class TestWebPaymentIntegration:
         assert receipt_schema.agentAddress == "0x1234567890abcdef1234567890abcdef12345678"
         assert receipt_schema.avatarAddress == "0xabcdef1234567890abcdef1234567890abcdef12"
         assert receipt_schema.data["orderId"] == "web_order_123"
-        assert receipt_schema.data["productId"] == "web_product_456"
+        assert receipt_schema.data["productId"] == 1
 
     def test_web_test_payment_schema_validation(self, web_test_payment_request_data):
         """웹 테스트 결제 스키마 유효성 검증"""
@@ -64,7 +64,7 @@ class TestWebPaymentIntegration:
         assert receipt_schema.agentAddress == "0x1234567890abcdef1234567890abcdef12345678"
         assert receipt_schema.avatarAddress == "0xabcdef1234567890abcdef1234567890abcdef12"
         assert receipt_schema.data["orderId"] == "web_test_order_123"
-        assert receipt_schema.data["productId"] == "web_test_product_456"
+        assert receipt_schema.data["productId"] == 1
 
     def test_invalid_store_type_validation(self):
         """잘못된 스토어 타입 검증"""
@@ -75,7 +75,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200
             },
             "planetId": "0x000000000000"
@@ -94,7 +94,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200
             },
             "planetId": "0x000000000000"
@@ -146,7 +146,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",  # 이 필드로 자동 감지
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -169,7 +169,7 @@ class TestWebPaymentIntegration:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": "invalid_timestamp",  # 잘못된 타입
                 "amount": "invalid_amount",  # 잘못된 타입
                 "currency": "USD",

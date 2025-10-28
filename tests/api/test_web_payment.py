@@ -17,7 +17,7 @@ class TestWebPaymentAPI:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,  # Product.id format
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -35,7 +35,7 @@ class TestWebPaymentAPI:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_test_order_123",
-                "productId": "web_test_product_456",
+                "productId": 1,  # Product.id format
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -51,7 +51,7 @@ class TestWebPaymentAPI:
         assert receipt_schema.agentAddress == "0x1234567890abcdef1234567890abcdef12345678"
         assert receipt_schema.avatarAddress == "0xabcdef1234567890abcdef1234567890abcdef12"
         assert receipt_schema.data["orderId"] == "web_order_123"
-        assert receipt_schema.data["productId"] == "web_product_456"
+        assert receipt_schema.data["productId"] == 1
 
     def test_receipt_schema_web_test_payment_parsing(self, web_test_payment_data):
         receipt_schema = ReceiptSchema(**web_test_payment_data)
@@ -60,14 +60,14 @@ class TestWebPaymentAPI:
         assert receipt_schema.agentAddress == "0x1234567890abcdef1234567890abcdef12345678"
         assert receipt_schema.avatarAddress == "0xabcdef1234567890abcdef1234567890abcdef12"
         assert receipt_schema.data["orderId"] == "web_test_order_123"
-        assert receipt_schema.data["productId"] == "web_test_product_456"
+        assert receipt_schema.data["productId"] == 1
 
     def test_receipt_schema_auto_detect_web_payment(self):
         # Test automatic store detection from data
         data = {
             "Store": "WebPayment",
             "orderId": "web_order_123",
-            "productId": "web_product_456",
+            "productId": "320",
             "purchaseTime": 1640995200,
             "amount": 9.99,
             "currency": "USD",

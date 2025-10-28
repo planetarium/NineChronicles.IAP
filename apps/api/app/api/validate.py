@@ -34,21 +34,37 @@ def validate_google(receipt: Receipt) -> ReceiptDetailSchema:
 
 
 def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
-    # Web payment validation through external API
-    if receipt.store == Store.WEB:
-        success, msg, purchase = validate_web(
-            config.web_payment_api_url,
-            config.web_payment_credential,
-            receipt.order_id,
-            receipt.data.get("productId"),
-            receipt.data
+    from shared.validator.web import validate_web, validate_web_test
+    from shared.models.product import Product
+    from sqlalchemy import select
+
+    # Product must be found for price validation
+    product = sess.scalar(
+        select(Product)
+        .where(Product.active.is_(True), Product.id == receipt.data.get("productId"))
+    )
+    if not product:
+        return ReceiptDetailSchema(
+            store=receipt.store,
+            valid=False,
+            id=receipt.order_id,
+            msg=f"Product not found: {receipt.data.get('productId')}"
         )
-    else:  # Store.WEB_TEST
-        success, msg, purchase = validate_web_test(
-            receipt.order_id,
-            receipt.data.get("productId"),
-            receipt.data
-        )
+
+    stripe_key = (
+        config.stripe_test_secret_key
+        if receipt.store == Store.WEB_TEST
+        else config.stripe_secret_key
+    )
+
+    success, msg, purchase = validate_web(
+        stripe_secret_key=stripe_key,
+        stripe_api_version=config.stripe_api_version,
+        payment_intent_id=receipt.order_id,
+        expected_product_id=receipt.data.get("productId"),
+        expected_amount=product.price,
+        db_product=product
+    )
 
     return ReceiptDetailSchema(
         store=receipt.store,

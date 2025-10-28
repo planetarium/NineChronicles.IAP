@@ -16,7 +16,7 @@ class TestWebPaymentPackageValidation:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": "web_product_456",
+                "productId": 1,
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
