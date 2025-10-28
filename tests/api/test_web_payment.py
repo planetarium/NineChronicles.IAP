@@ -152,7 +152,7 @@ class TestWebPaymentAPI:
             assert field in data, f"Missing required field: {field}"
 
         assert isinstance(data["orderId"], str)
-        assert isinstance(data["productId"], str)
+        assert isinstance(data["productId"], int)
         assert isinstance(data["purchaseTime"], int)
         assert isinstance(data["amount"], (int, float))
         assert isinstance(data["currency"], str)

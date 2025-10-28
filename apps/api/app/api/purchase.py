@@ -459,13 +459,27 @@ def request_product(
             else config.stripe_secret_key
         )
 
+        # 상품 가격 조회 (스토어 타입 무시하고 첫 번째 가격 사용)
+        price = sess.scalar(
+            select(Price)
+            .where(Price.product_id == product.id)
+            .limit(1)
+        )
+        if not price:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Price not found for product {product.id}"),
+            )
+
         # Stripe 검증
         success, msg, purchase = validate_web(
             stripe_secret_key=stripe_key,
             stripe_api_version=config.stripe_api_version,
             payment_intent_id=payment_intent_id,
             expected_product_id=product_id,
-            expected_amount=product.price,
+            expected_amount=float(price.price),  # Decimal을 float로 변환
             db_product=product
         )
 

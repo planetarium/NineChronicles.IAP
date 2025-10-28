@@ -1,7 +1,9 @@
 import requests
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from shared.enums import Store
 from shared.models.receipt import Receipt
+from shared.models.product import Product, Price
 from shared.schemas.receipt import ReceiptDetailSchema, ReceiptSchema
 from shared.validator.web import validate_web, validate_web_test
 
@@ -34,10 +36,6 @@ def validate_google(receipt: Receipt) -> ReceiptDetailSchema:
 
 
 def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
-    from shared.validator.web import validate_web, validate_web_test
-    from shared.models.product import Product
-    from sqlalchemy import select
-
     # Product must be found for price validation
     product = sess.scalar(
         select(Product)
@@ -51,6 +49,20 @@ def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
             msg=f"Product not found: {receipt.data.get('productId')}"
         )
 
+    # 상품 가격 조회 (스토어 타입 무시하고 첫 번째 가격 사용)
+    price = sess.scalar(
+        select(Price)
+        .where(Price.product_id == product.id)
+        .limit(1)
+    )
+    if not price:
+        return ReceiptDetailSchema(
+            store=receipt.store,
+            valid=False,
+            id=receipt.order_id,
+            msg=f"Price not found for product {product.id}"
+        )
+
     stripe_key = (
         config.stripe_test_secret_key
         if receipt.store == Store.WEB_TEST
@@ -62,7 +74,7 @@ def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
         stripe_api_version=config.stripe_api_version,
         payment_intent_id=receipt.order_id,
         expected_product_id=receipt.data.get("productId"),
-        expected_amount=product.price,
+        expected_amount=float(price.price),  # Decimal을 float로 변환
         db_product=product
     )
 
