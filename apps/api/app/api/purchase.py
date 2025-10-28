@@ -478,7 +478,7 @@ def request_product(
             stripe_secret_key=stripe_key,
             stripe_api_version=config.stripe_api_version,
             payment_intent_id=payment_intent_id,
-            expected_product_id=product_id,
+            expected_product_id=int(product_id),  # int로 변환
             expected_amount=float(price.price),  # Decimal을 float로 변환
             db_product=product
         )

@@ -73,7 +73,7 @@ def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
         stripe_secret_key=stripe_key,
         stripe_api_version=config.stripe_api_version,
         payment_intent_id=receipt.order_id,
-        expected_product_id=receipt.data.get("productId"),
+        expected_product_id=int(receipt.data.get("productId")),  # int로 변환
         expected_amount=float(price.price),  # Decimal을 float로 변환
         db_product=product
     )

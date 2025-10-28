@@ -41,7 +41,7 @@ def validate_web(
 
         # 2. metadata에서 productId 확인
         metadata = payment_intent.metadata or {}
-        metadata_product_id = metadata.get("productId")
+        metadata_product_id = int(metadata.get("productId"))
 
         if metadata_product_id != expected_product_id:
             return False, f"Product ID mismatch: expected {expected_product_id}, got {metadata_product_id}", None

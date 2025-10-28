@@ -67,7 +67,7 @@ class ApplePurchaseSchema(BaseSchema):
 
 class WebPurchaseSchema(BaseSchema):
     orderId: str  # payment_intent id (pi_xxx)
-    productId: str  # metadata에서 추출
+    productId: int  # metadata에서 추출
     purchaseDate: datetime  # created timestamp
     amount: int  # 센트 단위
     currency: str

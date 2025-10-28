@@ -17,7 +17,7 @@ class TestWebPaymentAPI:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_order_123",
-                "productId": 1,  # Product.id format
+                "productId": 1,  # Product.id format (int)
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",
@@ -35,7 +35,7 @@ class TestWebPaymentAPI:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "web_test_order_123",
-                "productId": 1,  # Product.id format
+                "productId": 1,  # Product.id format (int)
                 "purchaseTime": 1640995200,
                 "amount": 9.99,
                 "currency": "USD",

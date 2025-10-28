@@ -51,7 +51,7 @@ class TestWebPaymentUnit:
             "data": {
                 "Store": "WebPayment",
                 "orderId": "pi_test123",
-                "productId": 1,  # Product.id
+                "productId": 1,  # Product.id (int)
                 "purchaseTime": 1640995200,
                 "amount": 12.99,
                 "currency": "USD",

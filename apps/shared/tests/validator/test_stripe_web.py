@@ -21,14 +21,14 @@ class TestStripeValidateWeb:
         mock_payment_intent.created = 1761552381
         mock_payment_intent.payment_method = "pm_123"
         mock_payment_intent.livemode = False
-        mock_payment_intent.metadata = {"productId": "320", "userId": "user123"}
+        mock_payment_intent.metadata = {"productId": "1", "userId": "user123"}
         mock_retrieve.return_value = mock_payment_intent
 
         success, msg, purchase = validate_web(
             stripe_secret_key="sk_test_123",
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
-            expected_product_id="320",
+            expected_product_id=1,  # int 타입으로 변경
             expected_amount=12.99,
             db_product=Mock()
         )
@@ -37,7 +37,7 @@ class TestStripeValidateWeb:
         assert msg == ""
         assert purchase is not None
         assert purchase.orderId == "pi_test123"
-        assert purchase.productId == "320"
+        assert purchase.productId == 1  # int 타입으로 변경
         assert purchase.amount == 1299
         assert purchase.status == "succeeded"
 
@@ -52,7 +52,7 @@ class TestStripeValidateWeb:
             stripe_secret_key="sk_test_123",
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
-            expected_product_id="320",
+            expected_product_id=1,  # int 타입으로 변경
             expected_amount=12.99,
             db_product=Mock()
         )
@@ -73,7 +73,7 @@ class TestStripeValidateWeb:
             stripe_secret_key="sk_test_123",
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
-            expected_product_id="320",
+            expected_product_id=1,  # int 타입으로 변경
             expected_amount=12.99,
             db_product=Mock()
         )
@@ -88,7 +88,7 @@ class TestStripeValidateWeb:
         mock_payment_intent = Mock()
         mock_payment_intent.status = "succeeded"
         mock_payment_intent.amount = 999  # $9.99
-        mock_payment_intent.metadata = {"productId": "320"}
+        mock_payment_intent.metadata = {"productId": "1"}
         mock_retrieve.return_value = mock_payment_intent
 
         success, msg, purchase = validate_web(
@@ -139,7 +139,7 @@ class TestStripeValidateWebTest:
         mock_payment_intent.currency = "usd"
         mock_payment_intent.created = 1761552381
         mock_payment_intent.payment_method = "pm_123"
-        mock_payment_intent.metadata = {"productId": "320"}
+        mock_payment_intent.metadata = {"productId": "1"}
         mock_payment_intent.livemode = False
         mock_retrieve.return_value = mock_payment_intent
 
@@ -147,7 +147,7 @@ class TestStripeValidateWebTest:
             stripe_secret_key="sk_test_123",
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
-            expected_product_id="320",
+            expected_product_id=1,  # int 타입으로 변경
             expected_amount=12.99,
             db_product=Mock()
         )
