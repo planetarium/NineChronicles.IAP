@@ -30,9 +30,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            3
+            3,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 세션이 올바르게 호출되었는지 확인
@@ -79,9 +79,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            3
+            3,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인
@@ -113,7 +113,7 @@ class TestReceipt:
         month = 3
 
         Receipt.get_user_receipts_by_month(
-            mock_session, agent_addr, avatar_addr, year, month
+            mock_session, agent_addr, year, month, avatar_addr=avatar_addr
         )
 
         # filter 메서드가 호출되었는지 확인
@@ -152,9 +152,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2023,
-            1
+            1,
+            avatar_addr="0xabcdef1234567890"
         )
 
         assert result == []
@@ -193,9 +193,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True
         )
 
@@ -236,9 +236,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=False
         )
 
@@ -281,9 +281,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             only_paid_products=True
         )
@@ -324,9 +324,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             only_paid_products=False
         )
@@ -386,9 +386,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             sku_pattern="adventurebosspass\\d+premium"
         )
@@ -446,9 +446,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             exclude_sku_patterns=[
                 "adventurebosspass\\d+premium",
@@ -492,9 +492,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             sku_pattern="adventurebosspass\\d+premium"
         )
@@ -550,9 +550,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             sku_pattern="couragepass\\d+premium"
         )
@@ -596,9 +596,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             sku_pattern="adventurebosspass\\d+premium"
         )
@@ -654,9 +654,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             only_paid_products=True,
             sku_pattern="adventurebosspass\\d+premium"
@@ -717,9 +717,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             sku_pattern="adventurebosspass\\d+premium"
         )
@@ -785,9 +785,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
             3,
+            avatar_addr="0xabcdef1234567890",
             include_product=True,
             exclude_sku_patterns=[
                 "adventurebosspass\\d+premium",
@@ -838,9 +838,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            2
+            2,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
@@ -882,9 +882,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            1
+            1,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
@@ -926,9 +926,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            12
+            12,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
@@ -970,9 +970,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2025,
-            1
+            1,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인 (KST를 UTC로 변환하여 조회되어야 함)
@@ -1029,9 +1029,9 @@ class TestReceipt:
         result = Receipt.get_user_receipts_by_month(
             mock_session,
             "0x1234567890abcdef",
-            "0xabcdef1234567890",
             2024,
-            2
+            2,
+            avatar_addr="0xabcdef1234567890"
         )
 
         # 결과 확인 (모든 영수증이 KST를 UTC로 변환하여 조회되어야 함)
@@ -1076,9 +1076,9 @@ class TestReceipt:
             Receipt.get_user_receipts_by_month(
                 mock_session,
                 "0x1234567890abcdef",
-                "0xabcdef1234567890",
                 utc_year,
-                utc_month
+                utc_month,
+                avatar_addr="0xabcdef1234567890"
             )
 
             # filter 호출에서 올바른 UTC 범위가 사용되었는지 확인
@@ -1092,3 +1092,129 @@ class TestReceipt:
             mock_join.reset_mock()
             mock_order_by.reset_mock()
             mock_options.reset_mock()
+
+    def test_get_user_receipts_by_month_without_avatar_addr(self):
+        """avatar_addr가 None인 경우 agent의 모든 avatar를 합산하는지 테스트합니다."""
+        # Mock 영수증 객체 생성 (다른 avatar들)
+        mock_receipt1 = Mock()
+        mock_receipt1.order_id = "order_2024_03_01"
+        mock_receipt1.agent_addr = "0x1234567890abcdef"
+        mock_receipt1.avatar_addr = "0xabcdef1234567890"  # avatar 1
+        mock_receipt1.purchased_at = datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+        mock_receipt1.product = Mock()
+        mock_receipt1.product.google_sku = "couragepass1premium"
+        mock_receipt1.product.name = "Courage Pass 1 Premium"
+
+        mock_receipt2 = Mock()
+        mock_receipt2.order_id = "order_2024_03_02"
+        mock_receipt2.agent_addr = "0x1234567890abcdef"
+        mock_receipt2.avatar_addr = "0x1111111111111111"  # avatar 2
+        mock_receipt2.purchased_at = datetime(2024, 3, 16, 10, 30, 0, tzinfo=timezone.utc)
+        mock_receipt2.product = Mock()
+        mock_receipt2.product.google_sku = "couragepass2premium"
+        mock_receipt2.product.name = "Courage Pass 2 Premium"
+
+        mock_receipt3 = Mock()
+        mock_receipt3.order_id = "order_2024_03_03"
+        mock_receipt3.agent_addr = "0x1234567890abcdef"
+        mock_receipt3.avatar_addr = "0x2222222222222222"  # avatar 3
+        mock_receipt3.purchased_at = datetime(2024, 3, 17, 10, 30, 0, tzinfo=timezone.utc)
+        mock_receipt3.product = Mock()
+        mock_receipt3.product.google_sku = "regular_item"
+        mock_receipt3.product.name = "Regular Item"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        # avatar_addr 필터링 없이 모든 avatar의 영수증 반환
+        mock_options.all.return_value = [mock_receipt1, mock_receipt2, mock_receipt3]
+
+        # 메서드 호출 (avatar_addr=None)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            2024,
+            3,
+            avatar_addr=None  # avatar_addr를 None으로 전달
+        )
+
+        # 결과 확인 (모든 avatar의 영수증이 반환되어야 함)
+        assert len(result) == 3
+        order_ids = [r.order_id for r in result]
+        assert "order_2024_03_01" in order_ids
+        assert "order_2024_03_02" in order_ids
+        assert "order_2024_03_03" in order_ids
+
+        # filter 호출에서 avatar_addr 조건이 포함되지 않았는지 확인
+        # avatar_addr가 None이면 filter 조건에 avatar_addr 조건이 추가되지 않아야 함
+        filter_call_args = mock_query.filter.call_args
+        # filter가 호출되었는지 확인
+        mock_query.filter.assert_called_once()
+
+    def test_get_user_receipts_by_month_with_avatar_addr(self):
+        """avatar_addr가 제공된 경우 특정 avatar만 조회하는지 테스트합니다."""
+        # Mock 영수증 객체 생성
+        mock_receipt1 = Mock()
+        mock_receipt1.order_id = "order_2024_03_01"
+        mock_receipt1.agent_addr = "0x1234567890abcdef"
+        mock_receipt1.avatar_addr = "0xabcdef1234567890"  # 특정 avatar
+        mock_receipt1.purchased_at = datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+        mock_receipt1.product = Mock()
+        mock_receipt1.product.google_sku = "couragepass1premium"
+        mock_receipt1.product.name = "Courage Pass 1 Premium"
+
+        mock_receipt2 = Mock()
+        mock_receipt2.order_id = "order_2024_03_02"
+        mock_receipt2.agent_addr = "0x1234567890abcdef"
+        mock_receipt2.avatar_addr = "0x1111111111111111"  # 다른 avatar
+        mock_receipt2.purchased_at = datetime(2024, 3, 16, 10, 30, 0, tzinfo=timezone.utc)
+        mock_receipt2.product = Mock()
+        mock_receipt2.product.google_sku = "couragepass2premium"
+        mock_receipt2.product.name = "Courage Pass 2 Premium"
+
+        # Mock 세션 설정
+        mock_session = Mock()
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join = Mock()
+        mock_order_by = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join
+        mock_join.join.return_value = mock_join
+        mock_join.filter.return_value = mock_join
+        mock_join.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        # avatar_addr 필터링으로 특정 avatar의 영수증만 반환
+        mock_options.all.return_value = [mock_receipt1]
+
+        # 메서드 호출 (avatar_addr 제공)
+        result = Receipt.get_user_receipts_by_month(
+            mock_session,
+            "0x1234567890abcdef",
+            2024,
+            3,
+            avatar_addr="0xabcdef1234567890"  # 특정 avatar 지정
+        )
+
+        # 결과 확인 (특정 avatar의 영수증만 반환되어야 함)
+        assert len(result) == 1
+        assert result[0].order_id == "order_2024_03_01"
+        assert result[0].avatar_addr == "0xabcdef1234567890"
+
+        # filter 호출에서 avatar_addr 조건이 포함되었는지 확인
+        mock_query.filter.assert_called_once()

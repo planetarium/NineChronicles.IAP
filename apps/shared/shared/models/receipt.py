@@ -92,9 +92,9 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         cls,
         session,
         agent_addr: str,
-        avatar_addr: str,
         year: int,
         month: int,
+        avatar_addr: Optional[str] = None,
         include_product: bool = True,
         only_paid_products: bool = True,
         sku_pattern: Optional[str] = None,
@@ -108,7 +108,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         Args:
             session: SQLAlchemy 세션
             agent_addr: 9c agent 주소
-            avatar_addr: 9c avatar 주소
+            avatar_addr: 9c avatar 주소 (옵셔널, 제공되지 않으면 agent의 모든 avatar 합산)
             year: 조회할 연도 (UTC 기준)
             month: 조회할 월 (1-12, UTC 기준)
             include_product: product 정보를 함께 불러올지 여부 (기본값: True)
@@ -131,14 +131,17 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         # DB에 저장된 KST 시간을 UTC로 변환하여 조회
         # KST = UTC + 9시간이므로, KST 시간에서 9시간을 빼면 UTC 시간
         # PostgreSQL의 timezone 함수를 사용하여 KST를 UTC로 변환
-        query = session.query(cls).filter(
-            and_(
-                cls.agent_addr == agent_addr,
-                cls.avatar_addr == avatar_addr,
-                func.timezone('UTC', cls.created_at) >= utc_start,
-                func.timezone('UTC', cls.created_at) < utc_end,
-            )
-        )
+        filter_conditions = [
+            cls.agent_addr == agent_addr,
+            func.timezone('UTC', cls.created_at) >= utc_start,
+            func.timezone('UTC', cls.created_at) < utc_end,
+        ]
+
+        # avatar_addr이 제공되면 필터링 조건에 추가
+        if avatar_addr is not None:
+            filter_conditions.append(cls.avatar_addr == avatar_addr)
+
+        query = session.query(cls).filter(and_(*filter_conditions))
 
         # 가격이 0보다 큰 상품만 필터링
         if only_paid_products:
