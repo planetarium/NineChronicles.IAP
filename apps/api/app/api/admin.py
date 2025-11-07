@@ -112,6 +112,10 @@ class CouragePassCheckResponse(BaseModel):
     courage_pass_details: List[dict]
 
 
+class CouragePassCountResponse(BaseModel):
+    count: int
+
+
 class AdventureBossPassCheckResponse(BaseModel):
     agent_address: str
     avatar_address: str
@@ -819,6 +823,54 @@ def check_courage_pass_purchases(
         courage_pass_count=len(courage_pass_receipts),
         courage_pass_details=courage_pass_details
     )
+
+
+@router.get("/user-receipts/courage-pass-count", response_model=CouragePassCountResponse)
+def check_courage_pass_count(
+    agent_address: str = Query(..., description="9c agent 주소"),
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    avatar_address: Optional[str] = Query(None, description="9c avatar 주소 (옵셔널)"),
+    sess=Depends(session),
+):
+    """
+    해당 년월 유료 커리지패스 구매 숫자 조회
+
+    Args:
+        agent_address: 9c agent 주소
+        year: 조회할 연도
+        month: 조회할 월
+        avatar_address: 9c avatar 주소 (옵셔널, 제공되지 않으면 agent의 모든 avatar 합산)
+
+    Returns:
+        커리지패스 구매 숫자
+    """
+    # 주소 형식 정규화
+    if not agent_address.startswith("0x"):
+        agent_address = "0x" + agent_address
+    agent_address = agent_address.lower()
+
+    normalized_avatar_address = None
+    if avatar_address:
+        if not avatar_address.startswith("0x"):
+            normalized_avatar_address = "0x" + avatar_address
+        else:
+            normalized_avatar_address = avatar_address
+        normalized_avatar_address = normalized_avatar_address.lower()
+
+    # 기존 메서드 재사용
+    courage_pass_receipts = Receipt.get_user_receipts_by_month(
+        session=sess,
+        agent_addr=agent_address,
+        avatar_addr=normalized_avatar_address,
+        year=year,
+        month=month,
+        include_product=True,
+        only_paid_products=True,
+        sku_pattern="couragepass\\d+premium"
+    )
+
+    return CouragePassCountResponse(count=len(courage_pass_receipts))
 
 
 @router.get("/user-receipts/adventure-boss-pass", response_model=AdventureBossPassCheckResponse)
