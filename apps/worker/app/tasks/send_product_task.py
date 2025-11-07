@@ -115,6 +115,12 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
                     if package_name == PackageName.NINE_CHRONICLES_K
                     else product.apple_sku
                 ),
+                # Web payment uses google_sku as the primary identifier
+                "w_sku": (
+                    product.google_sku
+                    if package_name == PackageName.NINE_CHRONICLES_WEB
+                    else None
+                ),
             }
         }
     )

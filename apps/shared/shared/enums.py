@@ -11,6 +11,7 @@ class PackageName(Enum):
     """
     NINE_CHRONICLES_M = "com.planetariumlabs.ninechroniclesmobile"
     NINE_CHRONICLES_K = "com.planetariumlabs.ninechroniclesmobilek"
+    NINE_CHRONICLES_WEB = "com.planetariumlabs.ninechroniclesweb"
 
 
 class Currency(Enum):
@@ -43,34 +44,46 @@ class Store(IntEnum):
 
     - **0: `TEST`**
 
-        This is store type to test. This store only works on debug mode.  
+        This is store type to test. This store only works on debug mode.
         When you request receipt validation with this type of store, validation process will be skipped.
 
     - **1: `APPLE` (Appstore)**
 
-        This is `production` apple appstore.  
+        This is `production` apple appstore.
         This type of store cannot verify receipt created from sandbox appstore.
 
     - **2: `GOOGLE` (Play store)**
 
-        This is `production` google play store.  
+        This is `production` google play store.
         This type of store cannot verify receipt created from sandbox play store.
+
+    - **3: `WEB` (Web payment)**
+
+        This is `production` web payment store.
+        This type of store validates receipts through external payment service API.
 
     - **91: `APPLE_TEST` (Sandbox appstore)**
 
-        This is `sandbox` apple appstore.  
+        This is `sandbox` apple appstore.
         This type of store cannot verify receipt created from production appstore.
 
     - **92: `GOOGLE_TEST` (Sandbox play store)**
 
-        This is `sandbox` google play store.  
+        This is `sandbox` google play store.
         This type of store cannot verify receipt created from production play store.
+
+    - **93: `WEB_TEST` (Test web payment)**
+
+        This is `test` web payment store.
+        This type of store only works on debug mode for testing web payment integration.
     """
     TEST = 0
     APPLE = 1
     GOOGLE = 2
+    WEB = 3
     APPLE_TEST = 91
     GOOGLE_TEST = 92
+    WEB_TEST = 93
 
 
 class ProductType(Enum):
@@ -101,28 +114,28 @@ class ReceiptStatus(IntEnum):
 
     - **1: `VALIDATION_REQUEST`**
 
-        The IAP service requests receipt validation to google/apple and waiting for response.  
+        The IAP service requests receipt validation to google/apple and waiting for response.
         If receipt status stuck on this status, that means no response received from google/apple.
 
     - **10: `VALID`**
 
-        Receipt validation succeed.  
+        Receipt validation succeed.
         The IAP service send message to create transaction. Please check transaction status to check.
 
     - **20: `REFUNDED_BY_ADMIN`**
 
-        Receipt has been refunded by administrator.  
-        This occurs due to lack of garage stock or server-side failure.  
+        Receipt has been refunded by administrator.
+        This occurs due to lack of garage stock or server-side failure.
         This status does not make any penalty to buyer.
 
     - **91: `INVALID`**
 
-        Receipt validation failed.  
+        Receipt validation failed.
         The IAP service will return exception and no transaction will be created.
 
     - **92: `REFUNDED_BY_BUYER`**
 
-        Receipt has been refunded by buyer.  
+        Receipt has been refunded by buyer.
         If a receipt is refunded by buyer, it can cause halting Mead.
 
     - **93: `PURCHASE_LIMIT_EXCEED`**
@@ -144,7 +157,7 @@ class ReceiptStatus(IntEnum):
 
     - **99: `UNKNOWN`**
 
-        An unhandled error case. This is reserve to catch all other errors.  
+        An unhandled error case. This is reserve to catch all other errors.
         If you see this status, please contact with administrator.
 
     """
@@ -185,7 +198,7 @@ class TxStatus(IntEnum):
 
     - **92: `INVALID`**
 
-        The transaction is invalid.  
+        The transaction is invalid.
         If you see this status, please contact to administrator.
 
     - **93: `NOT_FOUND`**
@@ -194,12 +207,12 @@ class TxStatus(IntEnum):
 
     - **94: `FAIL_TO_CREATE`**
 
-        Transaction creation is failed.  
+        Transaction creation is failed.
         If you see this status, please contact to administrator.
 
     - **99: `UNKNOWN`**
 
-        An unhandled error case. This is reserve to catch all other errors.  
+        An unhandled error case. This is reserve to catch all other errors.
         If you see this status, please contact with administrator.
 
     """

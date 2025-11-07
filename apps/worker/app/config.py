@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     google_package_dict: dict[PackageName, str] = {
         PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
         PackageName.NINE_CHRONICLES_K: "com.planetariumlabs.ninechroniclesmobilek",
+        PackageName.NINE_CHRONICLES_WEB: "com.planetariumlabs.ninechroniclesweb",
     }
 
     @property

@@ -65,6 +65,24 @@ class ApplePurchaseSchema(BaseSchema):
         return data
 
 
+class WebPurchaseSchema(BaseSchema):
+    orderId: str  # payment_intent id (pi_xxx)
+    productId: int  # metadata에서 추출
+    purchaseDate: datetime  # created timestamp
+    amount: int  # 센트 단위
+    currency: str
+    status: str  # succeeded, requires_payment_method, etc
+    paymentMethod: Optional[str] = None
+    metadata: Dict[str, str] = {}  # Stripe metadata
+    livemode: bool = False
+
+    @property
+    def json_data(self) -> dict:
+        data = self.model_dump()
+        data["purchaseDate"] = data["purchaseDate"].timestamp()
+        return data
+
+
 @dataclass
 class FreeReceiptSchema:
     sku: str
@@ -106,6 +124,8 @@ class SimpleReceiptSchema:
                 self.store = Store.APPLE
             elif "GooglePlay" in self.data.get("Store", ""):
                 self.store = Store.GOOGLE
+            elif "WebPayment" in self.data.get("Store", ""):
+                self.store = Store.WEB
             else:
                 self.store = Store.TEST
 
@@ -113,6 +133,9 @@ class SimpleReceiptSchema:
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
+            pass
+        elif self.store in (Store.WEB, Store.WEB_TEST):
+            # Web payment data is already in the correct format
             pass
         elif self.store == Store.TEST:
             # No further action

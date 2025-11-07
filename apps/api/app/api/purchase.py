@@ -34,6 +34,7 @@ from shared.utils.apple import get_jwt
 from shared.validator.apple import validate_apple
 from shared.validator.common import get_order_data
 from shared.validator.google import ack_google, validate_google
+from shared.validator.web import validate_web, validate_web_test
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import joinedload, with_loader_criteria
 from starlette.responses import JSONResponse
@@ -312,6 +313,21 @@ def request_product(
         #     .where(Product.active.is_(True), Product.apple_sku == product_id)
         # )
         pass
+    elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
+        # Validate package name for web payment - only NINE_CHRONICLES_WEB is allowed
+        if x_iap_packagename != PackageName.NINE_CHRONICLES_WEB:
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Invalid package name for web payment: {x_iap_packagename}. Only NINE_CHRONICLES_WEB is allowed."),
+            )
+
+        product = sess.scalar(
+            select(Product)
+            .options(joinedload(Product.fav_list))
+            .options(joinedload(Product.fungible_item_list))
+            .where(Product.active.is_(True), Product.id == product_id)
+        )
     elif receipt_data.store == Store.TEST:
         product = sess.scalar(
             select(Product)
@@ -336,7 +352,7 @@ def request_product(
     sess.commit()
     sess.refresh(receipt)
 
-    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST) and not product:
+    if receipt_data.store not in (Store.APPLE, Store.APPLE_TEST, Store.WEB, Store.WEB_TEST) and not product:
         receipt.status = ReceiptStatus.INVALID
         raise_error(
             sess,
@@ -423,6 +439,64 @@ def request_product(
                 ),
             )
         receipt.product_id = product.id
+    ## Web (Stripe)
+    elif receipt_data.store in (Store.WEB, Store.WEB_TEST):
+        payment_intent_id = order_id
+
+        # 상품이 없으면 에러
+        if not product:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Product not found: {product_id}"),
+            )
+
+        # Stripe 키 선택
+        stripe_key = (
+            config.stripe_test_secret_key
+            if receipt_data.store == Store.WEB_TEST
+            else config.stripe_secret_key
+        )
+
+        # 상품 가격 조회 (스토어 타입 무시하고 첫 번째 가격 사용)
+        price = sess.scalar(
+            select(Price)
+            .where(Price.product_id == product.id)
+            .limit(1)
+        )
+        if not price:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Price not found for product {product.id}"),
+            )
+
+        # Stripe 검증
+        success, msg, purchase = validate_web(
+            stripe_secret_key=stripe_key,
+            stripe_api_version=config.stripe_api_version,
+            payment_intent_id=payment_intent_id,
+            expected_product_id=int(product_id),  # int로 변환
+            expected_amount=float(price.price),  # Decimal을 float로 변환
+            db_product=product
+        )
+
+        if success:
+            # 영수증 데이터 업데이트
+            data = receipt_data.data.copy()
+            data.update(**purchase.json_data)
+            receipt.data = data
+            receipt.purchased_at = purchase.purchaseDate
+            receipt.product_id = product.id
+        else:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Stripe payment validation failed: {msg}"),
+            )
     ## Test
     elif receipt_data.store == Store.TEST:
         if config.stage == "mainnet":

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     cdn_host_map: dict[str, str] = {
         "com.planetariumlabs.ninechroniclesmobile": "http://localhost",
         "com.planetariumlabs.ninechroniclesmobilek": "http://localhost",
+        "com.planetariumlabs.ninechroniclesweb": "http://localhost",
     }
 
     backoffice_jwt_secret: str
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     apple_key_id: str
     apple_issuer_id: str
     apple_validation_url: str
+
+    # Stripe configuration (기존 web_payment_* 설정 대체)
+    stripe_secret_key: str
+    stripe_test_secret_key: str
+    stripe_api_version: str = "2025-09-30.clover"
 
     stage: str = "development"
     debug: bool = False
