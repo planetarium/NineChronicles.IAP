@@ -175,7 +175,7 @@ def upsert_mileage(
         mileage = get_mileage(sess, receipt.agent_addr)
     target_mileage = product.mileage or 0
     if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
-        target_mileage *= 5
+        target_mileage *= 2
     mileage.mileage += target_mileage
     receipt.mileage_change = (product.mileage or 0) - (product.mileage_price or 0)
     receipt.mileage_result = mileage.mileage
