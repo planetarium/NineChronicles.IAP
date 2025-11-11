@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import Mock, patch
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from shared.models.receipt import Receipt
 from shared.models.product import Product, Price
@@ -273,3 +273,280 @@ class TestAdminUserReceiptsEndpoints:
         for input_addr, expected in test_cases:
             result = normalize_address(input_addr)
             assert result == expected
+
+    def test_courage_pass_count_with_avatar(self, mock_session, sample_receipts):
+        """커리지패스 구매 숫자 조회 테스트 (avatar_address 제공)"""
+        # 커리지패스만 반환하도록 설정
+        courage_pass_receipts = [sample_receipts[0]]
+
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+        mock_order_by = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.options.return_value = mock_options
+        mock_options.all.return_value = courage_pass_receipts
+
+        # 쿼리 로직 테스트 (avatar_address 제공)
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+        avatar_address = "0xabcdef1234567890"
+
+        query = mock_session.query(Receipt).filter(
+            and_(
+                Receipt.agent_addr == agent_address,
+                func.timezone('UTC', Receipt.created_at) >= utc_start,
+                func.timezone('UTC', Receipt.created_at) < utc_end,
+            )
+        )
+        query = query.filter(Receipt.avatar_addr == avatar_address)
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # SKU 패턴 필터링
+        import re
+        sku_pattern = "couragepass\\d+premium"
+        filtered_receipts = []
+
+        for receipt in receipts:
+            if not receipt.product:
+                continue
+            product_sku = receipt.product.google_sku
+            if not product_sku:
+                continue
+            if re.search(sku_pattern, product_sku, re.IGNORECASE):
+                filtered_receipts.append(receipt)
+
+        # 결과 검증
+        assert len(filtered_receipts) == 1
+        assert filtered_receipts[0].product.google_sku == "couragepass1premium"
+
+    def test_courage_pass_count_without_avatar(self, mock_session, sample_receipts):
+        """커리지패스 구매 숫자 조회 테스트 (avatar_address 없음, agent 전체 합산)"""
+        # 같은 agent의 다른 avatar의 커리지패스 영수증 추가
+        receipt4 = Mock(spec=Receipt)
+        receipt4.order_id = "order_2024_03_04"
+        receipt4.agent_addr = "0x1234567890abcdef"
+        receipt4.avatar_addr = "0x1111111111111111"  # 다른 avatar
+        receipt4.purchased_at = datetime(2024, 3, 16, 10, 30, 0, tzinfo=timezone.utc)
+        receipt4.status = ReceiptStatus.VALID
+        receipt4.store = Store.GOOGLE
+        receipt4.product = Mock(spec=Product)
+        receipt4.product.id = 4
+        receipt4.product.google_sku = "couragepass2premium"
+        receipt4.product.name = "Courage Pass 2 Premium"
+
+        # 두 개의 커리지패스 영수증 반환 (다른 avatar)
+        courage_pass_receipts = [sample_receipts[0], receipt4]
+
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.options.return_value = mock_options
+        mock_options.all.return_value = courage_pass_receipts
+
+        # 쿼리 로직 테스트 (avatar_address 없음)
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+
+        query = mock_session.query(Receipt).filter(
+            and_(
+                Receipt.agent_addr == agent_address,
+                func.timezone('UTC', Receipt.created_at) >= utc_start,
+                func.timezone('UTC', Receipt.created_at) < utc_end,
+            )
+        )
+        # avatar_address 필터링 없음
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # SKU 패턴 필터링
+        import re
+        sku_pattern = "couragepass\\d+premium"
+        filtered_receipts = []
+
+        for receipt in receipts:
+            if not receipt.product:
+                continue
+            product_sku = receipt.product.google_sku
+            if not product_sku:
+                continue
+            if re.search(sku_pattern, product_sku, re.IGNORECASE):
+                filtered_receipts.append(receipt)
+
+        # 결과 검증 (두 개의 avatar에서 구매한 커리지패스 합산)
+        assert len(filtered_receipts) == 2
+
+    def test_courage_pass_count_no_purchases(self, mock_session):
+        """커리지패스 구매 숫자 조회 테스트 (구매 없음)"""
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.options.return_value = mock_options
+        mock_options.all.return_value = []
+
+        # 쿼리 로직 테스트
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+
+        query = mock_session.query(Receipt).filter(
+            and_(
+                Receipt.agent_addr == agent_address,
+                func.timezone('UTC', Receipt.created_at) >= utc_start,
+                func.timezone('UTC', Receipt.created_at) < utc_end,
+            )
+        )
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # SKU 패턴 필터링
+        import re
+        sku_pattern = "couragepass\\d+premium"
+        filtered_receipts = []
+
+        for receipt in receipts:
+            if not receipt.product:
+                continue
+            product_sku = receipt.product.google_sku
+            if not product_sku:
+                continue
+            if re.search(sku_pattern, product_sku, re.IGNORECASE):
+                filtered_receipts.append(receipt)
+
+        # 결과 검증
+        assert len(filtered_receipts) == 0
+
+    def test_courage_pass_count_multiple_avatars(self, mock_session, sample_receipts):
+        """커리지패스 구매 숫자 조회 테스트 (여러 avatar 합산)"""
+        # 같은 agent의 다른 avatar들의 커리지패스 영수증 추가
+        receipt4 = Mock(spec=Receipt)
+        receipt4.order_id = "order_2024_03_04"
+        receipt4.agent_addr = "0x1234567890abcdef"
+        receipt4.avatar_addr = "0x1111111111111111"
+        receipt4.purchased_at = datetime(2024, 3, 16, 10, 30, 0, tzinfo=timezone.utc)
+        receipt4.status = ReceiptStatus.VALID
+        receipt4.store = Store.GOOGLE
+        receipt4.product = Mock(spec=Product)
+        receipt4.product.id = 4
+        receipt4.product.google_sku = "couragepass2premium"
+        receipt4.product.name = "Courage Pass 2 Premium"
+
+        receipt5 = Mock(spec=Receipt)
+        receipt5.order_id = "order_2024_03_05"
+        receipt5.agent_addr = "0x1234567890abcdef"
+        receipt5.avatar_addr = "0x2222222222222222"
+        receipt5.purchased_at = datetime(2024, 3, 17, 10, 30, 0, tzinfo=timezone.utc)
+        receipt5.status = ReceiptStatus.VALID
+        receipt5.store = Store.GOOGLE
+        receipt5.product = Mock(spec=Product)
+        receipt5.product.id = 5
+        receipt5.product.google_sku = "couragepass3premium"
+        receipt5.product.name = "Courage Pass 3 Premium"
+
+        # 세 개의 커리지패스 영수증 반환 (세 개의 다른 avatar)
+        courage_pass_receipts = [sample_receipts[0], receipt4, receipt5]
+
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.options.return_value = mock_options
+        mock_options.all.return_value = courage_pass_receipts
+
+        # 쿼리 로직 테스트
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+
+        query = mock_session.query(Receipt).filter(
+            and_(
+                Receipt.agent_addr == agent_address,
+                func.timezone('UTC', Receipt.created_at) >= utc_start,
+                func.timezone('UTC', Receipt.created_at) < utc_end,
+            )
+        )
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # SKU 패턴 필터링
+        import re
+        sku_pattern = "couragepass\\d+premium"
+        filtered_receipts = []
+
+        for receipt in receipts:
+            if not receipt.product:
+                continue
+            product_sku = receipt.product.google_sku
+            if not product_sku:
+                continue
+            if re.search(sku_pattern, product_sku, re.IGNORECASE):
+                filtered_receipts.append(receipt)
+
+        # 결과 검증 (세 개의 avatar에서 구매한 커리지패스 합산)
+        assert len(filtered_receipts) == 3
