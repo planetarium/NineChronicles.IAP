@@ -127,12 +127,15 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
 
     claim_data = []
 
+    planet_id = PlanetID(receipt.planet_id)
+    multiplier = 2 if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1
+
     # Process fungible items
     logger.debug(f"Processing {len(product.fungible_item_list)} fungible items")
     for item in product.fungible_item_list:
         claim_data.append(
             FungibleAssetValue.from_raw_data(
-                ticker=item.fungible_item_id, decimal_places=0, amount=item.amount * 1
+                ticker=item.fungible_item_id, decimal_places=0, amount=item.amount * multiplier
             )
         )
 
@@ -143,7 +146,7 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
             FungibleAssetValue.from_raw_data(
                 ticker=fav.ticker,
                 decimal_places=fav.decimal_places,
-                amount=fav.amount * 1,
+                amount=fav.amount * multiplier,
             )
         )
 

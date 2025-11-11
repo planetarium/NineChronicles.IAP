@@ -36,10 +36,6 @@ def product_list(
     else:
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
 
-    # raise not found exception in thor network
-    if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
-        raise HTTPException(status_code=404, detail="available product not found")
-
     agent_addr = format_addr(agent_addr)
     all_category_list = (
         sess.scalars(
@@ -59,13 +55,6 @@ def product_list(
     category_schema_list = []
     purchase_history = get_purchase_history(sess, planet_id, agent_addr)
     for category in all_category_list:
-        # Do not show Mileage category for thor chain
-        if (
-            planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL)
-            and category.name == "Mileage"
-        ):
-            continue
-
         cat_schema = CategorySchema.model_validate(category)
         schema_dict = {}
         for product in category.product_list:
@@ -107,11 +96,11 @@ def product_list(
                 schema.path = schema.path.replace(".png", "_THOR.png")
                 schema.popup_path_key += "_THOR"
 
-                schema.mileage *= 5
+                schema.mileage *= 2
                 for item in schema.fungible_item_list:
-                    item.amount *= 5
+                    item.amount *= 2
                 for fav in schema.fav_list:
-                    fav.amount *= 5
+                    fav.amount *= 2
 
             schema_dict[product.id] = schema
 
