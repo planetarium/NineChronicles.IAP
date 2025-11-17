@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from shared.models.receipt import Receipt
 from shared.models.product import Product, Price
-from shared.enums import ReceiptStatus, Store
+from shared.enums import ReceiptStatus, Store, PlanetID
 
 
 class TestAdminUserReceiptsEndpoints:
@@ -550,3 +550,202 @@ class TestAdminUserReceiptsEndpoints:
 
         # 결과 검증 (세 개의 avatar에서 구매한 커리지패스 합산)
         assert len(filtered_receipts) == 3
+
+    def test_get_user_receipts_by_month_with_planet_id(self, mock_session, sample_receipts):
+        """planet_id 필터링 테스트"""
+        # ODIN planet_id를 가진 영수증만 반환
+        odin_receipts = [sample_receipts[0]]
+        odin_receipts[0].planet_id = PlanetID.ODIN.value
+
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+        mock_order_by = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = odin_receipts
+
+        # planet_id 필터링이 포함된 쿼리 테스트
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+        avatar_address = "0xabcdef1234567890"
+        planet_id = PlanetID.ODIN.value
+
+        # planet_id 필터링이 포함된 쿼리
+        filter_conditions = [
+            Receipt.agent_addr == agent_address,
+            func.timezone('UTC', Receipt.created_at) >= utc_start,
+            func.timezone('UTC', Receipt.created_at) < utc_end,
+            Receipt.avatar_addr == avatar_address,
+            Receipt.planet_id == planet_id
+        ]
+
+        query = mock_session.query(Receipt).filter(and_(*filter_conditions))
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.order_by(Receipt.created_at.desc())
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # 결과 검증
+        assert len(receipts) == 1
+        assert receipts[0].planet_id == PlanetID.ODIN.value
+
+    def test_get_user_receipts_by_month_without_planet_id(self, mock_session, sample_receipts):
+        """planet_id가 None일 때 필터링되지 않는지 테스트"""
+        # 여러 planet_id를 가진 영수증들
+        all_receipts = sample_receipts.copy()
+        all_receipts[0].planet_id = PlanetID.ODIN.value
+        all_receipts[1].planet_id = PlanetID.HEIMDALL.value
+        all_receipts[2].planet_id = PlanetID.ODIN.value
+
+        # Mock 쿼리 체인 설정
+        mock_query = Mock()
+        mock_filter = Mock()
+        mock_join1 = Mock()
+        mock_join2 = Mock()
+        mock_filter2 = Mock()
+        mock_options = Mock()
+        mock_order_by = Mock()
+
+        mock_session.query.return_value = mock_query
+        mock_query.filter.return_value = mock_filter
+        mock_filter.filter.return_value = mock_filter
+        mock_filter.join.return_value = mock_join1
+        mock_join1.join.return_value = mock_join2
+        mock_join2.filter.return_value = mock_filter2
+        mock_filter2.order_by.return_value = mock_order_by
+        mock_order_by.options.return_value = mock_options
+        mock_options.all.return_value = all_receipts
+
+        # planet_id 필터링 없이 쿼리 테스트
+        from sqlalchemy import and_, func
+
+        year = 2024
+        month = 3
+        utc_start = datetime(year, month, 1)
+        utc_end = datetime(year, month + 1, 1)
+
+        agent_address = "0x1234567890abcdef"
+        avatar_address = "0xabcdef1234567890"
+        planet_id = None
+
+        # planet_id 필터링이 없는 쿼리
+        filter_conditions = [
+            Receipt.agent_addr == agent_address,
+            func.timezone('UTC', Receipt.created_at) >= utc_start,
+            func.timezone('UTC', Receipt.created_at) < utc_end,
+            Receipt.avatar_addr == avatar_address,
+        ]
+
+        query = mock_session.query(Receipt).filter(and_(*filter_conditions))
+        query = query.join(Receipt.product).join(Price).filter(Price.price > 0)
+        query = query.order_by(Receipt.created_at.desc())
+        query = query.options(joinedload(Receipt.product))
+        receipts = query.all()
+
+        # 결과 검증 (모든 planet_id의 영수증이 반환됨)
+        assert len(receipts) == 3
+
+    def test_courage_pass_with_planet_id(self, mock_session, sample_receipts):
+        """커리지패스 구매 확인에 planet_id 필터링 테스트"""
+        # ODIN planet_id를 가진 커리지패스만 반환
+        odin_receipt = sample_receipts[0]
+        odin_receipt.planet_id = PlanetID.ODIN.value
+        courage_pass_receipts = [odin_receipt]
+
+        with patch.object(Receipt, 'get_user_receipts_by_month', return_value=courage_pass_receipts):
+            result_receipts = Receipt.get_user_receipts_by_month(
+                session=mock_session,
+                agent_addr="0x1234567890abcdef",
+                avatar_addr="0xabcdef1234567890",
+                year=2024,
+                month=3,
+                include_product=True,
+                only_paid_products=True,
+                sku_pattern="couragepass\\d+premium",
+                planet_id=PlanetID.ODIN.value
+            )
+
+            # 결과 검증
+            assert len(result_receipts) == 1
+            assert result_receipts[0].product.google_sku == "couragepass1premium"
+            # get_user_receipts_by_month가 planet_id 파라미터를 받았는지 확인
+            Receipt.get_user_receipts_by_month.assert_called_once()
+            call_kwargs = Receipt.get_user_receipts_by_month.call_args[1]
+            assert call_kwargs['planet_id'] == PlanetID.ODIN.value
+
+    def test_adventure_boss_pass_with_planet_id(self, mock_session, sample_receipts):
+        """어드벤쳐보스패스 구매 확인에 planet_id 필터링 테스트"""
+        # HEIMDALL planet_id를 가진 어드벤쳐보스패스만 반환
+        heimdall_receipt = sample_receipts[1]
+        heimdall_receipt.planet_id = PlanetID.HEIMDALL.value
+        adventure_boss_pass_receipts = [heimdall_receipt]
+
+        with patch.object(Receipt, 'get_user_receipts_by_month', return_value=adventure_boss_pass_receipts):
+            result_receipts = Receipt.get_user_receipts_by_month(
+                session=mock_session,
+                agent_addr="0x1234567890abcdef",
+                avatar_addr="0xabcdef1234567890",
+                year=2024,
+                month=3,
+                include_product=True,
+                only_paid_products=True,
+                sku_pattern="adventurebosspass\\d+premium",
+                planet_id=PlanetID.HEIMDALL.value
+            )
+
+            # 결과 검증
+            assert len(result_receipts) == 1
+            assert result_receipts[0].product.google_sku == "adventurebosspass1premium"
+            # get_user_receipts_by_month가 planet_id 파라미터를 받았는지 확인
+            Receipt.get_user_receipts_by_month.assert_called_once()
+            call_kwargs = Receipt.get_user_receipts_by_month.call_args[1]
+            assert call_kwargs['planet_id'] == PlanetID.HEIMDALL.value
+
+    def test_non_pass_purchase_with_planet_id(self, mock_session, sample_receipts):
+        """패스 제외 구매 확인에 planet_id 필터링 테스트"""
+        # ODIN planet_id를 가진 일반 상품만 반환
+        odin_receipt = sample_receipts[2]
+        odin_receipt.planet_id = PlanetID.ODIN.value
+        non_pass_receipts = [odin_receipt]
+
+        with patch.object(Receipt, 'get_user_receipts_by_month', return_value=non_pass_receipts):
+            result_receipts = Receipt.get_user_receipts_by_month(
+                session=mock_session,
+                agent_addr="0x1234567890abcdef",
+                avatar_addr="0xabcdef1234567890",
+                year=2024,
+                month=3,
+                include_product=True,
+                only_paid_products=True,
+                exclude_sku_patterns=[
+                    "adventurebosspass\\d+premium",
+                    "couragepass\\d+premium"
+                ],
+                planet_id=PlanetID.ODIN.value
+            )
+
+            # 결과 검증
+            assert len(result_receipts) == 1
+            assert result_receipts[0].product.google_sku == "regular_item_1"
+            # get_user_receipts_by_month가 planet_id 파라미터를 받았는지 확인
+            Receipt.get_user_receipts_by_month.assert_called_once()
+            call_kwargs = Receipt.get_user_receipts_by_month.call_args[1]
+            assert call_kwargs['planet_id'] == PlanetID.ODIN.value
