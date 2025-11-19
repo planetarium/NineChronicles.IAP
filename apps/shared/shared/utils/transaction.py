@@ -65,10 +65,10 @@ def get_genesis_block_hash(planet_id: PlanetID) -> bytes:
         ),
         # FIXME: Set to right genesis hash
         PlanetID.THOR: bytes.fromhex(
-            "bde462fd59de5ccba8495ebb163b124bf77ddc82cfc8b2f9fb57c00fc6e133b7"
+            "7eacf897e54eb4ba5e1b99050e77aaa74d514b98b0eaab2eee25189e8c801228"
         ),
         PlanetID.THOR_INTERNAL: bytes.fromhex(
-            "bde462fd59de5ccba8495ebb163b124bf77ddc82cfc8b2f9fb57c00fc6e133b7"
+            "7eacf897e54eb4ba5e1b99050e77aaa74d514b98b0eaab2eee25189e8c801228"
         ),
     }
 
