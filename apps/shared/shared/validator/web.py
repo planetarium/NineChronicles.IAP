@@ -10,7 +10,7 @@ def validate_web(
     stripe_api_version: str,
     payment_intent_id: str,
     expected_product_id: str,
-    expected_amount: float,
+    expected_amount_cents: int,
     db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:
     """
@@ -21,7 +21,7 @@ def validate_web(
         stripe_api_version: Stripe API version
         payment_intent_id: Payment Intent ID (pi_xxx)
         expected_product_id: 예상 상품 ID
-        expected_amount: 예상 금액 (달러 단위)
+        expected_amount_cents: 예상 금액 (센트 단위)
         db_product: Product 모델 인스턴스
 
     Returns:
@@ -48,7 +48,6 @@ def validate_web(
 
         # 3. 금액 검증 (센트 단위로 비교)
         stripe_amount = payment_intent.amount
-        expected_amount_cents = int(expected_amount * 100)
 
         if stripe_amount != expected_amount_cents:
             return False, f"Amount mismatch: expected {expected_amount_cents}, got {stripe_amount}", None
@@ -83,7 +82,7 @@ def validate_web_test(
     stripe_api_version: str,
     payment_intent_id: str,
     expected_product_id: str,
-    expected_amount: float,
+    expected_amount_cents: int,
     db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:
     """
@@ -94,6 +93,6 @@ def validate_web_test(
         stripe_api_version,
         payment_intent_id,
         expected_product_id,
-        expected_amount,
+        expected_amount_cents,
         db_product
     )

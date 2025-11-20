@@ -103,7 +103,7 @@ class TestWebPaymentAPI:
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
             expected_product_id="320",
-            expected_amount=12.99,
+            expected_amount_cents=1299,  # $12.99 in cents
             db_product=Mock()
         )
 
@@ -135,7 +135,7 @@ class TestWebPaymentAPI:
             stripe_api_version="2025-09-30.clover",
             payment_intent_id="pi_test123",
             expected_product_id="320",
-            expected_amount=12.99,
+            expected_amount_cents=1299,  # $12.99 in cents
             db_product=Mock()
         )
 

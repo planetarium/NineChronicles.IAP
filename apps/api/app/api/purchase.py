@@ -473,13 +473,16 @@ def request_product(
                 ValueError(f"Price not found for product {product.id}"),
             )
 
+        # Decimal을 직접 센트 단위로 변환 (정밀도 문제 방지)
+        expected_amount_cents = int(price.price * 100)
+
         # Stripe 검증
         success, msg, purchase = validate_web(
             stripe_secret_key=stripe_key,
             stripe_api_version=config.stripe_api_version,
             payment_intent_id=payment_intent_id,
             expected_product_id=int(product_id),  # int로 변환
-            expected_amount=float(price.price),  # Decimal을 float로 변환
+            expected_amount_cents=expected_amount_cents,
             db_product=product
         )
 
