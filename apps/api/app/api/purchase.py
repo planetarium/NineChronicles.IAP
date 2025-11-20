@@ -571,7 +571,7 @@ def request_product(
         ]
         claim_list.extend([
             {"ticker": x.ticker,
-             "amount": x.amount * (2 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
+             "amount": floor(x.amount * (2 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1)),
              "decimal_places": x.decimal_places}
             for x in product.fav_list
         ])
