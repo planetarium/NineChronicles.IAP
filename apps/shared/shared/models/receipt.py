@@ -98,7 +98,8 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         include_product: bool = True,
         only_paid_products: bool = True,
         sku_pattern: Optional[str] = None,
-        exclude_sku_patterns: Optional[List[str]] = None
+        exclude_sku_patterns: Optional[List[str]] = None,
+        planet_id: Optional[bytes] = None
     ) -> List["Receipt"]:
         """
         특정 유저의 특정 월 구매 영수증 목록을 조회합니다.
@@ -115,6 +116,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             only_paid_products: 가격이 0보다 큰 상품만 필터링할지 여부 (기본값: True)
             sku_pattern: 포함할 google_sku 패턴 (정규표현식, 예: "adventurebosspass\\d+premium")
             exclude_sku_patterns: 제외할 google_sku 패턴 리스트 (정규표현식 리스트)
+            planet_id: 행성 ID로 필터링 (옵셔널)
 
         Returns:
             List[Receipt]: 해당 월에 해당 유저가 구매한 영수증 목록 (product 정보 포함)
@@ -140,6 +142,10 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         # avatar_addr이 제공되면 필터링 조건에 추가
         if avatar_addr is not None:
             filter_conditions.append(cls.avatar_addr == avatar_addr)
+
+        # planet_id가 제공되면 필터링 조건에 추가
+        if planet_id is not None:
+            filter_conditions.append(cls.planet_id == planet_id)
 
         query = session.query(cls).filter(and_(*filter_conditions))
 

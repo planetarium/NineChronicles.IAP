@@ -768,6 +768,7 @@ def check_courage_pass_purchases(
     avatar_address: str = Query(..., description="9c avatar 주소"),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
     """
@@ -800,7 +801,8 @@ def check_courage_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium"
+        sku_pattern="couragepass\\d+premium",
+        planet_id=planet_id
     )
 
     courage_pass_details = []
@@ -831,6 +833,7 @@ def check_courage_pass_count(
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     avatar_address: Optional[str] = Query(None, description="9c avatar 주소 (옵셔널)"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
     """
@@ -867,7 +870,8 @@ def check_courage_pass_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium"
+        sku_pattern="couragepass\\d+premium",
+        planet_id=planet_id
     )
 
     return CouragePassCountResponse(count=len(courage_pass_receipts))
@@ -879,6 +883,7 @@ def check_adventure_boss_pass_purchases(
     avatar_address: str = Query(..., description="9c avatar 주소"),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
     """
@@ -911,7 +916,8 @@ def check_adventure_boss_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="adventurebosspass\\d+premium"
+        sku_pattern="adventurebosspass\\d+premium",
+        planet_id=planet_id
     )
 
     adventure_boss_pass_details = []
@@ -943,6 +949,7 @@ def check_non_pass_purchase_amount(
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
         amount_threshold: Decimal = Query(Decimal("100.0"), description="금액 임계값 (기본값: 100.0)"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
     """
@@ -979,7 +986,8 @@ def check_non_pass_purchase_amount(
         exclude_sku_patterns=[
             "adventurebosspass\\d+premium",
             "couragepass\\d+premium"
-        ]
+        ],
+        planet_id=planet_id
     )
 
     # 총 금액 계산
@@ -1027,6 +1035,7 @@ def check_non_pass_purchase_count(
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     count_threshold: int = Query(1, ge=1, description="구매 건수 임계값 (기본값: 1)"),
+    planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
     """
@@ -1063,7 +1072,8 @@ def check_non_pass_purchase_count(
         exclude_sku_patterns=[
             "adventurebosspass\\d+premium",
             "couragepass\\d+premium"
-        ]
+        ],
+        planet_id=planet_id
     )
 
     # 총 금액 계산
