@@ -91,6 +91,10 @@ query balanceQuery(
       address: $address,
       currency: {ticker: "Item_NT_600202", decimalPlaces: 0, minters: [], }
     ) { currency {ticker} quantity }
+    SapphireDust: balance (
+      address: $address,
+      currency: {ticker: "Item_NT_600206", decimalPlaces: 0, minters: [], }
+    ) { currency {ticker} quantity }
     SilverDust: balance (
       address: $address,
       currency: {ticker: "Item_NT_800201", decimalPlaces: 0, minters: [], }
