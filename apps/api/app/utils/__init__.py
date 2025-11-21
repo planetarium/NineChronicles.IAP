@@ -102,11 +102,10 @@ def get_purchase_count(
         stmt = stmt.filter(Receipt.avatar_addr == avatar_addr)
 
     start = None
+    kst_now = datetime.now(timezone(timedelta(hours=9)))
     if daily_limit:
-        kst_now = datetime.now(timezone(timedelta(hours=9)))
         start = kst_now.date()
     elif weekly_limit:
-        kst_now = datetime.now(timezone(timedelta(hours=9)))
         start = (
             kst_now
             - timedelta(
@@ -114,7 +113,7 @@ def get_purchase_count(
             )
         ).date()
     if start:
-        stmt = stmt.filter(cast(Receipt.purchased_at, Date) >= start)
+        stmt = stmt.filter(cast(func.timezone('Asia/Seoul', Receipt.purchased_at), Date) >= start)
     purchase_count = stmt.scalar()
     logger.debug(
         f"Agent {agent_addr} purchased product {product_id} {purchase_count} times in {'today' if daily_limit else 'this week'} from {start or 'Anytime'}"
