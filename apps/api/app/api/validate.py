@@ -35,7 +35,7 @@ def validate_google(receipt: Receipt) -> ReceiptDetailSchema:
     return ReceiptDetailSchema(store=receipt.store, valid=True, id=receipt.receipt_id)
 
 
-def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
+def validate_web_payment(receipt: Receipt, sess) -> ReceiptDetailSchema:
     # Product must be found for price validation
     product = sess.scalar(
         select(Product)
@@ -69,12 +69,15 @@ def validate_web_payment(receipt: Receipt) -> ReceiptDetailSchema:
         else config.stripe_secret_key
     )
 
+    # Decimal을 직접 센트 단위로 변환 (정밀도 문제 방지)
+    expected_amount_cents = int(price.price * 100)
+
     success, msg, purchase = validate_web(
         stripe_secret_key=stripe_key,
         stripe_api_version=config.stripe_api_version,
         payment_intent_id=receipt.order_id,
         expected_product_id=int(receipt.data.get("productId")),  # int로 변환
-        expected_amount=float(price.price),  # Decimal을 float로 변환
+        expected_amount_cents=expected_amount_cents,
         db_product=product
     )
 
@@ -102,7 +105,7 @@ def validate_recipe(receipt: ReceiptSchema, sess=Depends(session)):
         case Store.APPLE | Store.APPLE_TEST:
             resp = validate_apple(receipt_data.receipt_data)
         case Store.WEB | Store.WEB_TEST:
-            resp = validate_web_payment(receipt_data)
+            resp = validate_web_payment(receipt_data, sess)
         case Store.TEST | _:
             resp = requests.Response()
             resp.status_code = 200
