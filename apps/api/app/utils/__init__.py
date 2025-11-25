@@ -29,7 +29,7 @@ def get_purchase_history(
     stmt = select(
         Receipt.product_id,
         count(Receipt.id).label("purchase_count"),
-        cast(Receipt.purchased_at, Date).label("date"),
+        cast(func.timezone('Asia/Seoul', Receipt.purchased_at), Date).label("date"),
     ).where(
         Receipt.planet_id == planet_id,
         Receipt.status.in_(
