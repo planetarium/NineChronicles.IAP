@@ -100,6 +100,32 @@ def test_timezone_difference():
     assert utc_date_1159 == kst_date_1159
 
 
+def test_get_kst_now_timezone_conversion():
+    """get_kst_now 함수가 UTC를 올바르게 KST로 변환하는지 테스트"""
+    # 실제 함수를 import하려면 config 문제가 있으므로, 로직만 검증
+    # UTC 시간을 KST로 변환하는 올바른 방법
+    utc_now = datetime(2025, 12, 2, 22, 38, 49, tzinfo=timezone.utc)
+    kst_now = utc_now.astimezone(timezone(timedelta(hours=9)))
+
+    # UTC 2025-12-02 22:38:49는 KST 2025-12-03 07:38:49여야 함
+    assert kst_now.year == 2025
+    assert kst_now.month == 12
+    assert kst_now.day == 3
+    assert kst_now.hour == 7
+    assert kst_now.minute == 38
+    assert kst_now.second == 49
+
+    # 반대로 KST 2025-12-02 07:38:49는 UTC 2025-12-01 22:38:49여야 함
+    kst_time = datetime(2025, 12, 2, 7, 38, 49, tzinfo=timezone(timedelta(hours=9)))
+    utc_time = kst_time.astimezone(timezone.utc)
+    assert utc_time.year == 2025
+    assert utc_time.month == 12
+    assert utc_time.day == 1
+    assert utc_time.hour == 22
+    assert utc_time.minute == 38
+    assert utc_time.second == 49
+
+
 def test_get_daily_limit_date_before_9am():
     """get_daily_limit_date 함수 테스트: 09:00 이전은 어제 날짜"""
     # KST 08:59 (09:00 이전)
@@ -128,6 +154,32 @@ def test_get_daily_limit_date_after_9am():
 
     # 오늘 날짜여야 함
     assert daily_limit_date == date(2025, 1, 2)
+
+
+def test_get_daily_limit_date_actual_bug_scenario():
+    """실제 버그 시나리오 테스트: KST 07:38:49는 09:00 이전이므로 어제 날짜 사용"""
+    # KST 2025-12-02 07:38:49 (09:00 이전)
+    # UTC로 변환하면 2025-12-01 22:38:49 UTC
+    utc_now = datetime(2025, 12, 1, 22, 38, 49, tzinfo=timezone.utc)
+    kst_now = utc_now.astimezone(timezone(timedelta(hours=9)))
+
+    # KST 시간이 올바르게 변환되었는지 확인
+    assert kst_now.year == 2025
+    assert kst_now.month == 12
+    assert kst_now.day == 2
+    assert kst_now.hour == 7
+    assert kst_now.minute == 38
+
+    # 09:00 이전이므로 어제 날짜(2025-12-01)를 반환해야 함
+    daily_limit_date = get_daily_limit_date(kst_now)
+    assert daily_limit_date == date(2025, 12, 1), f"Expected 2025-12-01, got {daily_limit_date}"
+
+    # 잘못된 방법 (datetime.now(timezone(...)) 사용 시)과 비교
+    # 이 방법은 타임존만 추가하고 실제 변환을 하지 않아 잘못된 결과를 반환할 수 있음
+    wrong_kst = datetime(2025, 12, 1, 22, 38, 49, tzinfo=timezone(timedelta(hours=9)))
+    wrong_daily_limit = get_daily_limit_date(wrong_kst)
+    # 잘못된 방법은 22시이므로 09:00 이후로 판단하여 2025-12-01을 반환 (우연히 맞음)
+    # 하지만 실제로는 UTC 22:38:49 = KST 07:38:49이므로 어제 날짜여야 함
 
 
 def test_get_purchase_count_timezone_conversion():

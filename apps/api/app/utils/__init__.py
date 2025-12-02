@@ -19,6 +19,19 @@ from app.config import config
 logger = structlog.get_logger(__name__)
 
 
+def get_kst_now() -> datetime:
+    """
+    Get current time in KST timezone.
+
+    This function correctly converts UTC time to KST by using astimezone(),
+    which properly handles timezone conversion.
+
+    :return: Current datetime in KST timezone
+    """
+    utc_now = datetime.now(timezone.utc)
+    return utc_now.astimezone(timezone(timedelta(hours=9)))
+
+
 def get_daily_limit_date(kst_now: datetime) -> datetime.date:
     """
     Get the daily limit date based on KST 09:00 reset time.
@@ -64,7 +77,7 @@ def get_purchase_history(
     receipt_list = sess.execute(stmt).fetchall()
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
-    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    kst_now = get_kst_now()
     daily_limit = get_daily_limit_date(kst_now)
     # Weekday 0 == Sunday
     # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
@@ -119,7 +132,7 @@ def get_purchase_count(
         stmt = stmt.filter(Receipt.avatar_addr == avatar_addr)
 
     start = None
-    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    kst_now = get_kst_now()
     if daily_limit:
         start = get_daily_limit_date(kst_now)
     elif weekly_limit:
