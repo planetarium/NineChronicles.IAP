@@ -19,6 +19,24 @@ from app.config import config
 logger = structlog.get_logger(__name__)
 
 
+def get_daily_limit_date(kst_now: datetime) -> datetime.date:
+    """
+    Get the daily limit date based on KST 09:00 reset time.
+
+    If current time is before 09:00 KST, use yesterday's date.
+    If current time is 09:00 KST or later, use today's date.
+
+    :param kst_now: Current datetime in KST timezone
+    :return: Date to use for daily limit calculation
+    """
+    if kst_now.hour < 9:
+        # Before 09:00 KST, use yesterday
+        return (kst_now - timedelta(days=1)).date()
+    else:
+        # 09:00 KST or later, use today
+        return kst_now.date()
+
+
 def get_purchase_history(
     sess,
     planet_id: PlanetID,
@@ -47,12 +65,11 @@ def get_purchase_history(
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
     kst_now = datetime.now(timezone(timedelta(hours=9)))
-    daily_limit = kst_now.date()
+    daily_limit = get_daily_limit_date(kst_now)
     # Weekday 0 == Sunday
-    weekly_limit = (
-        kst_now
-        - timedelta(days=(kst_now.date().isoweekday()) % 7)
-    ).date()
+    # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
+    base_date = get_daily_limit_date(kst_now)
+    weekly_limit = base_date - timedelta(days=(base_date.isoweekday()) % 7)
     for receipt in receipt_list:
         if receipt.date >= daily_limit:
             receipt_dict["daily"][receipt.product_id] += receipt.purchase_count
@@ -104,14 +121,11 @@ def get_purchase_count(
     start = None
     kst_now = datetime.now(timezone(timedelta(hours=9)))
     if daily_limit:
-        start = kst_now.date()
+        start = get_daily_limit_date(kst_now)
     elif weekly_limit:
-        start = (
-            kst_now
-            - timedelta(
-                days=(kst_now.date().isoweekday()) % 7
-            )
-        ).date()
+        # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
+        base_date = get_daily_limit_date(kst_now)
+        start = base_date - timedelta(days=(base_date.isoweekday()) % 7)
     if start:
         stmt = stmt.filter(cast(func.timezone('Asia/Seoul', Receipt.purchased_at), Date) >= start)
     purchase_count = stmt.scalar()
