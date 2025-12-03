@@ -352,3 +352,29 @@ def test_get_purchase_history_boundary_utc_midnight():
     assert kst_purchased_date == daily_limit  # 둘 다 2025-01-02
     # UTC 날짜와도 일치 (같은 날)
     assert utc_purchased_at.date() == daily_limit  # 둘 다 2025-01-02
+
+
+def test_get_purchase_history_early_morning_purchase():
+    """실제 버그 시나리오: 새벽 구매는 어제 구매로 간주되어야 함"""
+    # 시나리오:
+    # - 영수증 구매 시간: 2025-12-02 00:24:47 +0900 (KST, 09:00 이전)
+    # - 현재 시간: 2025-12-02 09:05:06 (KST, 09:00 이후)
+    # - 기대: 영수증은 어제(2025-12-01) 구매로 간주되어야 함
+
+    # 영수증 구매 시간 (09:00 이전)
+    purchased_at_kst = datetime(2025, 12, 2, 0, 24, 47, tzinfo=timezone(timedelta(hours=9)))
+    receipt_daily_limit = get_daily_limit_date(purchased_at_kst)  # 2025-12-01 (어제)
+
+    # 현재 시간 (09:00 이후)
+    current_kst = datetime(2025, 12, 2, 9, 5, 6, tzinfo=timezone(timedelta(hours=9)))
+    current_daily_limit = get_daily_limit_date(current_kst)  # 2025-12-02 (오늘)
+
+    # 영수증의 일일 제한 날짜와 현재 일일 제한 날짜가 다르므로 카운트되지 않아야 함
+    assert receipt_daily_limit != current_daily_limit  # 2025-12-01 != 2025-12-02
+    assert receipt_daily_limit == date(2025, 12, 1)
+    assert current_daily_limit == date(2025, 12, 2)
+
+    # 반대로, 09:00 이후에 구매한 영수증은 오늘 구매로 간주되어야 함
+    purchased_at_kst_after_9 = datetime(2025, 12, 2, 10, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    receipt_daily_limit_after_9 = get_daily_limit_date(purchased_at_kst_after_9)  # 2025-12-02 (오늘)
+    assert receipt_daily_limit_after_9 == current_daily_limit  # 2025-12-02 == 2025-12-02
