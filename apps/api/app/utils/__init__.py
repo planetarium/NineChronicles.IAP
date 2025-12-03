@@ -19,6 +19,37 @@ from app.config import config
 logger = structlog.get_logger(__name__)
 
 
+def get_kst_now() -> datetime:
+    """
+    Get current time in KST timezone.
+
+    This function correctly converts UTC time to KST by using astimezone(),
+    which properly handles timezone conversion.
+
+    :return: Current datetime in KST timezone
+    """
+    utc_now = datetime.now(timezone.utc)
+    return utc_now.astimezone(timezone(timedelta(hours=9)))
+
+
+def get_daily_limit_date(kst_now: datetime) -> datetime.date:
+    """
+    Get the daily limit date based on KST 09:00 reset time.
+
+    If current time is before 09:00 KST, use yesterday's date.
+    If current time is 09:00 KST or later, use today's date.
+
+    :param kst_now: Current datetime in KST timezone
+    :return: Date to use for daily limit calculation
+    """
+    if kst_now.hour < 9:
+        # Before 09:00 KST, use yesterday
+        return (kst_now - timedelta(days=1)).date()
+    else:
+        # 09:00 KST or later, use today
+        return kst_now.date()
+
+
 def get_purchase_history(
     sess,
     planet_id: PlanetID,
@@ -26,15 +57,17 @@ def get_purchase_history(
     product: Optional[Product] = None,
     use_avatar: bool = False,
 ) -> defaultdict:
+    # Get all receipts with purchased_at datetime (not just date)
     stmt = select(
         Receipt.product_id,
-        count(Receipt.id).label("purchase_count"),
-        cast(Receipt.purchased_at, Date).label("date"),
+        Receipt.id,
+        func.timezone('Asia/Seoul', Receipt.purchased_at).label("purchased_at_kst"),
     ).where(
         Receipt.planet_id == planet_id,
         Receipt.status.in_(
             (ReceiptStatus.INIT, ReceiptStatus.VALIDATION_REQUEST, ReceiptStatus.VALID)
         ),
+        Receipt.purchased_at.isnot(None),
     )
     if product is not None:
         stmt = stmt.where(Receipt.product_id == product.id)
@@ -42,23 +75,40 @@ def get_purchase_history(
         stmt = stmt.where(Receipt.avatar_addr == address)
     else:
         stmt = stmt.where(Receipt.agent_addr == address)
-    stmt = stmt.group_by("date", Receipt.product_id)
     receipt_list = sess.execute(stmt).fetchall()
 
     receipt_dict = defaultdict(lambda: defaultdict(int))
-    kst_now = datetime.now(timezone(timedelta(hours=9)))
-    daily_limit = kst_now.date()
+    kst_now = get_kst_now()
+    current_daily_limit = get_daily_limit_date(kst_now)
     # Weekday 0 == Sunday
-    weekly_limit = (
-        kst_now
-        - timedelta(days=(kst_now.date().isoweekday()) % 7)
-    ).date()
+    # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
+    base_date = get_daily_limit_date(kst_now)
+    current_weekly_limit = base_date - timedelta(days=(base_date.isoweekday()) % 7)
+
     for receipt in receipt_list:
-        if receipt.date >= daily_limit:
-            receipt_dict["daily"][receipt.product_id] += receipt.purchase_count
-        if receipt.date >= weekly_limit:
-            receipt_dict["weekly"][receipt.product_id] += receipt.purchase_count
-        receipt_dict["account"][receipt.product_id] += receipt.purchase_count
+        # Get the purchase date based on the receipt's purchase time (KST 09:00 rule)
+        if receipt.purchased_at_kst:
+            # func.timezone returns a datetime object, ensure it's timezone-aware
+            purchased_at_kst = receipt.purchased_at_kst
+            # If it's not timezone-aware, assume it's already in KST from the timezone function
+            if purchased_at_kst.tzinfo is None:
+                # If somehow timezone info is missing, add KST timezone
+                purchased_at_kst = purchased_at_kst.replace(tzinfo=timezone(timedelta(hours=9)))
+
+            # Calculate daily limit date based on the receipt's purchase time
+            receipt_daily_limit_date = get_daily_limit_date(purchased_at_kst)
+
+            # Only count if the receipt's daily limit date matches current daily limit date
+            if receipt_daily_limit_date == current_daily_limit:
+                receipt_dict["daily"][receipt.product_id] += 1
+
+            # For weekly limit, calculate based on receipt's purchase time (KST 09:00 rule)
+            receipt_weekly_limit_date = receipt_daily_limit_date - timedelta(days=(receipt_daily_limit_date.isoweekday()) % 7)
+            if receipt_weekly_limit_date == current_weekly_limit:
+                receipt_dict["weekly"][receipt.product_id] += 1
+
+            # Account limit: always count
+            receipt_dict["account"][receipt.product_id] += 1
 
     return receipt_dict
 
@@ -102,16 +152,13 @@ def get_purchase_count(
         stmt = stmt.filter(Receipt.avatar_addr == avatar_addr)
 
     start = None
-    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    kst_now = get_kst_now()
     if daily_limit:
-        start = kst_now.date()
+        start = get_daily_limit_date(kst_now)
     elif weekly_limit:
-        start = (
-            kst_now
-            - timedelta(
-                days=(kst_now.date().isoweekday()) % 7
-            )
-        ).date()
+        # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
+        base_date = get_daily_limit_date(kst_now)
+        start = base_date - timedelta(days=(base_date.isoweekday()) % 7)
     if start:
         stmt = stmt.filter(cast(func.timezone('Asia/Seoul', Receipt.purchased_at), Date) >= start)
     purchase_count = stmt.scalar()
