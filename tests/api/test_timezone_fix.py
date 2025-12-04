@@ -378,3 +378,87 @@ def test_get_purchase_history_early_morning_purchase():
     purchased_at_kst_after_9 = datetime(2025, 12, 2, 10, 0, 0, tzinfo=timezone(timedelta(hours=9)))
     receipt_daily_limit_after_9 = get_daily_limit_date(purchased_at_kst_after_9)  # 2025-12-02 (오늘)
     assert receipt_daily_limit_after_9 == current_daily_limit  # 2025-12-02 == 2025-12-02
+
+
+def test_get_purchase_count_early_morning_purchase_bug(session):
+    """
+    실제 버그 시나리오 테스트:
+    - 2025-12-04 01:20:18.500 +0900에 구매
+    - 2025-12-04 21:10:28.921 +0900에 요청이 들어왔을 때 일일 구매 제한이 걸리면 안 됨
+
+    01:20에 구매한 건은 일일 제한 날짜가 2025-12-03 (01:20 < 09:00)
+    21:10에 요청이 들어왔을 때 일일 제한 날짜는 2025-12-04 (21:10 >= 09:00)
+    따라서 01:20에 구매한 건은 카운트되지 않아야 함
+    """
+    # Import here to avoid circular imports
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'apps', 'api'))
+    from app.utils import get_purchase_count, get_kst_now
+    from shared.models.product import Product
+    from shared.enums import ProductType, ReceiptStatus
+    from shared.models.base import Base
+
+    # Create tables
+    Base.metadata.create_all(bind=session.bind)
+
+    # Create test product
+    product = Product(
+        name="Test Product",
+        google_sku="test_sku",
+        product_type=ProductType.IAP,
+        active=True,
+        daily_limit=1,
+    )
+    session.add(product)
+    session.commit()
+    session.refresh(product)
+
+    # Create receipt purchased at 01:20:18.500 +0900 (2025-12-04)
+    # This should be counted as 2025-12-03 purchase (before 09:00)
+    purchased_at_utc = datetime(2025, 12, 3, 16, 20, 18, 500000, tzinfo=timezone.utc)  # UTC
+    purchased_at_kst = purchased_at_utc.astimezone(timezone(timedelta(hours=9)))  # KST: 2025-12-04 01:20:18.500
+
+    # Verify the purchase time
+    assert purchased_at_kst.date() == date(2025, 12, 4)
+    assert purchased_at_kst.hour == 1
+    assert purchased_at_kst.minute == 20
+
+    # Verify daily limit date for this purchase
+    receipt_daily_limit = get_daily_limit_date(purchased_at_kst)
+    assert receipt_daily_limit == date(2025, 12, 3)  # Should be yesterday (before 09:00)
+
+    receipt = Receipt(
+        product_id=product.id,
+        planet_id=PlanetID.ODIN,
+        agent_addr="0x1234567890abcdef",
+        status=ReceiptStatus.VALID,
+        purchased_at=purchased_at_utc,
+    )
+    session.add(receipt)
+    session.commit()
+    session.refresh(receipt)
+
+    # Mock current time to 2025-12-04 21:10:28.921 +0900
+    current_time_kst = datetime(2025, 12, 4, 21, 10, 28, 921000, tzinfo=timezone(timedelta(hours=9)))
+    current_daily_limit = get_daily_limit_date(current_time_kst)
+    assert current_daily_limit == date(2025, 12, 4)  # Should be today (after 09:00)
+
+    # Mock get_kst_now to return the current time
+    with patch('app.utils.get_kst_now', return_value=current_time_kst):
+        # Get purchase count - should be 0 because the purchase was made before 09:00
+        # and its daily limit date (2025-12-03) doesn't match current daily limit date (2025-12-04)
+        purchase_count = get_purchase_count(
+            session,
+            product.id,
+            planet_id=PlanetID.ODIN,
+            agent_addr="0x1234567890abcdef",
+            daily_limit=True,
+        )
+
+        # Should be 0, not 1, because the purchase was made before 09:00
+        # and should be counted as yesterday's purchase
+        assert purchase_count == 0, f"Expected 0, got {purchase_count}. Purchase at 01:20 should not be counted in today's limit (after 09:00)"
+
+    # Clean up
+    session.delete(receipt)
+    session.delete(product)
+    session.commit()
