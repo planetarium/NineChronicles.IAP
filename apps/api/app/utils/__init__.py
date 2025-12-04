@@ -11,7 +11,7 @@ from shared.models.mileage import Mileage
 from shared.models.product import Product
 from shared.models.receipt import Receipt
 from shared.utils.address import format_addr
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.sql.functions import count
 
 from app.config import config
@@ -133,39 +133,69 @@ def get_purchase_count(
     :param weekly_limit: purchase history limit in week. Get the first weekday(Sunday) of this week
     :return:
     """
-    stmt = sess.query(
-        func.count(Receipt.id).filter(
-            Receipt.product_id == product_id,
-            Receipt.planet_id == planet_id,
-            Receipt.status.in_(
-                (
-                    ReceiptStatus.INIT,
-                    ReceiptStatus.VALIDATION_REQUEST,
-                    ReceiptStatus.VALID,
-                )
-            ),
-        )
+    stmt = sess.query(Receipt).filter(
+        Receipt.product_id == product_id,
+        Receipt.planet_id == planet_id,
+        Receipt.status.in_(
+            (
+                ReceiptStatus.INIT,
+                ReceiptStatus.VALIDATION_REQUEST,
+                ReceiptStatus.VALID,
+            )
+        ),
+        Receipt.purchased_at.isnot(None),
     )
     if agent_addr:
         stmt = stmt.filter(Receipt.agent_addr == agent_addr)
     if avatar_addr:
         stmt = stmt.filter(Receipt.avatar_addr == avatar_addr)
 
-    start = None
+    # Get all receipts and filter in Python based on purchase time's daily limit date
+    receipt_list = stmt.all()
+
     kst_now = get_kst_now()
+    current_daily_limit = None
+    current_weekly_limit = None
+
     if daily_limit:
-        start = get_daily_limit_date(kst_now)
+        current_daily_limit = get_daily_limit_date(kst_now)
     elif weekly_limit:
         # Use the same date as daily_limit (KST 09:00 based) for weekly limit calculation
         base_date = get_daily_limit_date(kst_now)
-        start = base_date - timedelta(days=(base_date.isoweekday()) % 7)
-    if start:
-        stmt = stmt.filter(cast(func.timezone('Asia/Seoul', Receipt.purchased_at), Date) >= start)
-    purchase_count = stmt.scalar()
+        current_weekly_limit = base_date - timedelta(days=(base_date.isoweekday()) % 7)
+
+    if not (daily_limit or weekly_limit):
+        # No time limit, return all count
+        purchase_count = len(receipt_list)
+        logger.debug(
+            f"Agent {agent_addr} purchased product {product_id} {purchase_count} times (no limit)"
+        )
+        return purchase_count
+
+    # Filter receipts based on their purchase time's daily limit date
+    count = 0
+    for receipt in receipt_list:
+        if receipt.purchased_at:
+            # Convert to KST
+            purchased_at_kst = receipt.purchased_at.astimezone(timezone(timedelta(hours=9)))
+
+            # Calculate daily limit date based on the receipt's purchase time
+            receipt_daily_limit_date = get_daily_limit_date(purchased_at_kst)
+
+            if daily_limit:
+                # Only count if the receipt's daily limit date matches current daily limit date
+                if receipt_daily_limit_date == current_daily_limit:
+                    count += 1
+            elif weekly_limit:
+                # For weekly limit, calculate based on receipt's purchase time (KST 09:00 rule)
+                receipt_weekly_limit_date = receipt_daily_limit_date - timedelta(days=(receipt_daily_limit_date.isoweekday()) % 7)
+                if receipt_weekly_limit_date == current_weekly_limit:
+                    count += 1
+
     logger.debug(
-        f"Agent {agent_addr} purchased product {product_id} {purchase_count} times in {'today' if daily_limit else 'this week'} from {start or 'Anytime'}"
+        f"Agent {agent_addr} purchased product {product_id} {count} times in {'today' if daily_limit else 'this week'} (current limit date: {current_daily_limit or current_weekly_limit})"
     )
-    return purchase_count
+    return count
 
 
 def create_season_pass_jwt() -> str:
