@@ -236,7 +236,7 @@ def check_monthly_sales(sess):
             ~Receipt.planet_id.in_(internal_planet_ids)  # INTERNAL planet 제외
         )
         .group_by(date_column, Receipt.store)
-        .order_by(date_column, Receipt.store)
+        .order_by(date_column.desc(), Receipt.store)
     )
 
     results = query.all()
@@ -280,7 +280,7 @@ def check_monthly_sales(sess):
     blocks.append(create_divider_block())
 
     # 날짜별 데이터
-    for sale_date in sorted(sales_by_date.keys()):
+    for sale_date in sorted(sales_by_date.keys(), reverse=True):
         date_data = sales_by_date[sale_date]
         date_str = sale_date.strftime("%Y-%m-%d")
 
