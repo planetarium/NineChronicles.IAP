@@ -61,6 +61,11 @@ app.conf.update(
             "schedule": crontab(minute="*/60"),
             "options": {"queue": "background_job_queue"},
         },
+        "daily-sales-report": {
+            "task": "iap.daily_sales_report",
+            "schedule": crontab(hour=1, minute=0),
+            "options": {"queue": "background_job_queue"},
+        },
     },
 )
 
