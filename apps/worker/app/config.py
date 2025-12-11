@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     iap_garage_webhook_url: Optional[str] = None
     iap_alert_webhook_url: Optional[str] = None
+    iap_sales_webhook_url: Optional[str] = None
 
     google_credential: Optional[str] = None
     google_package_dict: dict[PackageName, str] = {
