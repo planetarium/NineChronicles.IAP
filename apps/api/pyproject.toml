@@ -16,10 +16,10 @@ fastapi-cache2 = "^0.2.1"
 uvicorn = "^0.23.2"
 cryptography = "^41.0.7"
 celery = { extras = ["redis"], version = "^5.4" }
-shared = { path = "../shared" }
 python-multipart = "^0.0.20"
 stripe = "^13.0.1"
 httpx = "^0.28.1"
+shared = {path = "../shared"}
 
 [tool.isort]
 profile = "black"

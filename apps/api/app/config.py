@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     cloudfront_distribution_2: str
     l10n_file_path: str = "product.csv"
 
+    # Redeem API configuration
+    redeem_api_base_url: str
+
+    # Redeem API JWT secret for 9C service only
+    jwt_secret_9c: str = "jwt-secret-9c"
+
     @property
     def converted_gql_url_map(self) -> dict[PlanetID, str]:
         return {PlanetID(k.encode()): v for k, v in self.gql_url_map.items()}
