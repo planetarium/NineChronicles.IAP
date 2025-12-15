@@ -175,12 +175,22 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
 
 
 def stage_tx(receipt: Receipt) -> Tuple[bool, str, Optional[str]]:
-    logging.debug(f"STAGE: {config.stage} || REGION: {config.region_name}")
-    gql = GQL(
-        config.converted_gql_url_map[receipt.planet_id], config.headless_jwt_secret
-    )
+    """Stage transaction to the blockchain node.
 
-    return gql.stage(bytes.fromhex(receipt.tx))
+    Returns:
+        Tuple[bool, str, Optional[str]]: (success, message, tx_id)
+        If node is down, returns (False, error_message, None)
+    """
+    logging.debug(f"STAGE: {config.stage} || REGION: {config.region_name}")
+    try:
+        gql = GQL(
+            config.converted_gql_url_map[receipt.planet_id], config.headless_jwt_secret
+        )
+        return gql.stage(bytes.fromhex(receipt.tx))
+    except Exception as e:
+        error_msg = f"Failed to connect to node for planet {receipt.planet_id}: {str(e)}"
+        logger.error(error_msg)
+        return False, error_msg, None
 
 
 def handle(message: SendProductMessage):
@@ -214,10 +224,38 @@ def handle(message: SendProductMessage):
             return
 
         account = Account(config.kms_key_id)
-        gql_dict = {
-            planet: GQL(url, config.headless_jwt_secret)
-            for planet, url in config.converted_gql_url_map.items()
-        }
+
+        # 지연 초기화를 지원하는 커스텀 딕셔너리 클래스
+        class LazyGQLDict(dict):
+            """지연 초기화를 지원하는 GQL 딕셔너리"""
+            def __init__(self, gql_url_map, jwt_secret):
+                super().__init__()
+                self._gql_url_map = gql_url_map
+                self._jwt_secret = jwt_secret
+                self._failed_planets = set()  # 초기화 실패한 planet 추적
+
+            def __missing__(self, key: PlanetID):
+                """키가 없을 때 자동으로 GQL 객체 생성 (지연 초기화)"""
+                if key in self._failed_planets:
+                    # 이미 실패한 planet은 None 반환
+                    return None
+
+                try:
+                    gql = GQL(
+                        self._gql_url_map[key],
+                        self._jwt_secret
+                    )
+                    self[key] = gql
+                    logger.info(f"GQL client created for planet {key}")
+                    return gql
+                except Exception as e:
+                    logger.error(f"Failed to create GQL client for planet {key}: {e}")
+                    self._failed_planets.add(key)
+                    return None
+
+        # 지연 초기화를 지원하는 gql_dict 생성
+        gql_dict = LazyGQLDict(config.converted_gql_url_map, config.headless_jwt_secret)
+
         db_nonce_dict = {
             x.planet_id: x.nonce
             for x in sess.execute(
@@ -240,20 +278,68 @@ def handle(message: SendProductMessage):
             )
             logger.warning(msg)
         elif receipt.tx:
-            # Tx already created
+            # Tx already created - stage만 시도
             target_list.append((receipt, message.uuid))
             logger.info(f"{receipt.uuid} already has created tx with nonce {receipt.nonce}")
         else:
-            # Fresh receipt
+            # Fresh receipt - 노드 연결 확인 필요
+            planet_id = PlanetID(receipt.planet_id)
+
+            # gql_dict에 접근하면 자동으로 지연 초기화됨
+            gql = gql_dict[planet_id]
+
+            if gql is None:
+                # 노드가 다운되어 있으면 해당 receipt는 처리하지 않음
+                error_msg = f"Planet {planet_id} node is down, skipping receipt {receipt.uuid}"
+                logger.warning(error_msg)
+                result = {
+                    "sqs_message_id": message.uuid,
+                    "success": False,
+                    "message": error_msg,
+                    "uuid": str(receipt.uuid),
+                    "tx_id": None,
+                    "nonce": None,
+                    "order_id": str(receipt.order_id),
+                }
+                results.append(result)
+                return results
+
+            # 노드가 정상이면 nonce 조회 및 트랜잭션 생성
             receipt.tx_status = TxStatus.CREATED
             if receipt.nonce is None:
-                receipt.nonce = max(  # max nonce of
-                    nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                        receipt.planet_id,
-                        gql_dict[receipt.planet_id].get_next_nonce(account.address),
-                    ),
-                    db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
-                )
+                # nonce_dict에 값이 있으면 사용, 없으면 노드에서 가져오기
+                # 노드에서 가져올 때 실패하면 해당 receipt는 처리하지 않음
+                def get_nonce_from_node():
+                    """노드에서 nonce를 가져오는 헬퍼 함수"""
+                    nonce = gql_dict[receipt.planet_id].get_next_nonce(account.address)
+                    if nonce == -1:
+                        raise ValueError(f"Failed to get nonce from node for planet {receipt.planet_id}")
+                    return nonce
+
+                try:
+                    receipt.nonce = max(  # max nonce of
+                        nonce_dict.get(  # current handling nonce (or nonce in blockchain)
+                            receipt.planet_id,
+                            get_nonce_from_node(),  # 노드에서 가져온 nonce
+                        ),
+                        db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+                    )
+                except (ValueError, Exception) as e:
+                    # 노드에서 nonce를 가져오지 못함
+                    error_msg = f"Failed to get nonce from node for planet {receipt.planet_id}, skipping receipt {receipt.uuid}: {str(e)}"
+                    logger.error(error_msg)
+                    result = {
+                        "sqs_message_id": message.uuid,
+                        "success": False,
+                        "message": error_msg,
+                        "uuid": str(receipt.uuid),
+                        "tx_id": None,
+                        "nonce": None,
+                        "order_id": str(receipt.order_id),
+                    }
+                    results.append(result)
+                    return results
+
             receipt.tx = create_tx(sess, account, receipt).hex()
             nonce_dict[receipt.planet_id] = receipt.nonce + 1
             target_list.append((receipt, message.uuid))
@@ -265,8 +351,15 @@ def handle(message: SendProductMessage):
         logger.info(f"Stage {len(target_list)} receipts")
         for _receipt, _uuid in target_list:
             success, msg, tx_id = stage_tx(_receipt)
-            _receipt.tx_id = tx_id
-            _receipt.tx_status = TxStatus.STAGED
+
+            if success:
+                _receipt.tx_id = tx_id
+                _receipt.tx_status = TxStatus.STAGED
+            else:
+                # Stage 실패 시 (노드 다운 등) 상태는 CREATED로 유지하여 나중에 재시도 가능
+                logger.warning(f"Failed to stage tx for {_uuid}: {msg}")
+                # tx_status는 이미 CREATED이므로 변경하지 않음
+
             sess.add(_receipt)
             sess.commit()
 
