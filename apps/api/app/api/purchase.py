@@ -516,6 +516,19 @@ def request_product(
         receipt.status = ReceiptStatus.INVALID
         raise_error(sess, receipt, ValueError(f"Receipt validation failed: {msg}"))
 
+    # Check product type - /request endpoint should only handle IAP products
+    if product and product.product_type != ProductType.IAP:
+        receipt.status = ReceiptStatus.INVALID
+        receipt.msg = f"Product type {product.product_type.value} is not allowed via /request endpoint. Use /free or /mileage endpoint instead."
+        raise_error(
+            sess,
+            receipt,
+            ValueError(
+                f"Requested product {product.id}::{product.name} (type: {product.product_type.value}) cannot be processed via /request endpoint. "
+                f"Please use /free endpoint for FREE products or /mileage endpoint for MILEAGE products."
+            ),
+        )
+
     receipt.status = ReceiptStatus.VALID
     logger.info(f"Send voucher request: {receipt.uuid}")
 

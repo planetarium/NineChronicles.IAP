@@ -15,7 +15,7 @@ from shared.models.product import Product
 class Receipt(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "receipt"
     store = Column(
-        ENUM(Store, create_type=False),
+        ENUM(Store, create_type=False, values_callable=lambda x: [e.name for e in Store]),
         nullable=False,
         index=True,
         doc="Purchased Store Type",

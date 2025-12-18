@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple
 import structlog
 from gql.dsl import DSLQuery, dsl_gql
 from shared._graphql import GQL
-from shared.enums import ReceiptStatus, TxStatus
+from shared.enums import ReceiptStatus, Store, TxStatus
 from shared.models.receipt import Receipt
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import scoped_session, sessionmaker

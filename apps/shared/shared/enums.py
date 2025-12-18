@@ -76,6 +76,11 @@ class Store(IntEnum):
 
         This is `test` web payment store.
         This type of store only works on debug mode for testing web payment integration.
+
+    - **94: `REDEEM` (Redeem code)**
+
+        This is redeem code store type.
+        This type of store is used for redeem code purchases.
     """
     TEST = 0
     APPLE = 1
@@ -84,6 +89,7 @@ class Store(IntEnum):
     APPLE_TEST = 91
     GOOGLE_TEST = 92
     WEB_TEST = 93
+    REDEEM = 94
 
 
 class ProductType(Enum):

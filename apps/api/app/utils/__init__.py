@@ -211,6 +211,38 @@ def create_season_pass_jwt() -> str:
     )
 
 
+def generate_redeem_jwt(service_id: str) -> str:
+    """Redeem API 호출용 JWT 토큰 생성
+
+    기존 create_season_pass_jwt() 함수와 유사한 패턴이지만,
+    serviceId별로 다른 secret을 사용하고 iss claim에 serviceId를 포함합니다.
+
+    Args:
+        service_id: 서비스 ID (9C만 지원)
+
+    Returns:
+        JWT 토큰 문자열
+
+    Raises:
+        ValueError: service_id가 유효하지 않거나 secret이 없을 경우
+    """
+    # 9C만 지원하므로 직접 jwt_secret_9c 사용
+    if service_id.upper() != "9C":
+        raise ValueError(f"Unknown service_id: {service_id}. Only '9C' is supported.")
+
+    secret = config.jwt_secret_9c
+    if not secret:
+        raise ValueError("JWT secret for 9C service is not configured")
+
+    now = datetime.now(tz=timezone.utc)
+    payload = {
+        "iss": "9C",
+        "iat": int(now.timestamp()),
+        "exp": int(now.timestamp()) + 60,
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
 def get_mileage(sess, agent_addr: str) -> Mileage:
     """
     Read or create Mileage instance from DB.
