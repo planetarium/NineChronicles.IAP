@@ -476,6 +476,15 @@ def request_product(
         # Decimal을 직접 센트 단위로 변환 (정밀도 문제 방지)
         expected_amount_cents = int(price.price * 100)
 
+        # 가격이 0원 이하인 경우 차단
+        if expected_amount_cents <= 0:
+            receipt.status = ReceiptStatus.INVALID
+            raise_error(
+                sess,
+                receipt,
+                ValueError(f"Price must be greater than 0. Current price: {price.price}"),
+            )
+
         # Stripe 검증
         success, msg, purchase = validate_web(
             stripe_secret_key=stripe_key,
