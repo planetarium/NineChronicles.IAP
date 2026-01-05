@@ -214,7 +214,8 @@ def product_list(
         offset: 시작 위치 (기본값: 0)
     """
     # 기본 쿼리 생성
-    base_query = select(Product).order_by(desc(Product.created_at))
+    # ID 역순으로 정렬 (항상 일관된 순서 보장)
+    base_query = select(Product).order_by(desc(Product.id))
 
     # 전체 결과 수 계산
     total_count = sess.scalar(select(func.count()).select_from(base_query.subquery()))
