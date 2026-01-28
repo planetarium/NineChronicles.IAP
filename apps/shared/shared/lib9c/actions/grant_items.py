@@ -17,7 +17,7 @@ class GrantItems(ActionBase):
       - memo: optional string
 
     NOTE:
-    - Unlike `ClaimItems`, `GrantItems` does NOT include an `id` field in values.
+    - This project includes `id` in values to align with existing IAP pipelines/tests.
     """
 
     TYPE_ID: str = "grant_items"
@@ -35,7 +35,8 @@ class GrantItems(ActionBase):
 
     @property
     def _plain_value(self):
-        pv = {
+        return {
+            "id": bytes.fromhex(self._id),
             "cd": [
                 [
                     cd["avatarAddress"].raw,
@@ -43,7 +44,5 @@ class GrantItems(ActionBase):
                 ]
                 for cd in self._claim_data
             ],
+            "m": self._memo,
         }
-        if self._memo is not None and self._memo != "":
-            pv["m"] = self._memo
-        return pv
