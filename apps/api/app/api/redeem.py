@@ -37,7 +37,7 @@ def redeem_code(
     """
     Redeem Code 사용 처리
 
-    외부 API를 호출하여 Redeem Code를 사용 처리하고, 성공 시 Receipt를 생성하여 claim_items transaction을 생성합니다.
+    외부 API를 호출하여 Redeem Code를 사용 처리하고, 성공 시 Receipt를 생성하여 grant_items transaction을 생성합니다.
     """
     try:
         # 서비스 ID 검증: 9C만 허용
@@ -140,7 +140,7 @@ def redeem_code(
             sess.commit()
             sess.refresh(receipt)
 
-            # Celery worker로 전송하여 claim_items transaction 생성
+            # Celery worker로 전송하여 grant_items transaction 생성
             send_product_message = SendProductMessage(uuid=str(receipt.uuid))
             task_id = send_to_worker("iap.send_product", send_product_message.model_dump())
             logger.debug(
