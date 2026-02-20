@@ -23,6 +23,29 @@ background_job_queue = Queue(
 
 app = Celery("iap_worker", broker=config.broker_url, backend=config.result_backend)
 
+beat_schedule = {
+    "track-tx-every-minutes": {
+        "task": "iap.track_tx",
+        "schedule": crontab(minute="*/1"),
+        "options": {"queue": "background_job_queue"},
+    },
+    "status-monitor-every-minutes": {
+        "task": "iap.status_monitor",
+        "schedule": crontab(minute="*/10"),
+        "options": {"queue": "background_job_queue"},
+    },
+    "retryer-every-minutes": {
+        "task": "iap.retryer",
+        "schedule": crontab(minute="*/1"),
+        "options": {"queue": "background_job_queue"},
+    },
+    "track-google-refund-every-minutes": {
+        "task": "iap.track_google_refund",
+        "schedule": crontab(minute="*/60"),
+        "options": {"queue": "background_job_queue"},
+    },
+}
+
 app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -40,33 +63,7 @@ app.conf.update(
     task_create_missing_queues=True,
     task_default_delivery_mode="persistent",
     worker_direct=True,
-    beat_schedule={
-        "track-tx-every-minutes": {
-            "task": "iap.track_tx",
-            "schedule": crontab(minute="*/1"),
-            "options": {"queue": "background_job_queue"},
-        },
-        "status-monitor-every-minutes": {
-            "task": "iap.status_monitor",
-            "schedule": crontab(minute="*/10"),
-            "options": {"queue": "background_job_queue"},
-        },
-        "retryer-every-minutes": {
-            "task": "iap.retryer",
-            "schedule": crontab(minute="*/1"),
-            "options": {"queue": "background_job_queue"},
-        },
-        "track-google-refund-every-minutes": {
-            "task": "iap.track_google_refund",
-            "schedule": crontab(minute="*/60"),
-            "options": {"queue": "background_job_queue"},
-        },
-        "daily-sales-report": {
-            "task": "iap.daily_sales_report",
-            "schedule": crontab(hour=1, minute=0),
-            "options": {"queue": "background_job_queue"},
-        },
-    },
+    beat_schedule=beat_schedule,
 )
 
 app.autodiscover_tasks(["app.tasks"])
