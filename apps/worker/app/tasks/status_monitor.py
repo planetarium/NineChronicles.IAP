@@ -194,6 +194,9 @@ def status_monitor(self):
     try:
         if datetime.utcnow().hour == 3 and datetime.now().minute == 0:  # 12:00 KST
             for planet_id in config.converted_gql_url_map.keys():
+                # Token balance report should exclude Thor network.
+                if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
+                    continue
                 check_token_balance(planet_id)
 
         check_halt_tx(sess)
