@@ -7,7 +7,7 @@ import structlog
 from shared._crypto import Account
 from shared._graphql import GQL
 from shared.enums import PackageName, PlanetID, TxStatus
-from shared.lib9c.actions.claim_items import ClaimItems
+from shared.lib9c.actions.grant_items import GrantItems
 from shared.lib9c.models.address import Address
 from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 from shared.models.product import Product
@@ -152,7 +152,7 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
 
     logger.debug(f"Total claim_data items: {len(claim_data)}")
 
-    action = ClaimItems(
+    action = GrantItems(
         claim_data=[
             {"avatarAddress": avatar_address, "fungibleAssetValues": claim_data}
         ],
