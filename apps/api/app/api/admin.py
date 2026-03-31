@@ -1165,7 +1165,7 @@ def get_product_sales(
     fav_rows = sess.execute(
         select(
             Receipt.planet_id,
-            func.concat("FAV__", FungibleAssetProduct.ticker).label("ticker"),
+            FungibleAssetProduct.ticker,
             FungibleAssetProduct.decimal_places,
             func.sum(FungibleAssetProduct.amount).label("total_amount"),
         )
