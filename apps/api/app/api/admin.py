@@ -1179,11 +1179,11 @@ def get_product_sales(
         )
     ).fetchall()
 
-    # 아이템 집계: sheet_item_id → Item_NT_{sheet_item_id}
+    # 아이템 집계: fungible_item_id를 ticker로 사용
     item_rows = sess.execute(
         select(
             Receipt.planet_id,
-            func.concat("Item_NT_", FungibleItemProduct.sheet_item_id).label("ticker"),
+            FungibleItemProduct.fungible_item_id.label("ticker"),
             func.sum(FungibleItemProduct.amount).label("total_amount"),
         )
         .join(Product, Receipt.product_id == Product.id)
@@ -1191,7 +1191,7 @@ def get_product_sales(
         .where(base_filter)
         .group_by(
             Receipt.planet_id,
-            FungibleItemProduct.sheet_item_id,
+            FungibleItemProduct.fungible_item_id,
         )
     ).fetchall()
 
