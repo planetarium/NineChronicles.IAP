@@ -3,17 +3,16 @@ import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Security, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
-from shared.enums import ReceiptStatus, Store
-from shared.models.product import Product
+from shared.enums import PlanetID, ReceiptStatus, Store
+from shared.models.product import FungibleAssetProduct, FungibleItemProduct, Price, Product
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
-from shared.models.product import Price
 from sqlalchemy import Date, and_, desc, func, select
 from sqlalchemy.orm import joinedload
 
@@ -136,6 +135,22 @@ class NonPassPurchaseCheckResponse(BaseModel):
     meets_amount_threshold: bool
     meets_count_threshold: bool
     non_pass_purchases: List[dict]
+
+
+class TokenSales(BaseModel):
+    ticker: str
+    decimal_places: int
+    total_amount: Decimal
+
+
+class PlanetTokenSales(BaseModel):
+    tokens: List[TokenSales]
+
+
+class ProductSalesResponse(BaseModel):
+    year: int
+    month: int
+    planets: Dict[str, PlanetTokenSales]
 
 
 # @router.post("/update-price")
@@ -1112,4 +1127,92 @@ def check_non_pass_purchase_count(
         meets_amount_threshold=total_amount >= Decimal("100.0"),  # 기본 금액 임계값
         meets_count_threshold=len(non_pass_receipts) >= count_threshold,
         non_pass_purchases=non_pass_purchases
+    )
+
+
+_MAINNET_PLANET_NAMES = {
+    PlanetID.ODIN.value: "ODIN",
+    PlanetID.HEIMDALL.value: "HEIMDALL",
+}
+
+
+@router.get("/stats/product-sales", response_model=ProductSalesResponse)
+def get_product_sales(
+    year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
+    month: int = Query(..., ge=1, le=12, description="조회할 월"),
+    sess=Depends(session),
+):
+    """
+    메인넷(오딘, 헤임달) 플래닛별 월간 토큰 지급량 집계
+
+    지정한 연/월 동안 VALID 상태의 영수증을 기준으로,
+    grant_items tx와 동일한 ticker 포맷(FAV__{ticker}, Item_NT_{sheet_item_id})으로
+    플래닛별 토큰 총 지급량을 반환합니다.
+    날짜 필터는 UTC 기준이며, DB의 created_at(KST)을 UTC로 변환하여 비교합니다.
+    """
+    utc_start = datetime(year, month, 1)
+    utc_end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+
+    mainnet_planet_ids = [PlanetID.ODIN.value, PlanetID.HEIMDALL.value]
+    base_filter = and_(
+        Receipt.status == ReceiptStatus.VALID,
+        Receipt.planet_id.in_(mainnet_planet_ids),
+        func.timezone("UTC", Receipt.created_at) >= utc_start,
+        func.timezone("UTC", Receipt.created_at) < utc_end,
+    )
+
+    # FAV 집계: ticker → FAV__{ticker}
+    fav_rows = sess.execute(
+        select(
+            Receipt.planet_id,
+            FungibleAssetProduct.ticker,
+            FungibleAssetProduct.decimal_places,
+            func.sum(FungibleAssetProduct.amount).label("total_amount"),
+        )
+        .join(Product, Receipt.product_id == Product.id)
+        .join(FungibleAssetProduct, Product.id == FungibleAssetProduct.product_id)
+        .where(base_filter)
+        .group_by(
+            Receipt.planet_id,
+            FungibleAssetProduct.ticker,
+            FungibleAssetProduct.decimal_places,
+        )
+    ).fetchall()
+
+    # 아이템 집계: fungible_item_id를 ticker로 사용
+    item_rows = sess.execute(
+        select(
+            Receipt.planet_id,
+            FungibleItemProduct.fungible_item_id.label("ticker"),
+            func.sum(FungibleItemProduct.amount).label("total_amount"),
+        )
+        .join(Product, Receipt.product_id == Product.id)
+        .join(FungibleItemProduct, Product.id == FungibleItemProduct.product_id)
+        .where(base_filter)
+        .group_by(
+            Receipt.planet_id,
+            FungibleItemProduct.fungible_item_id,
+        )
+    ).fetchall()
+
+    planets: Dict[str, list] = {name: [] for name in _MAINNET_PLANET_NAMES.values()}
+
+    for row in fav_rows:
+        planet_name = _MAINNET_PLANET_NAMES.get(bytes(row.planet_id))
+        if planet_name:
+            planets[planet_name].append(
+                TokenSales(ticker=row.ticker, decimal_places=row.decimal_places, total_amount=row.total_amount)
+            )
+
+    for row in item_rows:
+        planet_name = _MAINNET_PLANET_NAMES.get(bytes(row.planet_id))
+        if planet_name:
+            planets[planet_name].append(
+                TokenSales(ticker=row.ticker, decimal_places=0, total_amount=Decimal(row.total_amount))
+            )
+
+    return ProductSalesResponse(
+        year=year,
+        month=month,
+        planets={name: PlanetTokenSales(tokens=tokens) for name, tokens in planets.items()},
     )
