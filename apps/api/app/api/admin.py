@@ -13,7 +13,7 @@ from shared.models.product import FungibleAssetProduct, FungibleItemProduct, Pri
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
-from sqlalchemy import Date, and_, desc, func, select
+from sqlalchemy import Date, and_, desc, func, or_, select
 from sqlalchemy.orm import joinedload
 
 from app.config import config
@@ -1135,6 +1135,12 @@ _MAINNET_PLANET_NAMES = {
     PlanetID.HEIMDALL.value: "HEIMDALL",
 }
 
+# SKUs matching this pattern are season-pass style purchases where actual
+# token grants are performed by the SeasonPass service (see purchase.py:
+# `if "pass" in product.google_sku`), not by IAP. Including them here would
+# double-count against SeasonPass's own reward-claims stats.
+_SEASON_PASS_SKU_ILIKE = "%pass%"
+
 
 @router.get("/stats/product-sales", response_model=ProductSalesResponse)
 def get_product_sales(
@@ -1149,6 +1155,9 @@ def get_product_sales(
     grant_items tx와 동일한 ticker 포맷(FAV__{ticker}, Item_NT_{sheet_item_id})으로
     플래닛별 토큰 총 지급량을 반환합니다.
     날짜 필터는 UTC 기준이며, DB의 created_at(KST)을 UTC로 변환하여 비교합니다.
+
+    시즌패스 계열(google_sku에 "pass" 포함) 영수증은 실제 지급을 IAP가 아닌
+    SeasonPass 서비스가 담당하므로 IAP 통계에서 제외됩니다.
     """
     utc_start = datetime(year, month, 1)
     utc_end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -1159,6 +1168,10 @@ def get_product_sales(
         Receipt.planet_id.in_(mainnet_planet_ids),
         func.timezone("UTC", Receipt.created_at) >= utc_start,
         func.timezone("UTC", Receipt.created_at) < utc_end,
+        or_(
+            Product.google_sku.is_(None),
+            ~Product.google_sku.ilike(_SEASON_PASS_SKU_ILIKE),
+        ),
     )
 
     # FAV 집계: ticker → FAV__{ticker}
