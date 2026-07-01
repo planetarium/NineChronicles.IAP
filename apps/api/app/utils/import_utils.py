@@ -79,7 +79,9 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "popup_path_key": row["popup_path_key"] if row["popup_path_key"] else None,
         "required_level": parse_int(row["required_level"]),
         "product_type": parse_enum(ProductType, row["product_type"]),
-        "mileage": parse_int(row["mileage"]),
+        # mileage is NOT NULL with default 0 (see Product model); coalesce
+        # empty CSV cells so that updates don't fail the NOT NULL constraint.
+        "mileage": parse_int(row["mileage"]) or 0,
         "mileage_price": parse_int(row["mileage_price"]),
     }
 
