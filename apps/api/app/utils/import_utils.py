@@ -29,9 +29,9 @@ def parse_enum(enum_class, value: str):
     return None
 
 
-def parse_int(value: str):
+def parse_int(value: str, default=None):
     if not value.strip():
-        return None
+        return default
     # 콤마 제거 후 int로 변환
     return int(value.replace(",", ""))
 
@@ -66,7 +66,10 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "daily_limit": parse_int(row["daily_limit"]),
         "weekly_limit": parse_int(row["weekly_limit"]),
         "account_limit": parse_int(row["account_limit"]),
-        "order": parse_int(row["order"]),
+        # order is NOT NULL with default -1 in the DB; blank CSV cells must
+        # coalesce so UPDATEs don't send NULL and violate the constraint.
+        # Using the `default=` arg (not `or -1`) preserves a legitimate 0.
+        "order": parse_int(row["order"], default=-1),
         "active": parse_boolean(row["active"]),
         "open_timestamp": parse_datetime(row["open_timestamp"]),
         "close_timestamp": parse_datetime(row["close_timestamp"]),
@@ -79,9 +82,9 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "popup_path_key": row["popup_path_key"] if row["popup_path_key"] else None,
         "required_level": parse_int(row["required_level"]),
         "product_type": parse_enum(ProductType, row["product_type"]),
-        # mileage is NOT NULL with default 0 (see Product model); coalesce
-        # empty CSV cells so that updates don't fail the NOT NULL constraint.
-        "mileage": parse_int(row["mileage"]) or 0,
+        # mileage is NOT NULL with default 0 in the DB — see Product model.
+        # Same rationale as order above.
+        "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
 
