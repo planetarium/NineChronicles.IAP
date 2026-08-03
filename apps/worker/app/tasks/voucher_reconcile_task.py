@@ -14,6 +14,9 @@
   - revoke dispatch가 REVOKE_PENDING → 포탈 revoke → REVOKED.
 
 멱등: 포탈 revoke 자체가 iapUuid 기준 멱등(미개봉만 회수, 개봉건은 skippedOpened+경보). 재시도 안전.
+
+⚠️ known gap: Apple buyer 셀프 환불은 현재 신호 경로가 없다(google void tracker만 존재, status도 미갱신).
+   Apple 환불 회수는 App Store Server Notifications 처리기 도입 시 같은 enqueue_revoke_for_receipt로 연결 필요.
 """
 
 import datetime
@@ -22,30 +25,39 @@ from typing import Optional, Tuple
 import jwt
 import requests
 import structlog
-from shared.enums import ReceiptStatus, VoucherGrantStatus
+from shared.enums import ReceiptStatus, Store, VoucherGrantStatus
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
-from sqlalchemy import create_engine, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from app.celery_app import app
 from app.config import config
 
-logger = structlog.get_logger(__name__)
+# grant 태스크와 엔진 공유 — 프로세스당 커넥션 풀 이중 생성 방지(커넥션 예산).
+from app.tasks.voucher_grant_task import engine
 
-engine = create_engine(
-    config.pg_dsn, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True
-)
+logger = structlog.get_logger(__name__)
 
 HTTP_TIMEOUT = 10
 REVOKE_BATCH = 200
 ENROLL_BATCH = 500
+ALERT_ATTEMPTS = 5  # REVOKE_PENDING이 이 횟수 이상 재시도 중이면 스톨로 간주해 경보(회수 유실 진행중).
 _TRANSIENT_STATUS = {401, 403, 408, 429}
 # 환불/무효 — 발급된 바우처를 회수해야 하는 receipt 상태.
 _REFUNDED_STATUSES = [
     ReceiptStatus.REFUNDED_BY_ADMIN,
     ReceiptStatus.REFUNDED_BY_BUYER,
     ReceiptStatus.INVALID,
+]
+# google void → receipt 매칭 시 좁힐 스토어(order_id는 (store,order_id)로만 유일 → 크로스-스토어 오매칭 방지).
+_GOOGLE_STORES = [Store.GOOGLE, Store.GOOGLE_TEST]
+# 회수 대상 = 발급됐을 수 있는 모든 비-종단 상태 + FAILED(크래시창에 발급 후 FAILED 찍힌 건 포함).
+_REVOCABLE_OUTBOX_STATUSES = [
+    VoucherGrantStatus.PENDING,
+    VoucherGrantStatus.GRANTED,
+    VoucherGrantStatus.FAILED,
 ]
 
 
@@ -110,12 +122,24 @@ def enqueue_revoke_for_receipt(sess, receipt_id: int) -> bool:
         select(VoucherGrantOutbox).where(VoucherGrantOutbox.receipt_id == receipt_id)
     )
     if ob is None:
-        sess.add(
-            VoucherGrantOutbox(
-                receipt_id=receipt_id, status=VoucherGrantStatus.REVOKE_PENDING
+        # 신규 생성. grant enroll이 같은 receipt_id를 동시에 INSERT할 수 있으므로 SAVEPOINT로 격리 —
+        #   충돌 없으면 REVOKE_PENDING 생성, 충돌(grant가 선점)이면 재조회 후 전이(배치 통째 롤백 방지).
+        try:
+            with sess.begin_nested():
+                sess.add(
+                    VoucherGrantOutbox(
+                        receipt_id=receipt_id, status=VoucherGrantStatus.REVOKE_PENDING
+                    )
+                )
+            return True
+        except IntegrityError:
+            ob = sess.scalar(
+                select(VoucherGrantOutbox).where(
+                    VoucherGrantOutbox.receipt_id == receipt_id
+                )
             )
-        )
-        return True
+            if ob is None:  # 이론상 도달 불가
+                return False
     if ob.status in (VoucherGrantStatus.REVOKED, VoucherGrantStatus.REVOKE_PENDING):
         return False
     ob.status = VoucherGrantStatus.REVOKE_PENDING
@@ -123,11 +147,26 @@ def enqueue_revoke_for_receipt(sess, receipt_id: int) -> bool:
 
 
 def enqueue_revoke_by_order_id(sess, order_id: str) -> bool:
-    """order_id(스토어 영수증)로 receipt 찾아 revoke 큐잉."""
-    r = sess.scalar(select(Receipt).where(Receipt.order_id == order_id))
-    if r is None:
-        return False
-    return enqueue_revoke_for_receipt(sess, r.id)
+    """
+    google void의 order_id로 receipt 찾아 revoke 큐잉. 반환: 하나라도 큐잉되면 True.
+      ⚠️ order_id는 (store, order_id)로만 유일 → 스토어를 google 계열로 좁혀 크로스-스토어 오매칭 방지.
+         (다른 스토어의 동일 order_id를 잘못 회수하면 정상 유저 손해). 다중 매치는 모두 큐잉.
+    """
+    receipts = (
+        sess.execute(
+            select(Receipt).where(
+                Receipt.order_id == order_id,
+                Receipt.store.in_(_GOOGLE_STORES),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    queued = False
+    for r in receipts:
+        if enqueue_revoke_for_receipt(sess, r.id):
+            queued = True
+    return queued
 
 
 def enqueue_revoke_by_order_ids(order_ids) -> int:
@@ -181,9 +220,10 @@ def reconcile_vouchers(self):
                 select(VoucherGrantOutbox)
                 .join(Receipt, Receipt.id == VoucherGrantOutbox.receipt_id)
                 .where(
-                    VoucherGrantOutbox.status.in_(
-                        [VoucherGrantStatus.PENDING, VoucherGrantStatus.GRANTED]
-                    ),
+                    # FAILED 포함: grant가 HTTP 200(발급)後 commit前 크래시→재전달 사이 admin 환불 시
+                    # 재dispatch가 FAILED로 찍는데 바우처는 이미 발급됨 → 회수 누락 방지(revoke는 멱등이라
+                    # 미발급 receipt엔 no-op으로 무해).
+                    VoucherGrantOutbox.status.in_(_REVOCABLE_OUTBOX_STATUSES),
                     Receipt.status.in_(_REFUNDED_STATUSES),
                 )
                 .limit(ENROLL_BATCH)
@@ -201,7 +241,9 @@ def reconcile_vouchers(self):
             sess.execute(
                 select(VoucherGrantOutbox)
                 .where(VoucherGrantOutbox.status == VoucherGrantStatus.REVOKE_PENDING)
-                .order_by(VoucherGrantOutbox.receipt_id)
+                # attempts 오름차순 우선 — 영구 4xx 등 고-attempts 행이 batch 앞을 막아
+                # 신규 회수가 starve되지 않게(신규 attempts=0 먼저 처리).
+                .order_by(VoucherGrantOutbox.attempts, VoucherGrantOutbox.receipt_id)
                 .limit(REVOKE_BATCH)
                 .with_for_update(skip_locked=True)
             )
@@ -238,10 +280,27 @@ def reconcile_vouchers(self):
                 ob.last_error = f"unexpected: {e}"[:500]
         sess.commit()
 
-        result = f"enqueued={enqueued} revoked={revoked} failed={failed}"
+        # 스톨 경보 — transient(5xx/인증/레이트리밋)로 무한 재시도 중인 회수는 failed에 안 잡히므로
+        #   attempts 임계 이상 REVOKE_PENDING 백로그를 별도 집계해 알림(회수 유실이 진행 중일 수 있음).
+        stalled = (
+            sess.scalar(
+                select(func.count())
+                .select_from(VoucherGrantOutbox)
+                .where(
+                    VoucherGrantOutbox.status == VoucherGrantStatus.REVOKE_PENDING,
+                    VoucherGrantOutbox.attempts >= ALERT_ATTEMPTS,
+                )
+            )
+            or 0
+        )
+
+        result = f"enqueued={enqueued} revoked={revoked} failed={failed} stalled={stalled}"
         logger.info("voucher reconcile run", result=result)
-        if failed > 0:
-            _alert(f"[voucher-revoke] {failed} revoke(s) erroring (manual review). {result}")
+        if failed > 0 or stalled > 0:
+            _alert(
+                f"[voucher-revoke] 회수 실패/스톨 (수동 검토): failed={failed} "
+                f"stalled(attempts>={ALERT_ATTEMPTS})={stalled}. {result}"
+            )
         return result
     except Exception:
         sess.rollback()
