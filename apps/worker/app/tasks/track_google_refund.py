@@ -9,6 +9,7 @@ from shared.utils.google import get_google_client
 
 from app.celery_app import app
 from app.config import config
+from app.tasks.voucher_reconcile_task import enqueue_revoke_by_order_ids
 
 logger = structlog.get_logger(__name__)
 
@@ -74,6 +75,8 @@ def handle(event, context):
     current_time = datetime.now(timezone.utc)
     one_hour_ago = current_time - timedelta(hours=1)
 
+    refunded_order_ids: list[str] = []  # (PLD-1470) 바우처 회수 큐잉용
+
     start_time_ms = int(one_hour_ago.timestamp() * 1000)
     end_time_ms = int(current_time.timestamp() * 1000)
 
@@ -121,10 +124,20 @@ def handle(event, context):
             logger.info(
                 f"환불 알림 전송: {void.orderId} (환불 시간: {void.voidedTime.isoformat()})"
             )
+            refunded_order_ids.append(void.orderId)
 
         logger.info(
             f"{package_name.value} 패키지에서 {len(voided_purchases)}개의 최근 환불 데이터를 처리했습니다."
         )
+
+    # (PLD-1470) 환불된 결제의 NCG 바우처 회수 큐잉(아웃박스 REVOKE_PENDING). 알림 흐름과 독립·best-effort.
+    #   google buyer 환불은 receipt.status를 갱신하지 않으므로 이 훅이 유일 신호원.
+    try:
+        queued = enqueue_revoke_by_order_ids(refunded_order_ids)
+        if queued:
+            logger.info(f"바우처 회수 큐잉 {queued}건")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"바우처 회수 큐잉 실패(알림은 정상): {e}")
 
 
 @app.task(
