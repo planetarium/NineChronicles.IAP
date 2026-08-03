@@ -3,5 +3,6 @@ __all__ = [
     "receipt",
     "product",
     "voucher",
+    "voucher_grant_outbox",
     "user",
 ]
