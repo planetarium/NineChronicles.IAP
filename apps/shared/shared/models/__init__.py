@@ -4,5 +4,6 @@ __all__ = [
     "product",
     "purchase_signal",
     "voucher",
+    "voucher_grant_outbox",
     "user",
 ]
