@@ -351,3 +351,13 @@ class PlanetID(bytes, Enum):
     HEIMDALL_INTERNAL = b"0x100000000001"
     IDUN_INTERNAL = b"0x100000000002"
     THOR_INTERNAL = b"0x100000000003"
+
+
+class VoucherGrantStatus(IntEnum):
+    """(PLD-1468) NCG Voucher 아웃박스 상태 — 포탈 발급/회수 멱등·재시도 추적."""
+
+    PENDING = 0  # grant 대기/진행
+    GRANTED = 1  # 포탈 grant 성공
+    REVOKE_PENDING = 2  # 환불 감지, revoke 대기
+    REVOKED = 3  # 포탈 revoke 성공
+    FAILED = 4  # 재시도 소진(수동 개입)
