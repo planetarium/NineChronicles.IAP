@@ -107,10 +107,33 @@ class TestPostGrant:
         (ok, ref, transient), _ = self._run(self._resp(500))
         assert ok is False and transient is True
 
+    def test_auth_and_ratelimit_are_transient(self):
+        # 인증(401/403)·레이트리밋(429)·타임아웃(408)은 회복 가능 → 재시도(종단 아님).
+        for status in (401, 403, 408, 429):
+            (ok, ref, transient), _ = self._run(self._resp(status))
+            assert ok is False and transient is True, f"status {status} should be transient"
+
     def test_4xx_is_terminal_failure(self):
-        # 검증오류 — 재시도해도 동일 → FAILED.
+        # 검증오류(400 등) — 재시도해도 동일 → FAILED.
         (ok, ref, transient), _ = self._run(self._resp(400, {}))
         assert ok is False and transient is False and ref.startswith("400")
+
+    def test_non_object_body_is_terminal(self):
+        (ok, ref, transient), _ = self._run(self._resp(200, [1, 2, 3]))
+        assert ok is False and transient is False
+
+
+class TestGrantableStores:
+    def test_production_excludes_sandbox(self):
+        with patch.object(vg.config, "stage", "production"):
+            s = vg._grantable_stores()
+        assert Store.APPLE in s and Store.GOOGLE in s and Store.WEB in s
+        assert Store.APPLE_TEST not in s and Store.WEB_TEST not in s
+
+    def test_nonprod_includes_sandbox(self):
+        with patch.object(vg.config, "stage", "development"):
+            s = vg._grantable_stores()
+        assert Store.APPLE_TEST in s and Store.WEB_TEST in s and Store.GOOGLE_TEST in s
 
 
 class TestGrantVouchersGating:
