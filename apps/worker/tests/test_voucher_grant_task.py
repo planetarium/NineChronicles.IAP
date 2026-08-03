@@ -1,0 +1,125 @@
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.tasks import voucher_grant_task as vg
+from shared.enums import Store
+
+
+class TestPlatformForStore:
+    @pytest.mark.parametrize(
+        "store,expected",
+        [
+            (Store.WEB, "PC"),
+            (Store.WEB_TEST, "PC"),
+            (Store.APPLE, "MOBILE"),
+            (Store.APPLE_TEST, "MOBILE"),
+            (Store.GOOGLE, "MOBILE"),
+            (Store.GOOGLE_TEST, "MOBILE"),
+            (Store.TEST, None),  # 디버그 — 바우처 대상 아님
+            (Store.REDEEM, None),  # 코드 리딤 — 결제 아님
+        ],
+    )
+    def test_mapping(self, store, expected):
+        assert vg.platform_for_store(store) == expected
+
+
+class TestPlanetStr:
+    def test_bytes(self):
+        assert vg._planet_str(b"0x000000000000") == "0x000000000000"
+
+    def test_memoryview(self):
+        assert vg._planet_str(memoryview(b"0x000000000001")) == "0x000000000001"
+
+    def test_str_passthrough(self):
+        assert vg._planet_str("0x000000000000") == "0x000000000000"
+
+
+class TestUsdAmountForProduct:
+    def _sess_with(self, price_val):
+        sess = MagicMock()
+        if price_val is None:
+            sess.scalar.return_value = None
+        else:
+            price = MagicMock()
+            price.price = price_val
+            sess.scalar.return_value = price
+        return sess
+
+    def test_returns_usd_decimal(self):
+        assert vg.usd_amount_for_product(self._sess_with(Decimal("4.99")), 1) == Decimal(
+            "4.99"
+        )
+
+    def test_none_when_no_price(self):
+        assert vg.usd_amount_for_product(self._sess_with(None), 1) is None
+
+    def test_none_when_zero_or_negative(self):
+        assert vg.usd_amount_for_product(self._sess_with(Decimal("0")), 1) is None
+        assert vg.usd_amount_for_product(self._sess_with(Decimal("-1")), 1) is None
+
+
+class TestPostGrant:
+    """포탈 grant 응답 분류: (terminal_ok, ref, transient)."""
+
+    def _resp(self, status, body=None):
+        r = MagicMock()
+        r.status_code = status
+        r.text = "err-body"
+        r.json = MagicMock(return_value=body if body is not None else {})
+        return r
+
+    def _run(self, resp):
+        with patch.object(vg.config, "portal_grant_url", "http://portal/api/voucher/grant"), \
+            patch.object(vg.config, "portal_iap_jwt_secret", "secret"), \
+            patch.object(vg.requests, "post", return_value=resp) as post:
+            return vg._post_grant({"iapUuid": "x"}), post
+
+    def test_success_is_terminal(self):
+        (ok, ref, transient), post = self._run(
+            self._resp(200, {"message": "success", "granted": 2})
+        )
+        assert ok is True and transient is False and "granted=2" in ref
+        # Authorization: Bearer <jwt> 헤더 부착 확인
+        assert post.call_args.kwargs["headers"]["Authorization"].startswith("Bearer ")
+
+    def test_already_granted_is_terminal(self):
+        (ok, ref, transient), _ = self._run(
+            self._resp(200, {"message": "already granted", "granted": 3})
+        )
+        assert ok is True and transient is False
+
+    def test_amount_too_small_is_terminal(self):
+        (ok, ref, transient), _ = self._run(
+            self._resp(200, {"message": "no voucher (amount too small)", "granted": 0})
+        )
+        assert ok is True and transient is False
+
+    def test_voucher_disabled_is_transient(self):
+        # 킬스위치 off — 활성화 후 재발급해야 하므로 재시도(PENDING 유지).
+        (ok, ref, transient), _ = self._run(
+            self._resp(200, {"message": "voucher disabled", "granted": 0})
+        )
+        assert ok is False and transient is True
+
+    def test_5xx_is_transient(self):
+        (ok, ref, transient), _ = self._run(self._resp(500))
+        assert ok is False and transient is True
+
+    def test_4xx_is_terminal_failure(self):
+        # 검증오류 — 재시도해도 동일 → FAILED.
+        (ok, ref, transient), _ = self._run(self._resp(400, {}))
+        assert ok is False and transient is False and ref.startswith("400")
+
+
+class TestGrantVouchersGating:
+    def test_disabled_returns_early(self):
+        with patch.object(vg.config, "voucher_grant_enabled", False):
+            assert vg.grant_vouchers.run() == "voucher grant disabled"
+
+    def test_not_configured_returns_early(self):
+        with patch.object(vg.config, "voucher_grant_enabled", True), \
+            patch.object(vg.config, "portal_grant_url", None), \
+            patch.object(vg.config, "portal_iap_jwt_secret", None):
+            assert vg.grant_vouchers.run() == "not configured"
