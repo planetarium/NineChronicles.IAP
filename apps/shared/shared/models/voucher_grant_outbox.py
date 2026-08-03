@@ -1,7 +1,8 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, backref, relationship
 
-from shared.models.base import AutoIdMixin, Base, TimeStampMixin
+from shared.enums import VoucherGrantStatus
+from shared.models.base import AutoIdMixin, Base, EnumType, TimeStampMixin
 from shared.models.receipt import Receipt
 
 
@@ -28,10 +29,19 @@ class VoucherGrantOutbox(AutoIdMixin, TimeStampMixin, Base):
         backref=backref("voucher_grant_outbox"),
     )
 
-    # PENDING / GRANTED / REVOKE_PENDING / REVOKED / FAILED
-    status = Column(Text, nullable=False, default="PENDING")
+    status = Column(
+        EnumType(VoucherGrantStatus),
+        nullable=False,
+        default=VoucherGrantStatus.PENDING,
+        server_default=str(VoucherGrantStatus.PENDING.value),  # "0" — bulk/upsert/raw insert도 NOT NULL 안전
+    )
     portal_ref = Column(Text, nullable=True, doc="포탈 grant 응답 참조(멱등 확인용)")
-    attempts = Column(Integer, nullable=False, default=0)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
     last_error = Column(Text, nullable=True)
     granted_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # 재시도 워커가 미완료(status != GRANTED) 행을 폴링 → status 인덱스.
+        Index("ix_voucher_grant_outbox_status", "status"),
+    )
