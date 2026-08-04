@@ -6,7 +6,7 @@
 
 흐름:
   (A) enroll: cutoff 이후 VALID+SUCCESS+실스토어 영수증 중 아직 아웃박스 없는 건 → PENDING 아웃박스 생성(레이스는 SAVEPOINT로 흡수).
-  (B) dispatch: PENDING 아웃박스 → 상태 재검증 → platform/amountUsd 유도 → 포탈 grant 호출 → GRANTED / 재시도(PENDING) / FAILED.
+  (B) dispatch: PENDING 아웃박스 → 상태 재검증 → 상품별 tickets 조회 → 포탈 grant 호출 → GRANTED / 재시도(PENDING) / FAILED.
 
 상태 의미:
   PENDING  = 미처리/재시도 대상(회복 가능한 실패 포함: 인증·레이트리밋·5xx·가격 미활성).
@@ -18,14 +18,13 @@
 """
 
 import datetime
-from decimal import Decimal
 from typing import Optional, Tuple
 
 import jwt
 import requests
 import structlog
 from shared.enums import ReceiptStatus, Store, TxStatus, VoucherGrantStatus
-from shared.models.product import Price
+from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
 from sqlalchemy import create_engine, select
@@ -70,22 +69,25 @@ def platform_for_store(store: Store) -> Optional[str]:
     return None
 
 
-def usd_amount_for_product(sess, product_id: int) -> Optional[Decimal]:
-    """(PLD-1472) 상품 USD 가격(WEB 스토어=canonical USD). active만, 다중행이면 최신 1건. 없으면 None."""
-    price = sess.scalar(
-        select(Price)
-        .where(
-            Price.product_id == product_id,
-            Price.currency == "USD",
-            Price.store == Store.WEB,
-            Price.active.is_(True),
+def tickets_for_product(sess, product_id: int) -> list:
+    """(PLD-1472) 상품 → 복권 티켓 매핑(active). [{"ticketType": str, "count": int}, ...]. 없으면 []."""
+    rows = (
+        sess.execute(
+            select(ProductVoucherGrant)
+            .where(
+                ProductVoucherGrant.product_id == product_id,
+                ProductVoucherGrant.active.is_(True),
+            )
+            .order_by(ProductVoucherGrant.ticket_type)
         )
-        .order_by(Price.id.desc())
-        .limit(1)
+        .scalars()
+        .all()
     )
-    if price is None or price.price is None or Decimal(str(price.price)) <= 0:
-        return None
-    return Decimal(str(price.price))
+    return [
+        {"ticketType": r.ticket_type, "count": r.count}
+        for r in rows
+        if r.count and r.count > 0
+    ]
 
 
 def _planet_str(planet_id) -> str:
@@ -171,6 +173,12 @@ def grant_vouchers(self):
                     Receipt.tx_status == TxStatus.SUCCESS,
                     Receipt.product_id.isnot(None),
                     Receipt.store.in_(grantable),
+                    # 바우처 발급 대상 상품만(active 티켓 매핑 존재) — 미대상 상품이 윈도우 침전하지 않게.
+                    Receipt.product_id.in_(
+                        select(ProductVoucherGrant.product_id).where(
+                            ProductVoucherGrant.active.is_(True)
+                        )
+                    ),
                     Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
                 )
                 .order_by(Receipt.id)
@@ -227,13 +235,13 @@ def grant_vouchers(self):
                     failed += 1
                     continue
 
-                amount_usd = (
-                    usd_amount_for_product(sess, r.product_id) if r.product_id else None
+                tickets = (
+                    tickets_for_product(sess, r.product_id) if r.product_id else []
                 )
-                if amount_usd is None:
-                    # 가격이 아직 미활성일 수 있음 → 종단 아닌 재시도(PENDING 유지).
+                if not tickets:
+                    # 티켓 매핑이 아직 미설정/비활성일 수 있음 → 종단 아닌 재시도(PENDING 유지).
                     ob.attempts = (ob.attempts or 0) + 1
-                    ob.last_error = "usd price not found/active (retry)"
+                    ob.last_error = "no active voucher ticket mapping (retry)"
                     continue
 
                 payload = {
@@ -241,8 +249,8 @@ def grant_vouchers(self):
                     "receiptId": r.id,
                     "agentAddress": r.agent_addr,
                     "planetId": _planet_str(r.planet_id),
-                    "amountUsd": float(amount_usd),
-                    "platform": platform,
+                    "tickets": tickets,
+                    "platform": platform,  # 통계용
                     "purchasedAt": (r.purchased_at or r.created_at).isoformat(),
                 }
                 try:
