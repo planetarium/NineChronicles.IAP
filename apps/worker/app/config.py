@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime
 from typing import Optional
 
 from pydantic import AmqpDsn, PostgresDsn, RedisDsn
@@ -31,7 +32,8 @@ class Settings(BaseSettings):
     portal_revoke_url: Optional[str] = None  # 환불 회수용(PLD-1470)
     portal_iap_jwt_secret: Optional[str] = None  # 포탈 JWT_IAP_SECRET_KEY와 동일(HS256)
     voucher_grant_enabled: bool = False  # IAP측 마스터 스위치(포탈 policy.enabled와 별개)
-    voucher_grant_cutoff_receipt_id: int = 0  # 이 id 초과 영수증만 바우처 대상(과거 소급 방지)
+    # 이 시각(created_at) 이후 영수증만 바우처 대상(과거 소급 방지). ISO8601 env, 미설정(None)=컷오프 없음.
+    voucher_grant_cutoff: Optional[datetime] = None
 
     google_credential: Optional[str] = None
     google_package_dict: dict[PackageName, str] = {

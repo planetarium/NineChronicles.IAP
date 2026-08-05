@@ -165,25 +165,25 @@ def grant_vouchers(self):
         # (A) enroll — 적격 영수증(실스토어) 중 아웃박스 없는 건을 PENDING으로.
         #   ⚠️ 스토어 필터를 SQL에 둠: skip 대상(REDEEM 등)을 Python에서 거르면 아웃박스가 안 생겨
         #      매 회차 재조회되어 limit 윈도우를 침전·starve시킨다(리뷰 지적).
+        conditions = [
+            Receipt.status == ReceiptStatus.VALID,
+            Receipt.tx_status == TxStatus.SUCCESS,
+            Receipt.product_id.isnot(None),
+            Receipt.store.in_(grantable),
+            # 바우처 발급 대상 상품만(active 티켓 매핑 존재) — 미대상 상품이 윈도우 침전하지 않게.
+            Receipt.product_id.in_(
+                select(ProductVoucherGrant.product_id).where(
+                    ProductVoucherGrant.active.is_(True)
+                )
+            ),
+            Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
+        ]
+        # 타임스탬프 컷오프(설정 시): 이 시각(created_at) 이후 결제만 대상 — 과거 소급 방지.
+        if config.voucher_grant_cutoff is not None:
+            conditions.append(Receipt.created_at >= config.voucher_grant_cutoff)
         eligible = (
             sess.execute(
-                select(Receipt)
-                .where(
-                    Receipt.id > config.voucher_grant_cutoff_receipt_id,
-                    Receipt.status == ReceiptStatus.VALID,
-                    Receipt.tx_status == TxStatus.SUCCESS,
-                    Receipt.product_id.isnot(None),
-                    Receipt.store.in_(grantable),
-                    # 바우처 발급 대상 상품만(active 티켓 매핑 존재) — 미대상 상품이 윈도우 침전하지 않게.
-                    Receipt.product_id.in_(
-                        select(ProductVoucherGrant.product_id).where(
-                            ProductVoucherGrant.active.is_(True)
-                        )
-                    ),
-                    Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
-                )
-                .order_by(Receipt.id)
-                .limit(ENROLL_BATCH)
+                select(Receipt).where(*conditions).order_by(Receipt.id).limit(ENROLL_BATCH)
             )
             .scalars()
             .all()
