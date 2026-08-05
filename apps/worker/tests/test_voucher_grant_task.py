@@ -1,4 +1,3 @@
-from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,28 +35,31 @@ class TestPlanetStr:
         assert vg._planet_str("0x000000000000") == "0x000000000000"
 
 
-class TestUsdAmountForProduct:
-    def _sess_with(self, price_val):
+class TestTicketsForProduct:
+    def _sess_with(self, rows):
         sess = MagicMock()
-        if price_val is None:
-            sess.scalar.return_value = None
-        else:
-            price = MagicMock()
-            price.price = price_val
-            sess.scalar.return_value = price
+        sess.execute.return_value.scalars.return_value.all.return_value = rows
         return sess
 
-    def test_returns_usd_decimal(self):
-        assert vg.usd_amount_for_product(self._sess_with(Decimal("4.99")), 1) == Decimal(
-            "4.99"
-        )
+    def _row(self, ticket_type, count):
+        r = MagicMock()
+        r.ticket_type = ticket_type
+        r.count = count
+        return r
 
-    def test_none_when_no_price(self):
-        assert vg.usd_amount_for_product(self._sess_with(None), 1) is None
+    def test_returns_ticket_list(self):
+        sess = self._sess_with([self._row("STANDARD", 3), self._row("PREMIUM", 1)])
+        assert vg.tickets_for_product(sess, 1) == [
+            {"ticketType": "STANDARD", "count": 3},
+            {"ticketType": "PREMIUM", "count": 1},
+        ]
 
-    def test_none_when_zero_or_negative(self):
-        assert vg.usd_amount_for_product(self._sess_with(Decimal("0")), 1) is None
-        assert vg.usd_amount_for_product(self._sess_with(Decimal("-1")), 1) is None
+    def test_empty_when_no_mapping(self):
+        assert vg.tickets_for_product(self._sess_with([]), 1) == []
+
+    def test_skips_nonpositive_count(self):
+        sess = self._sess_with([self._row("STANDARD", 0), self._row("PREMIUM", 2)])
+        assert vg.tickets_for_product(sess, 1) == [{"ticketType": "PREMIUM", "count": 2}]
 
 
 class TestPostGrant:
