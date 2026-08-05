@@ -28,16 +28,10 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["product_id"], ["product.id"]),
         sa.PrimaryKeyConstraint("id"),
+        # UNIQUE(product_id, ticket_type) 복합 btree가 product_id 선두 조회를 커버 → 별도 단일 인덱스 불요.
         sa.UniqueConstraint("product_id", "ticket_type", name="uq_product_voucher_grant"),
-    )
-    op.create_index(
-        "ix_product_voucher_grant_product",
-        "product_voucher_grant",
-        ["product_id"],
-        unique=False,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_product_voucher_grant_product", table_name="product_voucher_grant")
     op.drop_table("product_voucher_grant")

@@ -27,7 +27,7 @@ from shared.enums import ReceiptStatus, Store, TxStatus, VoucherGrantStatus
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -49,6 +49,7 @@ _PC_STORES = {Store.WEB, Store.WEB_TEST}
 HTTP_TIMEOUT = 10
 ENROLL_BATCH = 500
 DISPATCH_BATCH = 200
+ALERT_ATTEMPTS = 5  # PENDING이 이 횟수 이상 재시도 중이면 stall로 간주해 경보(미지급 침전 가시화).
 # 인증(만료/무효 JWT)·레이트리밋·타임아웃은 회복 가능 → transient(재시도). 그 외 4xx는 종단.
 _TRANSIENT_STATUS = {401, 403, 408, 429}
 
@@ -281,12 +282,27 @@ def grant_vouchers(self):
                 ob.last_error = f"unexpected: {e}"[:500]
         sess.commit()
 
-        result = f"enrolled={enrolled} granted={granted} failed={failed}"
+        # stall 경보 — transient(5xx/인증/티켓매핑 미설정)로 무한 재시도 중인 PENDING은 failed에 안 잡히므로
+        #   attempts 임계 이상 PENDING 백로그를 별도 집계해 알림(결제 유효 유저의 미지급 침전 가시화).
+        stalled = (
+            sess.scalar(
+                select(func.count())
+                .select_from(VoucherGrantOutbox)
+                .where(
+                    VoucherGrantOutbox.status == VoucherGrantStatus.PENDING,
+                    VoucherGrantOutbox.attempts >= ALERT_ATTEMPTS,
+                )
+            )
+            or 0
+        )
+
+        result = f"enrolled={enrolled} granted={granted} failed={failed} stalled={stalled}"
         logger.info("voucher grant run", result=result)
-        if failed > 0:
-            # FAILED는 종단(무재시도)이라 미지급이 침묵으로 굳지 않도록 알림.
+        if failed > 0 or stalled > 0:
+            # FAILED(종단·무재시도) + stall(무한 재시도) — 미지급이 침묵으로 굳지 않도록 알림.
             _alert(
-                f"[voucher-grant] {failed} receipt(s) marked FAILED (manual review). {result}"
+                f"[voucher-grant] 미지급 주의: failed={failed} "
+                f"stalled(attempts>={ALERT_ATTEMPTS})={stalled}. {result}"
             )
         return result
     except Exception:
