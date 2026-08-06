@@ -120,6 +120,19 @@ class TestPostGrant:
         (ok, ref, transient), _ = self._run(self._resp(400, {}))
         assert ok is False and transient is False and ref.startswith("400")
 
+    def test_retryable_flag_is_transient(self):
+        # (R2) 포탈이 body.retryable=true로 표시한 설정 불일치(409 ERR-TICKET-TYPE-UNKNOWN)
+        #   → 종단 아니라 재시도(정책 일관 시 self-heal). 상태코드 관례가 아니라 플래그로 판정.
+        (ok, ref, transient), _ = self._run(
+            self._resp(409, {"code": "ERR-TICKET-TYPE-UNKNOWN", "retryable": True})
+        )
+        assert ok is False and transient is True and "retryable" in ref
+
+    def test_409_without_retryable_is_terminal(self):
+        # retryable 플래그 없는 4xx는 여전히 종단(플래그 기반 판정).
+        (ok, ref, transient), _ = self._run(self._resp(409, {"message": "conflict"}))
+        assert ok is False and transient is False
+
     def test_non_object_body_is_terminal(self):
         (ok, ref, transient), _ = self._run(self._resp(200, [1, 2, 3]))
         assert ok is False and transient is False

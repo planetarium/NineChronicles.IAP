@@ -10,6 +10,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from shared.enums import PlanetID, ReceiptStatus, Store
 from shared.models.product import FungibleAssetProduct, FungibleItemProduct, Price, Product
+from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
@@ -37,6 +38,7 @@ from app.utils.r2 import (
     upload_image_to_r2,
 )
 from app.utils.s3 import invalidate_cloudfront, upload_image_to_s3, upload_to_s3
+from app.voucher_validation import fetch_live_prize_tables, validate_voucher_mapping
 
 security = HTTPBearer()
 
@@ -1229,3 +1231,129 @@ def get_product_sales(
         month=month,
         planets={name: PlanetTokenSales(tokens=tokens) for name, tokens in planets.items()},
     )
+
+
+# ── (PLD) 바우처 상품→티켓 매핑 admin (C1 정책 크로스검증 + C3-lite + C5) ──────────
+#   백오피스(9c-backoffice)가 호출. C1(ticket_type ∈ 라이브 정책)/C3-lite(count×최대상금 ≤ cap)를
+#   서버측에서 강제 — UI 검증은 advisory(TOCTOU). 그랜트 미스매치는 R2로 self-heal이나 여기서 예방.
+#   ⚠️ per-endpoint scope 클레임은 후속(현재 router-level verify_token = 기존 admin과 동일 티어).
+
+
+class VoucherGrantItem(BaseModel):
+    id: int
+    product_id: int
+    product_name: Optional[str]
+    ticket_type: str
+    count: int
+    active: bool
+    updated_at: Optional[str]
+
+
+class UpsertVoucherGrantRequest(BaseModel):
+    product_id: int
+    ticket_type: str
+    count: int = 1
+    active: bool = True
+    base_updated_at: Optional[str] = None  # C5 낙관동시성(직전 조회 updated_at isoformat)
+
+
+@router.get("/product-voucher-grants", response_model=List[VoucherGrantItem])
+def list_product_voucher_grants(sess=Depends(session)):
+    """상품→티켓 매핑 전체(상품명 조인). 백오피스 표시·C5 base_updated_at 획득용."""
+    rows = (
+        sess.execute(
+            select(ProductVoucherGrant).options(joinedload(ProductVoucherGrant.product))
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        VoucherGrantItem(
+            id=r.id,
+            product_id=r.product_id,
+            product_name=r.product.name if r.product else None,
+            ticket_type=r.ticket_type,
+            count=r.count,
+            active=r.active,
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
+        )
+        for r in rows
+    ]
+
+
+@router.put("/product-voucher-grants")
+def upsert_product_voucher_grant(request: UpsertVoucherGrantRequest, sess=Depends(session)):
+    """
+    (product_id, ticket_type) upsert. active=true면 C1/C3-lite를 라이브 정책 대비 강제.
+    C5: base_updated_at(직전 조회값)과 현재 행 updated_at 불일치 시 409(그새 변경).
+    """
+    product = sess.get(Product, request.product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail=f"product {request.product_id} not found")
+
+    # active로 켜는 경우에만 정책 검증(끄는 건 발급 대상 아니라 검증 불요).
+    if request.active:
+        # (리뷰) prod에서 C3-lite cap 미설정 상태로 발급 매핑을 켜는 것 금지 — 머니 가드 fail-open 방지.
+        if config.voucher_grant_max_ncg_per_grant is None and config.stage in (
+            "production",
+            "mainnet",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="prod에선 voucher_grant_max_ncg_per_grant(C3-lite cap) 설정 후에만 활성화 가능",
+            )
+        validate_voucher_mapping(
+            request.ticket_type,
+            request.count,
+            fetch_live_prize_tables(config.portal_prize_tables_url),
+            config.voucher_grant_max_ncg_per_grant,
+        )
+
+    # C5: 갱신 대상 행을 잠가(read-then-commit) 동시제출 silent revert(TOCTOU) 차단.
+    #   신규 삽입 레이스는 UNIQUE(product_id, ticket_type)가 최종 가드.
+    existing = sess.execute(
+        select(ProductVoucherGrant)
+        .where(
+            ProductVoucherGrant.product_id == request.product_id,
+            ProductVoucherGrant.ticket_type == request.ticket_type,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        # C5 낙관동시성 — 클라가 base 제공 시 현재 updated_at과 대조(잠금 하에 판정).
+        cur = existing.updated_at.isoformat() if existing.updated_at else None
+        if request.base_updated_at is not None and cur != request.base_updated_at:
+            raise HTTPException(status_code=409, detail="stale — reload before save")
+        existing.count = request.count
+        existing.active = request.active
+        sess.commit()
+        return {"id": existing.id, "action": "updated"}
+
+    # 신규인데 base 제공(기존 행 기대) → 그새 삭제됨.
+    if request.base_updated_at is not None:
+        raise HTTPException(status_code=409, detail="mapping gone (deleted?) — reload")
+    row = ProductVoucherGrant(
+        product_id=request.product_id,
+        ticket_type=request.ticket_type,
+        count=request.count,
+        active=request.active,
+    )
+    sess.add(row)
+    sess.commit()
+    return {"id": row.id, "action": "created"}
+
+
+@router.delete("/product-voucher-grants/{grant_id}")
+def delete_product_voucher_grant(grant_id: int, sess=Depends(session)):
+    """
+    매핑 하드 삭제. 발급 제외만 원하면 PUT active=false 권장.
+    ⚠️ 삭제·active=false 모두 **이미 enroll된 in-flight 결제**는 dispatch 시 "no active mapping (retry)"로
+       PENDING에 묶여 stall alert까지 침전할 수 있음(운영자 인지 필요 — UI/문서 경고 대상).
+    """
+    row = sess.get(ProductVoucherGrant, grant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+    sess.delete(row)
+    sess.commit()
+    return {"deleted": True, "id": grant_id}

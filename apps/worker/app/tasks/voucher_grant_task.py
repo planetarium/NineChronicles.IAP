@@ -112,7 +112,8 @@ def _post_grant(payload: dict) -> Tuple[bool, Optional[str], bool]:
     """
     포탈 grant 호출. 반환 (terminal_ok, ref, transient):
       - terminal_ok=True  → GRANTED로 종료(success/already granted/amount too small)
-      - transient=True     → 재시도(PENDING 유지): 5xx·인증(401/403)·레이트리밋(429)·타임아웃(408) 또는 'voucher disabled'
+      - transient=True     → 재시도(PENDING 유지): 5xx·인증(401/403)·레이트리밋(429)·타임아웃(408),
+                             'voucher disabled', 또는 포탈이 body.retryable=true로 명시한 설정 불일치(R2).
       - 둘 다 False         → FAILED(그 외 4xx = 검증오류, 재시도해도 동일)
     """
     resp = requests.post(
@@ -124,6 +125,17 @@ def _post_grant(payload: dict) -> Tuple[bool, Optional[str], bool]:
     if resp.status_code >= 500 or resp.status_code in _TRANSIENT_STATUS:
         return False, f"{resp.status_code}", True
     if resp.status_code != 200:
+        # (R2) 포탈이 명시적으로 retryable로 표시한 설정 불일치(예: ticket_type이 아직 정책에
+        #   반영 안 됨 → 409 ERR-TICKET-TYPE-UNKNOWN)는 종단이 아니라 재시도 대상. 정책이 일관되면
+        #   self-heal. 상태코드 관례(4xx=종단)에 의존하지 않고 body.retryable 플래그로 판정.
+        retryable = False
+        try:
+            body = resp.json()
+            retryable = isinstance(body, dict) and body.get("retryable") is True
+        except ValueError:
+            retryable = False
+        if retryable:
+            return False, f"{resp.status_code}:retryable", True
         return False, f"{resp.status_code}:{resp.text[:200]}", False
     body = resp.json()
     if not isinstance(body, dict):
