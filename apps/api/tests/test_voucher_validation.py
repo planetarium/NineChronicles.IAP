@@ -61,7 +61,11 @@ class TestFetchLivePrizeTables:
         assert e.value.status_code == 503
 
     def test_temporary_409(self):
-        with patch.object(vv.requests, "get", return_value=self._resp(200, {"prizeTables": TABLES, "temporary": True})):
+        with patch.object(
+            vv.requests,
+            "get",
+            return_value=self._resp(200, {"prizeTables": TABLES, "temporary": True}),
+        ):
             with pytest.raises(HTTPException) as e:
                 vv.fetch_live_prize_tables("http://portal/prize")
         assert e.value.status_code == 409
@@ -73,12 +77,76 @@ class TestFetchLivePrizeTables:
         assert e.value.status_code == 502
 
     def test_request_exception_502(self):
-        with patch.object(vv.requests, "get", side_effect=vv.requests.RequestException("boom")):
+        with patch.object(
+            vv.requests, "get", side_effect=vv.requests.RequestException("boom")
+        ):
             with pytest.raises(HTTPException) as e:
                 vv.fetch_live_prize_tables("http://portal/prize")
         assert e.value.status_code == 502
 
     def test_success_returns_tables(self):
-        with patch.object(vv.requests, "get", return_value=self._resp(200, {"prizeTables": TABLES, "temporary": False})):
+        with patch.object(
+            vv.requests,
+            "get",
+            return_value=self._resp(200, {"prizeTables": TABLES, "temporary": False}),
+        ):
             out = vv.fetch_live_prize_tables("http://portal/prize")
         assert out == TABLES
+
+
+class TestParseVoucherColumns:
+    def test_blank_is_none(self):
+        assert vv.parse_voucher_columns("", "", TABLES, None) is None
+        assert vv.parse_voucher_columns("  ", None, TABLES, None) is None
+
+    def test_dash_is_clear(self):
+        assert vv.parse_voucher_columns("-", "", TABLES, None) == {}
+
+    def test_single(self):
+        assert vv.parse_voucher_columns("STANDARD", "2", TABLES, None) == {
+            "STANDARD": 2
+        }
+
+    def test_multi_semicolon(self):
+        out = vv.parse_voucher_columns("STANDARD;PREMIUM", "1;3", TABLES, None)
+        assert out == {"STANDARD": 1, "PREMIUM": 3}
+
+    def test_count_defaults_to_1(self):
+        assert vv.parse_voucher_columns("STANDARD", "", TABLES, None) == {"STANDARD": 1}
+
+    def test_bad_count_400(self):
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("STANDARD", "x", TABLES, None)
+        assert e.value.status_code == 400
+
+    def test_unknown_type_propagates_409(self):
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("NOPE", "1", TABLES, None)
+        assert e.value.status_code == 409
+
+    def test_c3lite_propagates_400(self):
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("STANDARD", "6", TABLES, 10000)  # 2000×6 > 10000
+        assert e.value.status_code == 400
+
+    def test_all_counts_omitted_default_1(self):
+        assert vv.parse_voucher_columns("STANDARD;PREMIUM", "", TABLES, None) == {
+            "STANDARD": 1,
+            "PREMIUM": 1,
+        }
+
+    def test_empty_segment_400(self):
+        # "STANDARD;;PREMIUM"는 조용한 count 오정렬 대신 명시적 거부.
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("STANDARD;;PREMIUM", "1;2;3", TABLES, None)
+        assert e.value.status_code == 400
+
+    def test_duplicate_type_400(self):
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("STANDARD;STANDARD", "1;9", TABLES, None)
+        assert e.value.status_code == 400
+
+    def test_length_mismatch_400(self):
+        with pytest.raises(HTTPException) as e:
+            vv.parse_voucher_columns("STANDARD;PREMIUM", "1", TABLES, None)
+        assert e.value.status_code == 400

@@ -17,7 +17,9 @@ def fetch_live_prize_tables(url: Optional[str]) -> dict:
       → 실제 구성·활성 정책이 없는데 매핑을 저장해 grant 미스매치를 만드는 것을 원천 차단.
     """
     if not url:
-        raise HTTPException(status_code=503, detail="portal_prize_tables_url 미설정 — 매핑 검증 불가")
+        raise HTTPException(
+            status_code=503, detail="portal_prize_tables_url 미설정 — 매핑 검증 불가"
+        )
     try:
         resp = requests.get(url, timeout=5)
     except requests.RequestException as e:
@@ -63,3 +65,41 @@ def validate_voucher_mapping(
                 status_code=400,
                 detail=f"C3-lite exceeded: count*maxPrize({count}*{max_prize}) > cap({cap})",
             )
+
+
+def parse_voucher_columns(
+    tt_raw: Optional[str], cnt_raw: Optional[str], tables: dict, cap: Optional[int]
+) -> Optional[dict]:
+    """
+    CSV의 voucher 컬럼(voucher_ticket_type/voucher_count)을 파싱·검증한 REPLACE 집합.
+      반환: None=변경없음(빈칸) · {}=전체 제거('-') · {ticket_type: count}=이 집합으로 REPLACE.
+      다중 종류는 세미콜론 인코딩: "STANDARD;PREMIUM" + "1;1". 각 항목에 C1/C3-lite 강제.
+      위반은 HTTPException(호출부 import_utils가 상품 컨텍스트 붙여 ValueError로 재래이즈).
+    """
+    tt = (tt_raw or "").strip()
+    if tt == "":
+        return None
+    if tt == "-":
+        return {}
+    types = [t.strip() for t in tt.split(";")]
+    # 빈 세그먼트("A;;B")·중복은 count 오정렬/오타 마스킹을 유발하므로 거부.
+    if any(t == "" for t in types):
+        raise HTTPException(status_code=400, detail="voucher_ticket_type에 빈 세그먼트가 있습니다")
+    if len(set(types)) != len(types):
+        raise HTTPException(status_code=400, detail="voucher_ticket_type에 중복 종류가 있습니다")
+    counts = [c.strip() for c in (cnt_raw or "").split(";")]
+    if len(counts) == 1 and counts[0] == "":
+        counts = ["" for _ in types]  # count 전부 생략 → 각 1(default)
+    if len(counts) != len(types):
+        raise HTTPException(
+            status_code=400, detail="voucher_ticket_type/voucher_count 개수 불일치"
+        )
+    desired: dict = {}
+    for ticket_type, raw in zip(types, counts):
+        try:
+            count = int(raw) if raw != "" else 1
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"voucher_count '{raw}' 정수 아님")
+        validate_voucher_mapping(ticket_type, count, tables, cap)
+        desired[ticket_type] = count
+    return desired

@@ -1,7 +1,8 @@
 import csv
 from datetime import datetime, timezone
-from typing import Tuple
+from typing import Optional, Tuple
 
+from fastapi import HTTPException
 from shared.models.product import (
     FungibleAssetProduct,
     FungibleItemProduct,
@@ -13,7 +14,11 @@ from shared.models.product import (
     Store,
     category_product_table,
 )
+from shared.models.product_voucher_grant import ProductVoucherGrant
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from app.voucher_validation import parse_voucher_columns
 
 
 def parse_boolean(value: str) -> bool:
@@ -121,10 +126,7 @@ def compare_and_update_product(
             for field, (old, new) in changes.items():
                 print(f"  - {field}: 기존({old}) → 변경({new})")
 
-            if (
-                not interactive
-                or input("변경을 적용하시겠습니까? (y/n): ").strip().lower() == "y"
-            ):
+            if not interactive or input("변경을 적용하시겠습니까? (y/n): ").strip().lower() == "y":
                 for field, (_, new_value) in changes.items():
                     setattr(existing_product, field, new_value)
                 print(f"✅ Product ID {existing_product.id} 업데이트 완료!")
@@ -139,8 +141,82 @@ def compare_and_update_product(
         return True
 
 
+def _apply_voucher_row(
+    db: Session,
+    product_id: int,
+    row: dict,
+    voucher_tables: Optional[dict],
+    voucher_cap: Optional[int],
+) -> None:
+    """
+    (C1b) CSV 행의 voucher 컬럼을 product_voucher_grant에 적용(REPLACE 시맨틱).
+      빈칸=유지 · '-'=전체 비활성 · 값=나열된 것만 active, 나머지는 active=False.
+      ⚠️ 나열 안 된/제거된 매핑은 **hard-delete 대신 active=False**(복구 가능·데이터 보존).
+         단 active=False도 이미 enroll된 in-flight 결제는 "no active mapping (retry)"로
+         PENDING stall될 수 있음(운영 인지 필요 — CRUD delete와 동일 caveat).
+      C1/C3-lite는 parse_voucher_columns(pure)에서 강제 — 위반 시 상품 컨텍스트 붙여 ValueError
+      (import 전체 트랜잭션이 rollback → 원자적 거부).
+    """
+    if ((row.get("voucher_ticket_type") or "").strip()) == "":
+        return  # 유지 — 정책 fetch/검증 불필요
+    if voucher_tables is None:
+        raise ValueError(
+            f"product {product_id}: voucher 컬럼이 있으나 라이브 정책 미로드"
+            " (portal_prize_tables_url 확인)"
+        )
+    if product_id is None:
+        # blank id(신규상품 autoincrement)면 grant FK가 None → IntegrityError. voucher 행은 id 필수.
+        raise ValueError(
+            f"voucher 매핑 행은 product id가 필요합니다(빈칸 불가, sku={row.get('google_sku')})"
+        )
+    try:
+        desired = parse_voucher_columns(
+            row.get("voucher_ticket_type"),
+            row.get("voucher_count"),
+            voucher_tables,
+            voucher_cap,
+        )
+    except HTTPException as e:
+        raise ValueError(f"product {product_id}: {e.detail}")
+    if desired is None:
+        return
+    db.flush()  # 기존 상품이면 no-op, 신규(명시 id)면 FK 위해 먼저 반영
+    existing = {
+        r.ticket_type: r
+        for r in db.execute(
+            select(ProductVoucherGrant).where(
+                ProductVoucherGrant.product_id == product_id
+            )
+        )
+        .scalars()
+        .all()
+    }
+    # REPLACE: 나열 안 된 기존 타입 비활성('-'면 desired={}라 전부 비활성), 나열된 것 upsert(active).
+    for ticket_type, grant in existing.items():
+        if ticket_type not in desired:
+            grant.active = False
+    for ticket_type, count in desired.items():
+        if ticket_type in existing:
+            existing[ticket_type].count = count
+            existing[ticket_type].active = True
+        else:
+            db.add(
+                ProductVoucherGrant(
+                    product_id=product_id,
+                    ticket_type=ticket_type,
+                    count=count,
+                    active=True,
+                )
+            )
+
+
 def import_products_from_csv(
-    db: Session, csv_path: str, environment: str, interactive: bool = True
+    db: Session,
+    csv_path: str,
+    environment: str,
+    interactive: bool = True,
+    voucher_tables: Optional[dict] = None,
+    voucher_cap: Optional[int] = None,
 ) -> tuple[int, int]:
     """
     CSV 파일에서 상품 데이터를 가져와 데이터베이스에 임포트합니다.
@@ -169,11 +245,11 @@ def import_products_from_csv(
                 csv_data = process_csv_row(row, is_internal)
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
+                # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).
+                _apply_voucher_row(db, csv_data["id"], row, voucher_tables, voucher_cap)
 
             db.commit()
-            print(
-                f"\n✅ CSV 데이터 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})"
-            )
+            print(f"\n✅ CSV 데이터 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")
             return processed_count, updated_count
 
     except Exception as e:
@@ -204,9 +280,7 @@ def process_category_product_row(db: Session, row: dict) -> bool:
     ).fetchone()
 
     if existing_relation:
-        print(
-            f"⏩ Category {category_id} - Product {product_id} 관계가 이미 존재합니다. 건너뜁니다."
-        )
+        print(f"⏩ Category {category_id} - Product {product_id} 관계가 이미 존재합니다. 건너뜁니다.")
         return False
 
     # ✅ 관계 추가
@@ -469,22 +543,16 @@ def process_price_row(db: Session, row: dict) -> bool:
                 changed = True
 
         if changed:
-            print(
-                f"✅ Product {product_id}의 {store.value} 스토어 가격 정보가 업데이트되었습니다."
-            )
+            print(f"✅ Product {product_id}의 {store.value} 스토어 가격 정보가 업데이트되었습니다.")
             return True
         else:
-            print(
-                f"⏩ Product {product_id}의 {store.value} 스토어 가격 정보에 변경사항이 없습니다."
-            )
+            print(f"⏩ Product {product_id}의 {store.value} 스토어 가격 정보에 변경사항이 없습니다.")
             return False
     else:
         # 새로운 가격 정보 추가
         new_price = Price(**price_data)
         db.add(new_price)
-        print(
-            f"🆕 Product {product_id}의 {store.value} 스토어 가격 정보가 추가되었습니다."
-        )
+        print(f"🆕 Product {product_id}의 {store.value} 스토어 가격 정보가 추가되었습니다.")
         return True
 
 
@@ -511,9 +579,7 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
                     updated_count += 1
 
             db.commit()
-            print(
-                f"\n✅ 가격 정보 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})"
-            )
+            print(f"\n✅ 가격 정보 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")
             return processed_count, updated_count
 
     except Exception as e:
