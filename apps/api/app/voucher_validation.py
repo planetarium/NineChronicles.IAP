@@ -68,34 +68,33 @@ def validate_voucher_mapping(
 
 
 def parse_voucher_columns(
-    tt_raw: Optional[str], cnt_raw: Optional[str], tables: dict, cap: Optional[int]
+    pairs: list, tables: dict, cap: Optional[int]
 ) -> Optional[dict]:
     """
-    CSV의 voucher 컬럼(voucher_ticket_type/voucher_count)을 파싱·검증한 REPLACE 집합.
-      반환: None=변경없음(빈칸) · {}=전체 제거('-') · {ticket_type: count}=이 집합으로 REPLACE.
-      다중 종류는 세미콜론 인코딩: "STANDARD;PREMIUM" + "1;1". 각 항목에 C1/C3-lite 강제.
+    CSV의 (ticket_type, count) **쌍 목록**을 파싱·검증한 REPLACE 집합.
+      pairs = [(type_1, count_1), (type_2, count_2), ...] (각 슬롯 원본 문자열). 세미콜론 정렬 불필요.
+      반환: None=변경없음(전 슬롯 빈칸) · {}=전체 비활성('-' 단독) · {ticket_type: count}=이 집합으로 REPLACE.
+      count 빈칸=1(default). C1/C3-lite는 validate_voucher_mapping에서 강제.
       위반은 HTTPException(호출부 import_utils가 상품 컨텍스트 붙여 ValueError로 재래이즈).
     """
-    tt = (tt_raw or "").strip()
-    if tt == "":
-        return None
-    if tt == "-":
+    filled = [
+        ((t or "").strip(), (c or "").strip())
+        for (t, c) in pairs
+        if (t or "").strip() != ""
+    ]
+    if not filled:
+        return None  # 전 슬롯 빈칸 = 유지
+    if any(t == "-" for (t, _) in filled):
+        # '-'(전체 제거)는 단독 슬롯 신호 — 다른 종류와 섞으면 의도 모호 → 거부.
+        if len(filled) != 1:
+            raise HTTPException(status_code=400, detail="'-'(전체 제거)는 단독 슬롯으로만 사용하세요")
         return {}
-    types = [t.strip() for t in tt.split(";")]
-    # 빈 세그먼트("A;;B")·중복은 count 오정렬/오타 마스킹을 유발하므로 거부.
-    if any(t == "" for t in types):
-        raise HTTPException(status_code=400, detail="voucher_ticket_type에 빈 세그먼트가 있습니다")
-    if len(set(types)) != len(types):
-        raise HTTPException(status_code=400, detail="voucher_ticket_type에 중복 종류가 있습니다")
-    counts = [c.strip() for c in (cnt_raw or "").split(";")]
-    if len(counts) == 1 and counts[0] == "":
-        counts = ["" for _ in types]  # count 전부 생략 → 각 1(default)
-    if len(counts) != len(types):
-        raise HTTPException(
-            status_code=400, detail="voucher_ticket_type/voucher_count 개수 불일치"
-        )
     desired: dict = {}
-    for ticket_type, raw in zip(types, counts):
+    for ticket_type, raw in filled:
+        if ticket_type in desired:
+            raise HTTPException(
+                status_code=400, detail=f"중복 ticket_type '{ticket_type}'"
+            )
         try:
             count = int(raw) if raw != "" else 1
         except ValueError:

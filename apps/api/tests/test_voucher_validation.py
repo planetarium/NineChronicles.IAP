@@ -95,58 +95,61 @@ class TestFetchLivePrizeTables:
 
 
 class TestParseVoucherColumns:
-    def test_blank_is_none(self):
-        assert vv.parse_voucher_columns("", "", TABLES, None) is None
-        assert vv.parse_voucher_columns("  ", None, TABLES, None) is None
+    # pairs = [(type_i, count_i), ...] (고정 슬롯 원본 문자열)
+    def test_all_blank_is_none(self):
+        assert (
+            vv.parse_voucher_columns([("", ""), ("  ", None), (None, "")], TABLES, None)
+            is None
+        )
 
-    def test_dash_is_clear(self):
-        assert vv.parse_voucher_columns("-", "", TABLES, None) == {}
+    def test_dash_alone_is_clear(self):
+        assert (
+            vv.parse_voucher_columns([("-", ""), ("", ""), ("", "")], TABLES, None)
+            == {}
+        )
 
     def test_single(self):
-        assert vv.parse_voucher_columns("STANDARD", "2", TABLES, None) == {
-            "STANDARD": 2
-        }
+        assert vv.parse_voucher_columns(
+            [("STANDARD", "2"), ("", ""), ("", "")], TABLES, None
+        ) == {"STANDARD": 2}
 
-    def test_multi_semicolon(self):
-        out = vv.parse_voucher_columns("STANDARD;PREMIUM", "1;3", TABLES, None)
+    def test_multi_pairs(self):
+        out = vv.parse_voucher_columns(
+            [("STANDARD", "1"), ("PREMIUM", "3"), ("", "")], TABLES, None
+        )
         assert out == {"STANDARD": 1, "PREMIUM": 3}
 
     def test_count_defaults_to_1(self):
-        assert vv.parse_voucher_columns("STANDARD", "", TABLES, None) == {"STANDARD": 1}
+        assert vv.parse_voucher_columns(
+            [("STANDARD", ""), ("", ""), ("", "")], TABLES, None
+        ) == {"STANDARD": 1}
 
     def test_bad_count_400(self):
         with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("STANDARD", "x", TABLES, None)
+            vv.parse_voucher_columns([("STANDARD", "x")], TABLES, None)
         assert e.value.status_code == 400
 
     def test_unknown_type_propagates_409(self):
         with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("NOPE", "1", TABLES, None)
+            vv.parse_voucher_columns([("NOPE", "1")], TABLES, None)
         assert e.value.status_code == 409
 
     def test_c3lite_propagates_400(self):
         with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("STANDARD", "6", TABLES, 10000)  # 2000×6 > 10000
-        assert e.value.status_code == 400
-
-    def test_all_counts_omitted_default_1(self):
-        assert vv.parse_voucher_columns("STANDARD;PREMIUM", "", TABLES, None) == {
-            "STANDARD": 1,
-            "PREMIUM": 1,
-        }
-
-    def test_empty_segment_400(self):
-        # "STANDARD;;PREMIUM"는 조용한 count 오정렬 대신 명시적 거부.
-        with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("STANDARD;;PREMIUM", "1;2;3", TABLES, None)
+            vv.parse_voucher_columns(
+                [("STANDARD", "6")], TABLES, 10000
+            )  # 2000×6 > 10000
         assert e.value.status_code == 400
 
     def test_duplicate_type_400(self):
         with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("STANDARD;STANDARD", "1;9", TABLES, None)
+            vv.parse_voucher_columns(
+                [("STANDARD", "1"), ("STANDARD", "9")], TABLES, None
+            )
         assert e.value.status_code == 400
 
-    def test_length_mismatch_400(self):
+    def test_dash_with_others_400(self):
+        # '-'(전체 제거)는 단독으로만 — 다른 종류와 섞으면 거부.
         with pytest.raises(HTTPException) as e:
-            vv.parse_voucher_columns("STANDARD;PREMIUM", "1", TABLES, None)
+            vv.parse_voucher_columns([("-", ""), ("STANDARD", "1")], TABLES, None)
         assert e.value.status_code == 400

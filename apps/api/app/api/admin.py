@@ -279,9 +279,13 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             import io as _io
 
             _reader = _csv_mod.DictReader(_io.StringIO(request.csv_content or ""))
-            _has_voucher_data = "voucher_ticket_type" in (
-                _reader.fieldnames or []
-            ) and any((r.get("voucher_ticket_type") or "").strip() for r in _reader)
+            _fields = _reader.fieldnames or []
+            _vcols = [
+                f"voucher_ticket_type_{i}" for i in range(1, 4)
+            ]  # VOUCHER_SLOTS=3
+            _has_voucher_data = any(v in _fields for v in _vcols) and any(
+                any((r.get(v) or "").strip() for v in _vcols) for r in _reader
+            )
             voucher_tables = None
             voucher_cap = None
             if _has_voucher_data:

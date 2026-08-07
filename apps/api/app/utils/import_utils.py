@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.voucher_validation import parse_voucher_columns
 
+# (C1b) CSV의 voucher (type, count) 고정 쌍 슬롯 수. voucher_ticket_type_1..N / voucher_count_1..N.
+VOUCHER_SLOTS = 3
+
 
 def parse_boolean(value: str) -> bool:
     return value.strip().upper() == "TRUE"
@@ -157,8 +160,13 @@ def _apply_voucher_row(
       C1/C3-lite는 parse_voucher_columns(pure)에서 강제 — 위반 시 상품 컨텍스트 붙여 ValueError
       (import 전체 트랜잭션이 rollback → 원자적 거부).
     """
-    if ((row.get("voucher_ticket_type") or "").strip()) == "":
-        return  # 유지 — 정책 fetch/검증 불필요
+    # 고정 슬롯 (type_i, count_i) 쌍 수집 — 세미콜론 정렬 불필요.
+    pairs = [
+        (row.get(f"voucher_ticket_type_{i}"), row.get(f"voucher_count_{i}"))
+        for i in range(1, VOUCHER_SLOTS + 1)
+    ]
+    if all(((t or "").strip() == "") for (t, _) in pairs):
+        return  # 전 슬롯 빈칸 = 유지 — 정책 fetch/검증 불필요
     if voucher_tables is None:
         raise ValueError(
             f"product {product_id}: voucher 컬럼이 있으나 라이브 정책 미로드"
@@ -170,12 +178,7 @@ def _apply_voucher_row(
             f"voucher 매핑 행은 product id가 필요합니다(빈칸 불가, sku={row.get('google_sku')})"
         )
     try:
-        desired = parse_voucher_columns(
-            row.get("voucher_ticket_type"),
-            row.get("voucher_count"),
-            voucher_tables,
-            voucher_cap,
-        )
+        desired = parse_voucher_columns(pairs, voucher_tables, voucher_cap)
     except HTTPException as e:
         raise ValueError(f"product {product_id}: {e.detail}")
     if desired is None:
