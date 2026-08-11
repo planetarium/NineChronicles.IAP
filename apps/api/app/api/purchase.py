@@ -236,13 +236,29 @@ def retry_product(
     if empty_data:
         raise InsufficientUserDataException(prev_receipt.uuid, order_id, empty_data)
 
+    # Only a receipt that was actually delivered may be re-confirmed. Handing a
+    # failed/incomplete one back with 200 makes the client confirm (= consume) the
+    # store purchase, which also acknowledges it and thereby cancels the store's
+    # automatic refund: the buyer would end up paying for nothing, irreversibly.
+    # `msg` is only ever written by failure paths for receipts without a tx.
+    if prev_receipt.status != ReceiptStatus.VALID or prev_receipt.msg:
+        raise ValueError(
+            f"Receipt {order_id} is not deliverable: "
+            f"status={prev_receipt.status.name} :: {prev_receipt.uuid} :: {prev_receipt.msg}"
+        )
+
     # Can do retry
+    logger.info(
+        f"[Retry] {order_id} :: {prev_receipt.uuid} :: status={prev_receipt.status.name}"
+    )
     receipt_schema = ReceiptSchema(
         data=receipt_data.data,
         store=receipt_data.store,
         agentAddress=prev_receipt.agent_addr,
         avatarAddress=prev_receipt.avatar_addr,
-        planetId=prev_receipt.planet_id,
+        # `planet_id` is raw bytes from the DB; ReceiptSchema only converts `str`,
+        # and `request_product` reads `planetId.value` further down.
+        planetId=PlanetID(prev_receipt.planet_id),
     )
     # NOTE: `request_product` is a route handler: calling it directly leaves its
     #  `sess=Depends(session)` default unresolved, so the session must be passed

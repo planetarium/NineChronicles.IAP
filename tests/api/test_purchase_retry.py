@@ -1,23 +1,36 @@
 """`POST /api/purchase/retry` 회귀 테스트.
 
-`retry_product`는 라우트 핸들러인 `request_product`를 파이썬 함수로 직접 호출한다.
-이때 `sess=Depends(session)` 기본값은 FastAPI가 해결해주지 않으므로 세션을 명시적으로
-넘겨야 한다. 넘기지 않으면 `request_product` 안에서
-`AttributeError: 'Depends' object has no attribute 'scalar'` 가 나면서 500이 된다.
+실행: 리포 루트에서 `pytest tests/api/test_purchase_retry.py`
+(import 준비는 아래 모듈 상단에서 자체 처리한다. CI는 이미지 빌드만 하므로
+이 테스트는 수동/로컬 실행 전용이다.)
 
-이 버그는 재시도가 "정말 처리해야 하는" 경우에만 터진다(이미 처리된 영수증은 조기
-반환되므로). 특히 패스류 상품은 지급이 온체인 tx가 아니라 시즌패스 경유라 `tx_status`가
-영구히 NULL이어서 항상 이 경로를 탄다.
+다루는 회귀 둘:
+
+1. `retry_product`는 라우트 핸들러인 `request_product`를 파이썬 함수로 직접 호출한다.
+   이때 `sess=Depends(session)` 기본값은 FastAPI가 해결해주지 않으므로 세션을 명시적으로
+   넘겨야 한다. 넘기지 않으면 `AttributeError: 'Depends' object has no attribute
+   'scalar'` 로 500이 난다. 이 버그는 재시도가 "정말 처리해야 하는" 경우에만 터진다
+   (이미 처리된 영수증은 조기 반환되므로). 특히 패스류 상품은 지급이 온체인 tx가 아니라
+   시즌패스 경유라 `tx_status`가 영구히 NULL이어서 항상 이 경로를 탄다.
+2. 지급에 실패한 영수증은 200으로 돌려주면 안 된다. 클라이언트가 결제를 consume
+   (= acknowledge)해버려 스토어 자동환불까지 막히고 유저는 돈만 잃는다.
 """
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
+from unittest.mock import create_autospec
 
 import pytest
+from shared.enums import PackageName, PlanetID, ReceiptStatus, Store, TxStatus
+from shared.models.receipt import Receipt
+from shared.schemas.receipt import SimpleReceiptSchema
 
-# `app.config.Settings`는 import 시점에 평가되므로 필수 값들을 먼저 채워둔다.
-for _key in (
+API_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "apps", "api")
+
+# `apps/api`에 필요한 설정 항목. `app.config.Settings`는 import 시점에 평가된다.
+REQUIRED_SETTINGS = (
     "BACKOFFICE_JWT_SECRET",
     "SEASON_PASS_HOST",
     "SEASON_PASS_JWT_SECRET",
@@ -41,13 +54,32 @@ for _key in (
     "CLOUDFRONT_DISTRIBUTION_1",
     "CLOUDFRONT_DISTRIBUTION_2",
     "REDEEM_API_BASE_URL",
-):
-    os.environ.setdefault(f"API_{_key}", "test")
+)
 
-from app.api import purchase as purchase_api  # noqa: E402
-from shared.enums import PackageName, PlanetID, ReceiptStatus, Store  # noqa: E402
-from shared.models.receipt import Receipt  # noqa: E402
-from shared.schemas.receipt import SimpleReceiptSchema  # noqa: E402
+
+@pytest.fixture(scope="module")
+def purchase_api():
+    """`apps/api`의 purchase 모듈을 부작용 없이 가져온다.
+
+    `apps/api` 내부 모듈은 서로를 top-level `app` 패키지로 import하는데
+    `tests/conftest.py`는 `apps/shared`까지만 sys.path에 올린다. 이걸 모듈 상단에서
+    처리하면 수집 단계에서 sys.path가 바뀌어 다른 테스트 파일의 import 결과까지
+    바꿔버리므로, 실행 시점에만 잠깐 손댔다가 되돌린다.
+
+    되돌아오는 건 `sys.path`뿐이다. `sys.modules["app"]`은 세션이 끝날 때까지
+    `apps/api`의 패키지로 남으므로, 나중에 worker 쪽 테스트가 top-level `app`을
+    import하면 조용히 이쪽을 집게 된다(현재는 그런 테스트가 없다).
+    """
+    for key in REQUIRED_SETTINGS:
+        os.environ.setdefault(f"API_{key}", "test")
+
+    sys.path.insert(0, API_ROOT)
+    try:
+        from app.api import purchase
+    finally:
+        sys.path.remove(API_ROOT)
+    return purchase
+
 
 ORDER_ID = "GPA.0000-0000-0000-00000"
 GOOGLE_SKU = "g_pkg_couragepass33premium"
@@ -63,6 +95,25 @@ class FakeSession:
     def scalar(self, *_args, **_kwargs):
         self.scalar_calls += 1
         return self._receipt
+
+
+def make_receipt(**overrides) -> Receipt:
+    """지급은 끝났지만 tx_status가 없는 패스 상품 영수증(= 재시도 대상)."""
+    kwargs = dict(
+        store=Store.GOOGLE,
+        order_id=ORDER_ID,
+        package_name=PackageName.NINE_CHRONICLES_K.value,
+        data={},
+        status=ReceiptStatus.VALID,
+        purchased_at=datetime.now(tz=timezone.utc),
+        agent_addr="0x1234567890123456789012345678901234567890",
+        avatar_addr="0x0987654321098765432109876543210987654321",
+        planet_id=PlanetID.ODIN.value,
+        tx_status=None,
+        msg=None,
+    )
+    kwargs.update(overrides)
+    return Receipt(**kwargs)
 
 
 @pytest.fixture
@@ -85,55 +136,78 @@ def receipt_data():
     )
 
 
-@pytest.fixture
-def pending_receipt():
-    """지급은 끝났지만 tx_status가 없는 패스 상품 영수증(= 재시도 대상)."""
-    return Receipt(
-        store=Store.GOOGLE,
-        order_id=ORDER_ID,
-        package_name=PackageName.NINE_CHRONICLES_K.value,
-        data={},
-        status=ReceiptStatus.VALID,
-        purchased_at=datetime.now(tz=timezone.utc),
-        agent_addr="0x1234567890123456789012345678901234567890",
-        avatar_addr="0x0987654321098765432109876543210987654321",
-        planet_id=PlanetID.ODIN.value,
-        tx_status=None,
-    )
-
-
-def test_retry_returns_receipt_instead_of_raising(receipt_data, pending_receipt):
-    """세션이 전달되지 않으면 이 호출은 AttributeError로 터진다."""
-    sess = FakeSession(pending_receipt)
-
-    result = purchase_api.retry_product(
+def call_retry(purchase_api, receipt_data, sess):
+    return purchase_api.retry_product(
         receipt_data,
         x_iap_packagename=PackageName.NINE_CHRONICLES_K,
         sess=sess,
     )
 
-    assert result is pending_receipt
-    # retry_product에서 한 번, 위임받은 request_product에서 한 번.
+
+def test_retry_returns_receipt_instead_of_raising(purchase_api, receipt_data):
+    """세션이 전달되지 않으면 이 호출은 AttributeError로 터진다."""
+    receipt = make_receipt()
+    sess = FakeSession(receipt)
+
+    assert call_retry(purchase_api, receipt_data, sess) is receipt
+    # SELECT 2번(retry_product + 위임받은 request_product)이 전부다:
+    # 위임은 기존 영수증을 되돌려줄 뿐 재지급을 트리거하지 않는다.
     assert sess.scalar_calls == 2
 
 
-def test_retry_forwards_same_session(monkeypatch, receipt_data, pending_receipt):
-    """위임 시 세션이 그대로 넘어가는지(기본값 Depends가 아닌지) 고정."""
-    sess = FakeSession(pending_receipt)
-    captured = {}
+def test_retry_forwards_same_session(monkeypatch, purchase_api, receipt_data):
+    """위임 시 세션이 그대로 넘어가는지(기본값 Depends가 아닌지) 고정.
 
-    def fake_request_product(receipt_schema, x_iap_packagename=None, sess=None):
-        captured["sess"] = sess
-        captured["x_iap_packagename"] = x_iap_packagename
-        return pending_receipt
+    `create_autospec`이라 `request_product` 시그니처가 바뀌면 여기서 잡힌다.
+    """
+    receipt = make_receipt()
+    sess = FakeSession(receipt)
+    spy = create_autospec(purchase_api.request_product, return_value=receipt)
+    monkeypatch.setattr(purchase_api, "request_product", spy)
 
-    monkeypatch.setattr(purchase_api, "request_product", fake_request_product)
+    call_retry(purchase_api, receipt_data, sess)
 
-    purchase_api.retry_product(
-        receipt_data,
-        x_iap_packagename=PackageName.NINE_CHRONICLES_K,
-        sess=sess,
-    )
+    assert spy.call_args.kwargs["sess"] is sess
+    assert spy.call_args.kwargs["x_iap_packagename"] is PackageName.NINE_CHRONICLES_K
+    assert spy.call_args.args[0].planetId is PlanetID.ODIN
 
-    assert captured["sess"] is sess
-    assert captured["x_iap_packagename"] is PackageName.NINE_CHRONICLES_K
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"status": ReceiptStatus.INIT}, id="not-validated"),
+        pytest.param({"status": ReceiptStatus.INVALID}, id="invalid"),
+        pytest.param({"status": ReceiptStatus.REQUIRED_LEVEL}, id="required-level"),
+        pytest.param(
+            {"status": ReceiptStatus.PURCHASE_LIMIT_EXCEED}, id="limit-exceeded"
+        ),
+        # 환불된 결제를 다시 확정시키는 게 결과적으로 가장 나쁘다.
+        pytest.param(
+            {"status": ReceiptStatus.REFUNDED_BY_BUYER}, id="refunded-by-buyer"
+        ),
+        pytest.param(
+            {"status": ReceiptStatus.REFUNDED_BY_ADMIN}, id="refunded-by-admin"
+        ),
+        pytest.param(
+            {"msg": '500 :: "SeasonPass Upgrade Failed"'}, id="valid-but-failed"
+        ),
+    ],
+)
+def test_retry_refuses_undelivered_receipt(purchase_api, receipt_data, overrides):
+    """지급 실패 영수증은 200이 아니라 400(ValueError)으로 끝나야 한다.
+
+    200을 주면 클라가 결제를 consume → acknowledge까지 되어 스토어 자동환불이 막힌다.
+    """
+    sess = FakeSession(make_receipt(**overrides))
+
+    with pytest.raises(ValueError):
+        call_retry(purchase_api, receipt_data, sess)
+
+
+def test_retry_returns_already_handled_receipt(purchase_api, receipt_data):
+    """tx가 이미 붙은 영수증은 위임 없이 그대로 반환(기존 동작 고정)."""
+    receipt = make_receipt(tx_status=TxStatus.SUCCESS)
+    sess = FakeSession(receipt)
+
+    assert call_retry(purchase_api, receipt_data, sess) is receipt
+    assert sess.scalar_calls == 1
