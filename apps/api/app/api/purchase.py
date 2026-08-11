@@ -244,7 +244,13 @@ def retry_product(
         avatarAddress=prev_receipt.avatar_addr,
         planetId=prev_receipt.planet_id,
     )
-    return request_product(receipt_schema, x_iap_packagename=x_iap_packagename)
+    # NOTE: `request_product` is a route handler: calling it directly leaves its
+    #  `sess=Depends(session)` default unresolved, so the session must be passed
+    #  explicitly. Without this the retry path raises
+    #  `AttributeError: 'Depends' object has no attribute 'scalar'` (500).
+    return request_product(
+        receipt_schema, x_iap_packagename=x_iap_packagename, sess=sess
+    )
 
 
 @router.post("/request", response_model=ReceiptDetailSchema)
