@@ -44,6 +44,13 @@ beat_schedule = {
         "schedule": crontab(minute="*/60"),
         "options": {"queue": "background_job_queue"},
     },
+    # 결제 성공 신호는 왔는데 영수증이 안 생긴 건을 메운다.
+    # 스토어 자동환불까지 72시간 여유가 있어 10분 주기면 충분하다.
+    "reconcile-purchase-signal-every-10-minutes": {
+        "task": "iap.reconcile_purchase_signal",
+        "schedule": crontab(minute="*/10"),
+        "options": {"queue": "background_job_queue"},
+    },
 }
 
 app.conf.update(
