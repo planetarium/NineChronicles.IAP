@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # Redeem API JWT secret for 9C service only
     jwt_secret_9c: str = "jwt-secret-9c"
 
+    # (PLD) 바우처 상품매핑 admin — C1(ticket_type ∈ 정책) 크로스read용 포탈 공개 prize-tables URL.
+    portal_prize_tables_url: Optional[str] = None  # 예: https://.../api/voucher/prize-tables
+    # C3-lite 상한: 1 grant 최악 지급(count×최대상금 NCG) 상한. None=미강제(런칭게이트서 숫자 주입).
+    voucher_grant_max_ncg_per_grant: Optional[int] = None
+
     @property
     def converted_gql_url_map(self) -> dict[PlanetID, str]:
         return {PlanetID(k.encode()): v for k, v in self.gql_url_map.items()}

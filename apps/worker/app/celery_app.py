@@ -44,6 +44,16 @@ beat_schedule = {
         "schedule": crontab(minute="*/60"),
         "options": {"queue": "background_job_queue"},
     },
+    "voucher-grant-every-2-minutes": {
+        "task": "iap.voucher_grant",
+        "schedule": crontab(minute="*/2"),
+        "options": {"queue": "background_job_queue"},
+    },
+    "voucher-reconcile-every-5-minutes": {
+        "task": "iap.voucher_reconcile",
+        "schedule": crontab(minute="*/5"),
+        "options": {"queue": "background_job_queue"},
+    },
 }
 
 app.conf.update(

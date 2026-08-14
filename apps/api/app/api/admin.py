@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Security, Up
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from shared.enums import PlanetID, ReceiptStatus, Store
-from shared.models.product import FungibleAssetProduct, FungibleItemProduct, Price, Product
+from shared.models.product import (
+    FungibleAssetProduct,
+    FungibleItemProduct,
+    Price,
+    Product,
+)
+from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
@@ -37,6 +43,7 @@ from app.utils.r2 import (
     upload_image_to_r2,
 )
 from app.utils.s3 import invalidate_cloudfront, upload_image_to_s3, upload_to_s3
+from app.voucher_validation import fetch_live_prize_tables, validate_voucher_mapping
 
 security = HTTPBearer()
 
@@ -266,9 +273,41 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             temp_path = temp_file.name
 
         try:
+            # (C1b) CSV에 **실제 voucher 값이 있는 행**이 있을 때만 라이브 정책 fetch.
+            #   컬럼 유무(헤더 substring)가 아니라 데이터 유무로 판정 → voucher 없는 일반 import은 포탈 미의존.
+            import csv as _csv_mod
+            import io as _io
+
+            _reader = _csv_mod.DictReader(_io.StringIO(request.csv_content or ""))
+            _fields = _reader.fieldnames or []
+            _vcols = [
+                f"voucher_ticket_type_{i}" for i in range(1, 4)
+            ]  # VOUCHER_SLOTS=3
+            _has_voucher_data = any(v in _fields for v in _vcols) and any(
+                any((r.get(v) or "").strip() for v in _vcols) for r in _reader
+            )
+            voucher_tables = None
+            voucher_cap = None
+            if _has_voucher_data:
+                if config.voucher_grant_max_ncg_per_grant is None and config.stage in (
+                    "production",
+                    "mainnet",
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="prod에선 voucher_grant_max_ncg_per_grant(C3-lite cap) 설정 후에만 voucher CSV import 가능",
+                    )
+                voucher_tables = fetch_live_prize_tables(config.portal_prize_tables_url)
+                voucher_cap = config.voucher_grant_max_ncg_per_grant
+
             # 비대화형 모드로 임포트 실행
             processed_count, updated_count = import_products_from_csv(
-                sess, temp_path, request.environment, interactive=False
+                sess,
+                temp_path,
+                request.environment,
+                interactive=False,
+                voucher_tables=voucher_tables,
+                voucher_cap=voucher_cap,
             )
 
             return {
@@ -280,6 +319,8 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             # 임시 파일 삭제
             os.unlink(temp_path)
 
+    except HTTPException:
+        raise  # fetch(502/409/503)·prod게이트(400) 등 명시 상태코드 보존
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -515,9 +556,7 @@ def upload_product_csv_to_s3_endpoint(request: UploadCsvToR2Request):
             # CloudFront 캐시 초기화
             invalidate_cloudfront()
 
-            return {
-                "message": "CSV 파일이 성공적으로 업로드되었고 캐시 초기화가 요청되었습니다."
-            }
+            return {"message": "CSV 파일이 성공적으로 업로드되었고 캐시 초기화가 요청되었습니다."}
         finally:
             # 임시 파일 삭제
             os.unlink(temp_path)
@@ -702,9 +741,7 @@ async def upload_multiple_images_to_s3(files: List[UploadFile] = File(...)):
 
 @router.get("/receipts", response_model=ReceiptSearchResponse)
 def search_receipts(
-    start_date: Optional[datetime] = Query(
-        None, description="검색 시작 날짜 (ISO 형식)"
-    ),
+    start_date: Optional[datetime] = Query(None, description="검색 시작 날짜 (ISO 형식)"),
     end_date: Optional[datetime] = Query(None, description="검색 종료 날짜 (ISO 형식)"),
     status: Optional[ReceiptStatus] = Query(None, description="영수증 상태로 필터링"),
     planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
@@ -818,19 +855,21 @@ def check_courage_pass_purchases(
         include_product=True,
         only_paid_products=True,
         sku_pattern="couragepass\\d+premium",
-        planet_id=planet_id
+        planet_id=planet_id,
     )
 
     courage_pass_details = []
     for receipt in courage_pass_receipts:
         if receipt.product:
-            courage_pass_details.append({
-                "order_id": receipt.order_id,
-                "purchased_at": receipt.purchased_at.isoformat(),
-                "google_sku": receipt.product.google_sku,
-                "product_name": receipt.product.name,
-                "amount": receipt.amount if hasattr(receipt, 'amount') else None
-            })
+            courage_pass_details.append(
+                {
+                    "order_id": receipt.order_id,
+                    "purchased_at": receipt.purchased_at.isoformat(),
+                    "google_sku": receipt.product.google_sku,
+                    "product_name": receipt.product.name,
+                    "amount": receipt.amount if hasattr(receipt, "amount") else None,
+                }
+            )
 
     return CouragePassCheckResponse(
         agent_address=agent_address,
@@ -839,11 +878,13 @@ def check_courage_pass_purchases(
         month=month,
         has_courage_pass=len(courage_pass_receipts) > 0,
         courage_pass_count=len(courage_pass_receipts),
-        courage_pass_details=courage_pass_details
+        courage_pass_details=courage_pass_details,
     )
 
 
-@router.get("/user-receipts/courage-pass-count", response_model=CouragePassCountResponse)
+@router.get(
+    "/user-receipts/courage-pass-count", response_model=CouragePassCountResponse
+)
 def check_courage_pass_count(
     agent_address: str = Query(..., description="9c agent 주소"),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
@@ -887,13 +928,15 @@ def check_courage_pass_count(
         include_product=True,
         only_paid_products=True,
         sku_pattern="couragepass\\d+premium",
-        planet_id=planet_id
+        planet_id=planet_id,
     )
 
     return CouragePassCountResponse(count=len(courage_pass_receipts))
 
 
-@router.get("/user-receipts/adventure-boss-pass", response_model=AdventureBossPassCheckResponse)
+@router.get(
+    "/user-receipts/adventure-boss-pass", response_model=AdventureBossPassCheckResponse
+)
 def check_adventure_boss_pass_purchases(
     agent_address: str = Query(..., description="9c agent 주소"),
     avatar_address: str = Query(..., description="9c avatar 주소"),
@@ -933,19 +976,21 @@ def check_adventure_boss_pass_purchases(
         include_product=True,
         only_paid_products=True,
         sku_pattern="adventurebosspass\\d+premium",
-        planet_id=planet_id
+        planet_id=planet_id,
     )
 
     adventure_boss_pass_details = []
     for receipt in adventure_boss_pass_receipts:
         if receipt.product:
-            adventure_boss_pass_details.append({
-                "order_id": receipt.order_id,
-                "purchased_at": receipt.purchased_at.isoformat(),
-                "google_sku": receipt.product.google_sku,
-                "product_name": receipt.product.name,
-                "amount": receipt.amount if hasattr(receipt, 'amount') else None
-            })
+            adventure_boss_pass_details.append(
+                {
+                    "order_id": receipt.order_id,
+                    "purchased_at": receipt.purchased_at.isoformat(),
+                    "google_sku": receipt.product.google_sku,
+                    "product_name": receipt.product.name,
+                    "amount": receipt.amount if hasattr(receipt, "amount") else None,
+                }
+            )
 
     return AdventureBossPassCheckResponse(
         agent_address=agent_address,
@@ -954,17 +999,21 @@ def check_adventure_boss_pass_purchases(
         month=month,
         has_adventure_boss_pass=len(adventure_boss_pass_receipts) > 0,
         adventure_boss_pass_count=len(adventure_boss_pass_receipts),
-        adventure_boss_pass_details=adventure_boss_pass_details
+        adventure_boss_pass_details=adventure_boss_pass_details,
     )
 
 
-@router.get("/user-receipts/non-pass-amount", response_model=NonPassPurchaseCheckResponse)
+@router.get(
+    "/user-receipts/non-pass-amount", response_model=NonPassPurchaseCheckResponse
+)
 def check_non_pass_purchase_amount(
     agent_address: str = Query(..., description="9c agent 주소"),
     avatar_address: str = Query(..., description="9c avatar 주소"),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
-        amount_threshold: Decimal = Query(Decimal("100.0"), description="금액 임계값 (기본값: 100.0)"),
+    amount_threshold: Decimal = Query(
+        Decimal("100.0"), description="금액 임계값 (기본값: 100.0)"
+    ),
     planet_id: Optional[bytes] = Query(None, description="행성 ID로 필터링"),
     sess=Depends(session),
 ):
@@ -999,11 +1048,8 @@ def check_non_pass_purchase_amount(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=[
-            "adventurebosspass\\d+premium",
-            "couragepass\\d+premium"
-        ],
-        planet_id=planet_id
+        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        planet_id=planet_id,
     )
 
     # 총 금액 계산
@@ -1013,23 +1059,24 @@ def check_non_pass_purchase_amount(
     for receipt in non_pass_receipts:
         if receipt.product:
             # 가격 정보 조회
-            price_query = sess.query(Price).filter(
-                and_(
-                    Price.product_id == receipt.product.id,
-                    Price.price > 0
-                )
-            ).first()
+            price_query = (
+                sess.query(Price)
+                .filter(and_(Price.product_id == receipt.product.id, Price.price > 0))
+                .first()
+            )
 
             amount = Decimal(str(price_query.price)) if price_query else Decimal("0.0")
             total_amount += amount
 
-            non_pass_purchases.append({
-                "order_id": receipt.order_id,
-                "purchased_at": receipt.purchased_at.isoformat(),
-                "google_sku": receipt.product.google_sku,
-                "product_name": receipt.product.name,
-                "amount": amount
-            })
+            non_pass_purchases.append(
+                {
+                    "order_id": receipt.order_id,
+                    "purchased_at": receipt.purchased_at.isoformat(),
+                    "google_sku": receipt.product.google_sku,
+                    "product_name": receipt.product.name,
+                    "amount": amount,
+                }
+            )
 
     return NonPassPurchaseCheckResponse(
         agent_address=agent_address,
@@ -1040,11 +1087,13 @@ def check_non_pass_purchase_amount(
         purchase_count=len(non_pass_receipts),
         meets_amount_threshold=total_amount >= amount_threshold,
         meets_count_threshold=len(non_pass_receipts) >= 1,
-        non_pass_purchases=non_pass_purchases
+        non_pass_purchases=non_pass_purchases,
     )
 
 
-@router.get("/user-receipts/non-pass-count", response_model=NonPassPurchaseCheckResponse)
+@router.get(
+    "/user-receipts/non-pass-count", response_model=NonPassPurchaseCheckResponse
+)
 def check_non_pass_purchase_count(
     agent_address: str = Query(..., description="9c agent 주소"),
     avatar_address: str = Query(..., description="9c avatar 주소"),
@@ -1085,11 +1134,8 @@ def check_non_pass_purchase_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=[
-            "adventurebosspass\\d+premium",
-            "couragepass\\d+premium"
-        ],
-        planet_id=planet_id
+        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        planet_id=planet_id,
     )
 
     # 총 금액 계산
@@ -1099,23 +1145,24 @@ def check_non_pass_purchase_count(
     for receipt in non_pass_receipts:
         if receipt.product:
             # 가격 정보 조회
-            price_query = sess.query(Price).filter(
-                and_(
-                    Price.product_id == receipt.product.id,
-                    Price.price > 0
-                )
-            ).first()
+            price_query = (
+                sess.query(Price)
+                .filter(and_(Price.product_id == receipt.product.id, Price.price > 0))
+                .first()
+            )
 
             amount = Decimal(str(price_query.price)) if price_query else Decimal("0.0")
             total_amount += amount
 
-            non_pass_purchases.append({
-                "order_id": receipt.order_id,
-                "purchased_at": receipt.purchased_at.isoformat(),
-                "google_sku": receipt.product.google_sku,
-                "product_name": receipt.product.name,
-                "amount": amount
-            })
+            non_pass_purchases.append(
+                {
+                    "order_id": receipt.order_id,
+                    "purchased_at": receipt.purchased_at.isoformat(),
+                    "google_sku": receipt.product.google_sku,
+                    "product_name": receipt.product.name,
+                    "amount": amount,
+                }
+            )
 
     return NonPassPurchaseCheckResponse(
         agent_address=agent_address,
@@ -1126,7 +1173,7 @@ def check_non_pass_purchase_count(
         purchase_count=len(non_pass_receipts),
         meets_amount_threshold=total_amount >= Decimal("100.0"),  # 기본 금액 임계값
         meets_count_threshold=len(non_pass_receipts) >= count_threshold,
-        non_pass_purchases=non_pass_purchases
+        non_pass_purchases=non_pass_purchases,
     )
 
 
@@ -1214,18 +1261,158 @@ def get_product_sales(
         planet_name = _MAINNET_PLANET_NAMES.get(bytes(row.planet_id))
         if planet_name:
             planets[planet_name].append(
-                TokenSales(ticker=row.ticker, decimal_places=row.decimal_places, total_amount=row.total_amount)
+                TokenSales(
+                    ticker=row.ticker,
+                    decimal_places=row.decimal_places,
+                    total_amount=row.total_amount,
+                )
             )
 
     for row in item_rows:
         planet_name = _MAINNET_PLANET_NAMES.get(bytes(row.planet_id))
         if planet_name:
             planets[planet_name].append(
-                TokenSales(ticker=row.ticker, decimal_places=0, total_amount=Decimal(row.total_amount))
+                TokenSales(
+                    ticker=row.ticker,
+                    decimal_places=0,
+                    total_amount=Decimal(row.total_amount),
+                )
             )
 
     return ProductSalesResponse(
         year=year,
         month=month,
-        planets={name: PlanetTokenSales(tokens=tokens) for name, tokens in planets.items()},
+        planets={
+            name: PlanetTokenSales(tokens=tokens) for name, tokens in planets.items()
+        },
     )
+
+
+# ── (PLD) 바우처 상품→티켓 매핑 admin (C1 정책 크로스검증 + C3-lite + C5) ──────────
+#   백오피스(9c-backoffice)가 호출. C1(ticket_type ∈ 라이브 정책)/C3-lite(count×최대상금 ≤ cap)를
+#   서버측에서 강제 — UI 검증은 advisory(TOCTOU). 그랜트 미스매치는 R2로 self-heal이나 여기서 예방.
+#   ⚠️ per-endpoint scope 클레임은 후속(현재 router-level verify_token = 기존 admin과 동일 티어).
+
+
+class VoucherGrantItem(BaseModel):
+    id: int
+    product_id: int
+    product_name: Optional[str]
+    ticket_type: str
+    count: int
+    active: bool
+    updated_at: Optional[str]
+
+
+class UpsertVoucherGrantRequest(BaseModel):
+    product_id: int
+    ticket_type: str
+    count: int = 1
+    active: bool = True
+    base_updated_at: Optional[str] = None  # C5 낙관동시성(직전 조회 updated_at isoformat)
+
+
+@router.get("/product-voucher-grants", response_model=List[VoucherGrantItem])
+def list_product_voucher_grants(sess=Depends(session)):
+    """상품→티켓 매핑 전체(상품명 조인). 백오피스 표시·C5 base_updated_at 획득용."""
+    rows = (
+        sess.execute(
+            select(ProductVoucherGrant).options(joinedload(ProductVoucherGrant.product))
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        VoucherGrantItem(
+            id=r.id,
+            product_id=r.product_id,
+            product_name=r.product.name if r.product else None,
+            ticket_type=r.ticket_type,
+            count=r.count,
+            active=r.active,
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
+        )
+        for r in rows
+    ]
+
+
+@router.put("/product-voucher-grants")
+def upsert_product_voucher_grant(
+    request: UpsertVoucherGrantRequest, sess=Depends(session)
+):
+    """
+    (product_id, ticket_type) upsert. active=true면 C1/C3-lite를 라이브 정책 대비 강제.
+    C5: base_updated_at(직전 조회값)과 현재 행 updated_at 불일치 시 409(그새 변경).
+    """
+    product = sess.get(Product, request.product_id)
+    if not product:
+        raise HTTPException(
+            status_code=404, detail=f"product {request.product_id} not found"
+        )
+
+    # active로 켜는 경우에만 정책 검증(끄는 건 발급 대상 아니라 검증 불요).
+    if request.active:
+        # (리뷰) prod에서 C3-lite cap 미설정 상태로 발급 매핑을 켜는 것 금지 — 머니 가드 fail-open 방지.
+        if config.voucher_grant_max_ncg_per_grant is None and config.stage in (
+            "production",
+            "mainnet",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="prod에선 voucher_grant_max_ncg_per_grant(C3-lite cap) 설정 후에만 활성화 가능",
+            )
+        validate_voucher_mapping(
+            request.ticket_type,
+            request.count,
+            fetch_live_prize_tables(config.portal_prize_tables_url),
+            config.voucher_grant_max_ncg_per_grant,
+        )
+
+    # C5: 갱신 대상 행을 잠가(read-then-commit) 동시제출 silent revert(TOCTOU) 차단.
+    #   신규 삽입 레이스는 UNIQUE(product_id, ticket_type)가 최종 가드.
+    existing = sess.execute(
+        select(ProductVoucherGrant)
+        .where(
+            ProductVoucherGrant.product_id == request.product_id,
+            ProductVoucherGrant.ticket_type == request.ticket_type,
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        # C5 낙관동시성 — 클라가 base 제공 시 현재 updated_at과 대조(잠금 하에 판정).
+        cur = existing.updated_at.isoformat() if existing.updated_at else None
+        if request.base_updated_at is not None and cur != request.base_updated_at:
+            raise HTTPException(status_code=409, detail="stale — reload before save")
+        existing.count = request.count
+        existing.active = request.active
+        sess.commit()
+        return {"id": existing.id, "action": "updated"}
+
+    # 신규인데 base 제공(기존 행 기대) → 그새 삭제됨.
+    if request.base_updated_at is not None:
+        raise HTTPException(status_code=409, detail="mapping gone (deleted?) — reload")
+    row = ProductVoucherGrant(
+        product_id=request.product_id,
+        ticket_type=request.ticket_type,
+        count=request.count,
+        active=request.active,
+    )
+    sess.add(row)
+    sess.commit()
+    return {"id": row.id, "action": "created"}
+
+
+@router.delete("/product-voucher-grants/{grant_id}")
+def delete_product_voucher_grant(grant_id: int, sess=Depends(session)):
+    """
+    매핑 하드 삭제. 발급 제외만 원하면 PUT active=false 권장.
+    ⚠️ 삭제·active=false 모두 **이미 enroll된 in-flight 결제**는 dispatch 시 "no active mapping (retry)"로
+       PENDING에 묶여 stall alert까지 침전할 수 있음(운영자 인지 필요 — UI/문서 경고 대상).
+    """
+    row = sess.get(ProductVoucherGrant, grant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+    sess.delete(row)
+    sess.commit()
+    return {"deleted": True, "id": grant_id}
