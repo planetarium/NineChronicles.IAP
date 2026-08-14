@@ -341,6 +341,31 @@ class ProductRarity(Enum):
     LEGENDARY = "Legendary"
 
 
+class PurchaseSignalStatus(IntEnum):
+    """
+    # Purchase signal status
+    ---
+
+    클라이언트가 결제 성공 직후 `/api/purchase/log`로 알려온 신호의 처리 상태.
+    신호는 "스토어 결제는 성립했다"는 주장일 뿐이며, 대응하는 `Receipt`가
+    생겼는지를 배치가 사후 확인한다.
+
+    - **0: `RECEIVED`** 신호 수신, 아직 확인 전
+    - **10: `MATCHED`** 대응 영수증 확인됨 (정상 경로)
+    - **20: `COMPLETED`** 영수증이 없어 서버가 대신 완결시킴
+    - **91: `UNRESOLVED`** 영수증이 없는데 서버도 완결 불가 (지급 대상 불명 등)
+    - **92: `VOIDED`** 스토어에서 이미 취소/환불된 결제
+    - **93: `FAILED`** 처리 중 오류
+    """
+
+    RECEIVED = 0
+    MATCHED = 10
+    COMPLETED = 20
+    UNRESOLVED = 91
+    VOIDED = 92
+    FAILED = 93
+
+
 class PlanetID(bytes, Enum):
     ODIN = b"0x000000000000"
     HEIMDALL = b"0x000000000001"
