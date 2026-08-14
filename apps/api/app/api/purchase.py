@@ -15,11 +15,13 @@ from shared.enums import (
     PackageName,
     PlanetID,
     ProductType,
+    PurchaseSignalStatus,
     ReceiptStatus,
     Store,
     TxStatus,
 )
 from shared.models.product import Price, Product
+from shared.models.purchase_signal import PurchaseSignal
 from shared.models.receipt import Receipt
 from shared.models.user import AvatarLevel
 from shared.schemas.message import SendProductMessage
@@ -65,6 +67,47 @@ def raise_error(sess, receipt: Receipt, e: Exception):
     raise e
 
 
+PURCHASE_SUCCESS_STAGE = "PurchaseSuccess"
+
+
+def save_purchase_signal(
+    sess,
+    planet_id: str,
+    agent_address: str,
+    avatar_address: str,
+    product_id: str,
+    purchase_token: str,
+):
+    """결제 성공 신호를 기록해 둔다.
+
+    이 신호가 온 뒤 `/request`가 오지 않으면 영수증이 아예 생기지 않고, 스토어는
+    미확인 결제를 자동 환불한다. 배치(`iap.reconcile_purchase_signal`)가 사후에
+    그 구간을 메우려면 신호가 남아 있어야 한다.
+
+    이미 같은 토큰의 신호가 있으면 아무것도 하지 않는다. 미소비 결제는 앱을 켤
+    때마다 다시 보고되는데, 그때의 agent/avatar는 최초 구매자와 다를 수 있다.
+    지급 대상은 최초 신호로 고정한다.
+    """
+    if sess.scalar(
+        select(PurchaseSignal.id).where(
+            PurchaseSignal.purchase_token == purchase_token
+        )
+    ):
+        return
+
+    sess.add(
+        PurchaseSignal(
+            purchase_token=purchase_token,
+            sku=product_id,
+            planet_id=planet_id,
+            agent_addr=agent_address or None,
+            avatar_addr=avatar_address or None,
+            status=PurchaseSignalStatus.RECEIVED,
+        )
+    )
+    sess.commit()
+
+
 @router.get("/log")
 def log_request_product(
     planet_id: str,
@@ -73,6 +116,7 @@ def log_request_product(
     product_id: str,
     order_id: Optional[str] = "",
     data: Optional[str] = "",
+    sess=Depends(session),
 ):
     """
     # Purchase log
@@ -85,6 +129,17 @@ def log_request_product(
     )
     if data:
         logger.info(data)
+
+    # 기록 실패가 클라이언트의 구매 흐름을 막아서는 안 된다: 로깅 엔드포인트다.
+    if data == PURCHASE_SUCCESS_STAGE and order_id and product_id:
+        try:
+            save_purchase_signal(
+                sess, planet_id, agent_address, avatar_address, product_id, order_id
+            )
+        except Exception as e:  # noqa: BLE001
+            sess.rollback()
+            logger.error(f"[PURCHASE_LOG] Failed to save purchase signal: {e}")
+
     return JSONResponse(
         status_code=200, content=f"Order {order_id} for product {product_id} logged."
     )
