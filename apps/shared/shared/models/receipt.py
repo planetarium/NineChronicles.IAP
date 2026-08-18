@@ -137,6 +137,23 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             cls.agent_addr == agent_addr,
             func.timezone('UTC', cls.created_at) >= utc_start,
             func.timezone('UTC', cls.created_at) < utc_end,
+            # 검증에 실패했거나 아직 성립하지 않은 구매는 "이번 달에 샀음"으로 세면 안 된다.
+            #   상태를 안 보면 INVALID(스토어 검증 실패 — 예: 이미 환불된 결제) 영수증까지
+            #   보유로 잡혀 재구매가 막힌다.
+            #
+            #   상태 집합만 get_purchase_count(구매 제한)와 일치시킨다. 시간 기준은 여전히 다르다 —
+            #   저쪽은 purchased_at(KST 일/주), 여기는 created_at(UTC 월). 그래서 결제와 영수증
+            #   생성이 다른 달로 갈리면 이 필터로도 못 거른다(후속 과제).
+            #
+            #   ⚠️ 지급까지 끝난 뒤 환불된 건은 여기서 안 걸러진다. REFUNDED_BY_ADMIN/BUYER를
+            #     기록하는 경로가 아직 없어 그런 영수증은 VALID로 남는다.
+            cls.status.in_(
+                (
+                    ReceiptStatus.INIT,
+                    ReceiptStatus.VALIDATION_REQUEST,
+                    ReceiptStatus.VALID,
+                )
+            ),
         ]
 
         # avatar_addr이 제공되면 필터링 조건에 추가
