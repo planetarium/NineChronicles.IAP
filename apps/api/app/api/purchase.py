@@ -327,6 +327,13 @@ def request_product(
     # INSERT itself safe. It cannot be added yet: the 66 existing duplicates would make
     # the index creation fail, and deciding what to do with the already-delivered pairs
     # is a separate call.
+    # `pg_advisory_xact_lock` is the blocking variant, and this database has
+    # `lock_timeout = 0`. If a holder stalls, every later request for the same order
+    # waits forever, each pinning a pool connection and a threadpool thread. Bound it:
+    # the worst case becomes one failed request instead of a slow pile-up. 10s is well
+    # above the observed hold time (the dedup SELECT is ~0.2s warm) while staying under
+    # the client's own 10s HTTP timeout budget.
+    sess.execute(text("SET LOCAL lock_timeout = '10s'"))
     sess.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
         {"key": f"{receipt_data.store.value}:{order_id}"},
