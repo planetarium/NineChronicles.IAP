@@ -312,6 +312,44 @@ def request_product(
     )
     if prev_receipt:
         logger.debug(f"prev. receipt exists: {prev_receipt.uuid}")
+        # This early return exists for idempotency: the same order arriving twice must
+        # not create a second receipt. But the client confirms (= consumes and, on
+        # Google, acknowledges) the store purchase on any non-null response, and the
+        # portal's Stripe webhook turns a 400 here into an automatic refund. So the
+        # question this guard must answer is narrow: "is it *certain* nothing was
+        # delivered?" Anything less certain has to come back with 200, because both
+        # failure modes of guessing wrong are irreversible — a delivered purchase
+        # refunded, or a paid purchase confirmed with nothing given.
+        #
+        # Delivery already dispatched -> return it. This gate must come first: `msg` is
+        # not a failure signal once a tx exists. `track_tx` writes
+        # `json.dumps(exceptionNames)` unconditionally and a successful tx yields
+        # "[null, null, ...]" (truthy), so 98% of delivered receipts carry a `msg`.
+        if prev_receipt.tx_status is not None:
+            return prev_receipt
+
+        # INVALID is the only status that proves nothing was delivered. Every
+        # assignment of it in this function happens before the delivery side effects
+        # (the season-pass POST and `send_to_worker`), so it cannot coexist with a
+        # delivery.
+        #
+        # Deliberately NOT rejected:
+        #   INIT / VALIDATION_REQUEST — these do not prove non-delivery. `status =
+        #     VALID` is set in memory well before the only `sess.commit()` that
+        #     persists it, and the delivery side effects run in between, so a crash
+        #     after delivering leaves INIT in the DB. Season-pass products never get a
+        #     `tx_status`, so the gate above cannot rescue those — and for WEB orders a
+        #     400 would fire an unattended Stripe refund on a delivered pass.
+        #   TIME_LIMIT / REQUIRED_LEVEL / PURCHASE_LIMIT_EXCEED / REFUNDED_* — these are
+        #     set after validation, and on Google `ack_google` has already run by then,
+        #     so refusing returns nothing to the buyer. REFUNDED_* also has to stay
+        #     reachable as an operator release valve.
+        if prev_receipt.status == ReceiptStatus.INVALID:
+            raise ValueError(
+                f"Receipt {order_id} is not deliverable: "
+                f"status={prev_receipt.status.name} :: {prev_receipt.uuid}"
+            )
+
         return prev_receipt
 
     if not receipt_data.agentAddress:

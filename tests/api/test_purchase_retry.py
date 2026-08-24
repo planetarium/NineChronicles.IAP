@@ -4,7 +4,7 @@
 (import 준비는 아래 모듈 상단에서 자체 처리한다. CI는 이미지 빌드만 하므로
 이 테스트는 수동/로컬 실행 전용이다.)
 
-다루는 회귀 둘:
+다루는 회귀 셋:
 
 1. `retry_product`는 라우트 핸들러인 `request_product`를 파이썬 함수로 직접 호출한다.
    이때 `sess=Depends(session)` 기본값은 FastAPI가 해결해주지 않으므로 세션을 명시적으로
@@ -14,6 +14,12 @@
    시즌패스 경유라 `tx_status`가 영구히 NULL이어서 항상 이 경로를 탄다.
 2. 지급에 실패한 영수증은 200으로 돌려주면 안 된다. 클라이언트가 결제를 consume
    (= acknowledge)해버려 스토어 자동환불까지 막히고 유저는 돈만 잃는다.
+3. 같은 규칙이 `POST /api/purchase/request`의 멱등 조기반환에도 필요하지만, 거절 기준은
+   훨씬 좁다: **"지급이 없었음이 확실한가"**. 틀렸을 때 양방향 다 되돌릴 수 없기 때문이다
+   (지급된 결제를 환불 / 지급 없이 confirm). 그래서 INVALID 만 거절한다.
+   - `msg`는 실패 신호가 아니다 — tracker가 성공 tx에도 "[null, ...]"을 쓴다.
+   - INIT/VALIDATION_REQUEST는 지급 없음을 증명하지 않는다. status=VALID 대입과 commit
+     사이에 지급 부수효과가 있어, 지급 후 죽으면 DB에 INIT이 남는다.
 """
 
 import json
@@ -25,7 +31,7 @@ from unittest.mock import create_autospec
 import pytest
 from shared.enums import PackageName, PlanetID, ReceiptStatus, Store, TxStatus
 from shared.models.receipt import Receipt
-from shared.schemas.receipt import SimpleReceiptSchema
+from shared.schemas.receipt import ReceiptSchema, SimpleReceiptSchema
 
 API_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "apps", "api")
 
@@ -211,3 +217,111 @@ def test_retry_returns_already_handled_receipt(purchase_api, receipt_data):
 
     assert call_retry(purchase_api, receipt_data, sess) is receipt
     assert sess.scalar_calls == 1
+
+
+# --- `POST /api/purchase/request` 의 멱등 조기반환 ------------------------------
+#
+# 거절 기준은 "지급이 없었음이 확실한가". 확실하지 않으면 전부 200이다.
+
+
+def request_schema(store=Store.GOOGLE):
+    order = {
+        "orderId": ORDER_ID,
+        "productId": GOOGLE_SKU,
+        "purchaseTime": 1754800000000,
+        "purchaseToken": "test-purchase-token",
+    }
+    payload = {"json": json.dumps(order), "signature": "test-signature"}
+    return ReceiptSchema(
+        store=store,
+        agentAddress="0x1234567890123456789012345678901234567890",
+        avatarAddress="0x0987654321098765432109876543210987654321",
+        planetId=PlanetID.ODIN,
+        data=json.dumps(
+            {
+                "Store": "GooglePlay",
+                "TransactionID": "test-purchase-token",
+                "Payload": json.dumps(payload),
+            }
+        ),
+    )
+
+
+def call_request(purchase_api, sess, store=Store.GOOGLE):
+    return purchase_api.request_product(
+        request_schema(store),
+        x_iap_packagename=PackageName.NINE_CHRONICLES_K,
+        sess=sess,
+    )
+
+
+# `msg`는 성공 tx에도 붙는다(tracker가 exceptionNames를 무조건 기록).
+# 메인넷 실측: status=VALID 732,293건 중 720,143건(98.3%)이 msg를 갖고 있다.
+DELIVERED_MSG = '\n[null, null, null, null]'
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # 지급 완료의 대다수 형태. msg를 실패로 읽으면 이게 거절된다.
+        pytest.param(
+            {"tx_status": TxStatus.SUCCESS, "msg": DELIVERED_MSG}, id="tx-success-msg"
+        ),
+        pytest.param({"tx_status": TxStatus.SUCCESS}, id="tx-success"),
+        # tx가 붙었으면 실패 tx도 조기반환한다(main과 동일. 자동 재지급 경로는 없다).
+        pytest.param({"tx_status": TxStatus.FAILURE}, id="tx-failure"),
+        pytest.param({"tx_status": TxStatus.STAGED}, id="tx-staged"),
+        # 패스 상품: tx가 영구히 없다.
+        pytest.param({"status": ReceiptStatus.VALID}, id="pass-delivered"),
+        # 패스 지급이 실패해 msg가 남은 형태. /retry 는 이걸 거절하지만 여기선 통과시킨다
+        # (지급 여부가 불확실하고, WEB이면 400이 자동환불로 이어진다).
+        pytest.param(
+            {"msg": '500 :: Internal Server Error'}, id="pass-failed-msg"
+        ),
+        # 지급 후 commit 전에 죽으면 DB에 INIT이 남는다. 인터널 id=9010 실물 사례.
+        pytest.param({"status": ReceiptStatus.INIT}, id="init-may-be-delivered"),
+        pytest.param(
+            {"status": ReceiptStatus.VALIDATION_REQUEST}, id="validation-request"
+        ),
+        # ack_google 이후 상태 — 거절해도 환불이 돌아오지 않는다.
+        pytest.param(
+            {"status": ReceiptStatus.PURCHASE_LIMIT_EXCEED}, id="limit-exceeded"
+        ),
+        pytest.param({"status": ReceiptStatus.REQUIRED_LEVEL}, id="required-level"),
+        pytest.param({"status": ReceiptStatus.TIME_LIMIT}, id="time-limit"),
+        # 운영자/유저 환불은 해소 경로로 남긴다.
+        pytest.param(
+            {"status": ReceiptStatus.REFUNDED_BY_ADMIN}, id="refunded-by-admin"
+        ),
+        pytest.param(
+            {"status": ReceiptStatus.REFUNDED_BY_BUYER}, id="refunded-by-buyer"
+        ),
+    ],
+)
+def test_request_returns_receipt_unless_certainly_undelivered(purchase_api, overrides):
+    """지급이 없었음이 확실하지 않으면 200이다."""
+    receipt = make_receipt(**overrides)
+    sess = FakeSession(receipt)
+
+    assert call_request(purchase_api, sess) is receipt
+    assert sess.scalar_calls == 1  # 조기반환 — 상품 조회/영수증 생성까지 가지 않는다
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        pytest.param(Store.GOOGLE, id="google"),
+        pytest.param(Store.APPLE, id="apple"),
+        pytest.param(Store.WEB, id="web"),
+    ],
+)
+def test_request_refuses_invalid(purchase_api, store):
+    """INVALID 만 거절한다. 이 함수의 INVALID 대입은 전부 지급 부수효과 앞이다.
+
+    200을 주면 클라가 결제를 consume(= acknowledge)해 스토어 자동환불이 사라진다.
+    스토어와 무관하게 같은 판정이어야 한다.
+    """
+    sess = FakeSession(make_receipt(status=ReceiptStatus.INVALID, tx_status=None))
+
+    with pytest.raises(ValueError, match="is not deliverable"):
+        call_request(purchase_api, sess, store)
