@@ -237,3 +237,27 @@ class TestProductTypeAllowlist:
         assert vg._has_active_mapping(sess, None) is False
         sess.execute.assert_not_called()
 
+
+class TestStageDiscriminator:
+    """(C6/stage) 미배선 감지의 판별자가 실제 Settings 기본값과 묶여 있어야 한다."""
+
+    def test_default_stage_matches_settings_default(self):
+        """
+        `_DEFAULT_STAGE` 는 "STAGE env 가 안 들어왔다"를 판정하는 유일한 근거다.
+        Settings 의 기본값이 바뀌면 이 상수도 같이 바뀌어야 하고, 아니면 미배선 경고가
+        조용히 안 뜬다(경고가 안 뜨는 건 테스트 없이는 아무도 모른다).
+        """
+        from app.config import Settings
+
+        assert vg._DEFAULT_STAGE == Settings.model_fields["stage"].default
+
+    @pytest.mark.parametrize("stage", ["production", "mainnet"])
+    def test_prod_stages_exclude_sandbox(self, stage):
+        with patch.object(vg.config, "stage", stage):
+            assert vg._grantable_stores() == set(vg._PROD_STORES)
+
+    @pytest.mark.parametrize("stage", ["development", "internal"])
+    def test_non_prod_includes_sandbox(self, stage):
+        with patch.object(vg.config, "stage", stage):
+            assert vg._grantable_stores() == vg._PROD_STORES | vg._TEST_STORES
+

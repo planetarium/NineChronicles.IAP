@@ -67,6 +67,8 @@ _TRANSIENT_STATUS = {401, 403, 408, 429}
 #   admin.py 의 머니 가드가 이미 `in ("production", "mainnet")` 로 양쪽을 보므로 그 패턴에 맞춘다.
 #   한쪽만 보면 실 운영에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다(아래 참고).
 _PROD_STAGES = ("production", "mainnet")
+# Settings 의 stage 기본값. 이 값이 그대로 보이면 STAGE env 가 주입되지 않았다는 뜻이다.
+_DEFAULT_STAGE = "development"
 
 
 def _grantable_stores() -> set:
@@ -83,9 +85,14 @@ def _grantable_stores() -> set:
     """
     if config.stage in _PROD_STAGES:
         return set(_PROD_STORES)
-    # 실 운영이 아니라고 판단해 샌드박스를 여는 순간을 로그에 남긴다 — 메인넷에서 이 줄이 보이면 env 미배선이다.
-    logger.warning(
-        "voucher: sandbox stores are grantable (non-production stage)",
+    # 샌드박스를 여는 순간을 로그에 남긴다. 단 **레벨을 가른다** — 배선된 non-prod(internal/staging)는
+    #   정상 구성이므로 2분마다 WARNING 을 찍으면(≈720줄/일) 경보가 태어나면서 무뎌지고, 정작
+    #   메인넷 미배선 사고와 문구가 같아져 구분이 안 된다.
+    #   판별자는 config.stage 의 **기본값** 이다 — Settings 기본값이 그대로 보이면 env 가 안 들어온 것이다.
+    unwired = config.stage == _DEFAULT_STAGE
+    (logger.warning if unwired else logger.info)(
+        "voucher: sandbox stores are grantable"
+        + (" — STAGE env 미배선 의심(기본값)" if unwired else " (explicit non-production stage)"),
         stage=config.stage,
     )
     return _PROD_STORES | _TEST_STORES

@@ -89,15 +89,42 @@ _REVOCABLE_REFUND_STATUSES = {"succeeded", "pending"}
 ALERT_FAILURES = 3
 # ⚠️ 프로세스-로컬 카운터다(prefork 워커면 자식마다 별개) → 임계 도달이 늦어질 수 있지만,
 #    지속 실패라면 어느 자식에서든 결국 도달한다. 상태 저장소를 새로 만들지 않기 위한 의도적 트레이드오프.
+# 룩백 상한(30일). 컷오버 광역 스캔에 넉넉하고, 잊고 방치했을 때의 비용을 유한하게 묶는다.
+LOOKBACK_MAX_HOURS = 720
+
+# ⚠️ 이 카운터는 **Stripe 레그 전용** 이다. 아래 try 직후에 리셋되므로, Stripe 는 성공하고
+#    DB(enqueue) 만 매번 실패하는 상황은 카운터도 경보도 타지 않는다(그 레그의 경보는 이
+#    서브시스템 전체에 아직 없다 — 별건). 또 프로세스-로컬인데 현재 워커는 --concurrency=1 이고
+#    worker_max_tasks_per_child 도 없어 자식이 하나라 사실상 글로벌과 동등하다.
 _consecutive_failures = 0
 
 
 def _lookback() -> datetime.timedelta:
-    """폴링 룩백. config 값이 이상하면(0/음수) 기본 24h 로 되돌린다 — 창이 0 이면 신호가 조용히 끊긴다."""
+    """
+    폴링 룩백.
+
+    0/음수는 기본 24h 로 되돌린다 — 창이 0 이면 신호가 조용히 끊긴다. 그리고 **0 은 이 태스크를
+    끄는 수단이 아니다**(창만 0 이고 Stripe 호출은 계속 나간다). 끄려면 voucher_grant_enabled 를
+    내리거나 시크릿을 빼야 한다 — 폴백 경고에 그 안내를 함께 남긴다.
+
+    상한도 둔다. 광역 스캔은 컷오버용 **일회성** 이고, 값을 크게 두고 잊으면 매 회차 수십 페이지를
+    긁어 `--concurrency=1` 인 background 슬롯을 오래 잡고 MAX_REFUNDS 절단이 상시 유실 경계가 된다.
+    """
     hours = config.stripe_refund_lookback_hours
     if not hours or hours <= 0:
-        logger.warning("invalid stripe refund lookback, falling back to 24h", value=hours)
+        logger.warning(
+            "invalid stripe refund lookback, falling back to 24h"
+            " (끄려면 voucher_grant_enabled=false 또는 시크릿 미설정 — 창을 0 으로 해도 호출은 나간다)",
+            value=hours,
+        )
         hours = 24
+    elif hours > LOOKBACK_MAX_HOURS:
+        logger.warning(
+            "stripe refund lookback clamped — 광역 스캔은 일회성으로 쓰고 되돌릴 것",
+            value=hours,
+            clamped_to=LOOKBACK_MAX_HOURS,
+        )
+        hours = LOOKBACK_MAX_HOURS
     return datetime.timedelta(hours=hours)
 
 
@@ -182,7 +209,10 @@ def handle() -> str:
         if _consecutive_failures % ALERT_FAILURES == 0:
             _alert(
                 f"[voucher-revoke] WEB(Stripe) 환불 스캔이 {_consecutive_failures}회 연속 실패 — "
-                f"환불 회수 신호가 끊긴 상태입니다(키 폐기/권한 확인 필요). 마지막 오류: {str(e)[:300]}"
+                f"환불 회수 신호가 끊긴 상태입니다(키 폐기/권한 확인 필요). "
+                # 예외 본문을 그대로 슬랙에 붓지 않는다 — Stripe 는 키를 마스킹하지만 다른 레이어의
+                #   예외까지 이 경로로 오므로, 타입 + 사용자용 메시지만 싣는다.
+                f"마지막 오류: {type(e).__name__}: {str(getattr(e, 'user_message', None) or '')[:200]}"
             )
         raise
 
