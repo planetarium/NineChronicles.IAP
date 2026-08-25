@@ -45,10 +45,12 @@ beat_schedule = {
         "options": {"queue": "background_job_queue"},
     },
     # (PLD-1470) WEB(Stripe) 환불 → 바우처 회수 신호원. 15분 주기 근거는 track_web_refund 모듈 주석 참고
-    #   (룩백 24h × 15분 스케줄 = 96배 겹침: 홀드 72h 대비 충분히 촘촘하면서 하루 ~100 콜로 Stripe API 절약).
+    #   (룩백 24h(config) × 15분 스케줄 = 96배 겹침: 홀드 72h 대비 충분히 촘촘하면서 하루 ~100 콜).
+    #   ⚠️ */15 가 아니라 7/22/37/52 분으로 어긋내는 이유: background_job_queue 워커가 concurrency=1 이라
+    #      grant(*/2)·reconcile(*/5) 과 매 정각마다 겹치면 서로 큐에서 기다린다(Stripe I/O 대기가 길다).
     "track-web-refund-every-15-minutes": {
         "task": "iap.track_web_refund",
-        "schedule": crontab(minute="*/15"),
+        "schedule": crontab(minute="7,22,37,52"),
         "options": {"queue": "background_job_queue"},
     },
     "voucher-grant-every-2-minutes": {

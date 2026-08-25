@@ -145,10 +145,22 @@ class TestGrantableStores:
         assert Store.APPLE in s and Store.GOOGLE in s and Store.WEB in s
         assert Store.APPLE_TEST not in s and Store.WEB_TEST not in s
 
+    def test_mainnet_excludes_sandbox(self):
+        # 🔴 이 저장소의 실제 어휘는 "mainnet" 이다(라이브 파드 API_STAGE=mainnet).
+        #   "production" 만 보면 메인넷에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다.
+        with patch.object(vg.config, "stage", "mainnet"):
+            s = vg._grantable_stores()
+        assert s == {Store.APPLE, Store.GOOGLE, Store.WEB}
+
     def test_nonprod_includes_sandbox(self):
         with patch.object(vg.config, "stage", "development"):
             s = vg._grantable_stores()
         assert Store.APPLE_TEST in s and Store.WEB_TEST in s and Store.GOOGLE_TEST in s
+
+    def test_default_stage_is_not_production(self):
+        # 배선 함정 고정: STAGE env 가 없으면 기본값 "development" 라 샌드박스가 열린다.
+        #   즉 코드 수정만으로는 메인넷이 닫히지 않는다(WORKER_STAGE=mainnet 배선 필요).
+        assert "development" not in vg._PROD_STAGES
 
 
 class TestGrantVouchersGating:

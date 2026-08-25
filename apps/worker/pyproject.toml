@@ -22,6 +22,8 @@ flower = "^2.0.1"
 requests = "^2.31.0"
 # (PLD-1470) track_web_refund 의 Stripe 환불 폴링용. shared 가 이미 같은 버전을 쓰지만
 #   워커가 직접 임포트하므로 전이 의존에 기대지 않고 명시한다(shared 의 의존이 바뀌면 조용히 깨진다).
+#   lock 은 apps/shared·apps/api 와 같은 13.0.1 로 맞췄다 — Dockerfile.Worker 가 shared 레이어를 먼저
+#   설치하므로 버전이 어긋나면 두 번째 레이어에서 stripe 를 재설치한다(이미지 스큐).
 stripe = "^13.0.1"
 
 [tool.poetry.group.test.dependencies]

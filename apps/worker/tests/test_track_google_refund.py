@@ -212,3 +212,52 @@ class TestHandle:
             startTime=expected_start_time,
             endTime=expected_end_time,
         )
+
+
+class TestGoogleRevokeHandoff:
+    """
+    (PLD-1470) google 트래커 → 바우처 회수 핸드오프 스모크.
+
+    왜 필요한가: 위 TestHandle 의 기존 실패 4건은 `package_name.value`(config 미패치)에서 먼저 죽어
+    회수 큐잉 줄까지 도달하지 않는다. 그래서 `stores=` 인자가 누락돼도 track_google_refund 의
+    `except Exception` 이 warning 으로 삼켜 **구글 회수가 조용히 멈추는** 모양이 된다 —
+    그 한 줄을 실제로 통과시켜 고정한다.
+
+    ⚠️ 이 클래스는 위 4건의 선행 실패를 건드리지 않는다(별건, 범위 밖).
+       패치를 문자열이 아니라 모듈 객체로 하는 이유는 app/tasks/__init__.py 가 같은 이름의 태스크를
+       패키지 속성으로 덮어써서 문자열 타깃이 모듈이 아닌 celery 프록시에 붙기 때문이다.
+    """
+
+    def _run_with_one_void(self):
+        import importlib
+
+        tg = importlib.import_module("app.tasks.track_google_refund")
+        vr = importlib.import_module("app.tasks.voucher_reconcile_task")
+
+        void = {
+            "orderId": "GPA.1234-5678-9012-34567",
+            "purchaseTimeMillis": "1640995200000",
+            "voidedTimeMillis": "1641081600000",
+            "voidedSource": 0,
+            "voidedReason": 1,
+            "purchaseToken": "token_123",
+            "kind": "androidpublisher#voidedPurchase",
+        }
+        client = Mock()
+        client.purchases.return_value.voidedpurchases.return_value.list.return_value.execute.return_value = {
+            "voidedPurchases": [void]
+        }
+        # google_package_dict 은 실 config 값(PackageName enum 키)을 그대로 쓴다 — .value 접근이 살아야 한다.
+        with patch.object(tg, "get_google_client", return_value=client), \
+            patch.object(tg, "send_slack_alert"), \
+            patch.object(tg, "enqueue_revoke_by_order_ids", return_value=1) as enqueue:
+            tg.handle(None, None)
+        return enqueue, vr, void["orderId"]
+
+    def test_passes_google_stores_and_order_ids(self):
+        enqueue, vr, order_id = self._run_with_one_void()
+        assert enqueue.call_count == 1
+        # 패키지 3개를 돌지만 order_id 는 패키지마다 같은 목록에 누적된 뒤 한 번에 넘어간다.
+        assert enqueue.call_args.args[0].count(order_id) >= 1
+        # 🔴 스토어 화이트리스트 누락은 except Exception 에 삼켜져 조용히 회수가 멈춘다 → 여기서 고정.
+        assert enqueue.call_args.kwargs["stores"] == vr.GOOGLE_STORES

@@ -94,27 +94,46 @@ class TestEnqueueRevokeForReceipt:
             assert ob.status == st  # 변경 없음
 
 
-class TestEnqueueByOrderId:
+class TestEnqueueByOrderIdsInSession:
     def test_handles_multiple_google_matches(self):
         # order_id가 (store,order_id)로만 유일 → 다중 매치 시 모두 큐잉.
         sess = MagicMock()
         r1, r2 = MagicMock(), MagicMock()
         r1.id, r2.id = 1, 2
+        r1.order_id = r2.order_id = "order-x"
         sess.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
         with patch.object(vr, "enqueue_revoke_for_receipt", return_value=True) as m:
-            assert (
-                vr.enqueue_revoke_by_order_id(sess, "order-x", stores=vr.GOOGLE_STORES)
-                is True
+            queued = vr.enqueue_revoke_by_order_ids_in_session(
+                sess, ["order-x"], stores=vr.GOOGLE_STORES
             )
+            assert queued == ["order-x", "order-x"]
             assert m.call_count == 2
 
-    def test_no_match_returns_false(self):
+    def test_no_match_returns_empty(self):
         sess = MagicMock()
         sess.execute.return_value.scalars.return_value.all.return_value = []
         assert (
-            vr.enqueue_revoke_by_order_id(sess, "order-x", stores=vr.GOOGLE_STORES)
-            is False
+            vr.enqueue_revoke_by_order_ids_in_session(
+                sess, ["order-x"], stores=vr.GOOGLE_STORES
+            )
+            == []
         )
+
+    def test_one_failure_does_not_block_others(self):
+        sess = MagicMock()
+        r1, r2 = MagicMock(), MagicMock()
+        r1.id, r2.id = 1, 2
+        r1.order_id, r2.order_id = "o1", "o2"
+        sess.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
+        with patch.object(
+            vr, "enqueue_revoke_for_receipt", side_effect=[RuntimeError("boom"), True]
+        ):
+            assert (
+                vr.enqueue_revoke_by_order_ids_in_session(
+                    sess, ["o1", "o2"], stores=vr.GOOGLE_STORES
+                )
+                == ["o2"]
+            )
 
     def test_store_filter_is_bound_from_argument(self):
         # (PLD-1470) 스토어 필터 일반화 회귀 — GOOGLE_STORES/WEB_STORES가 그대로 쿼리에 실려야 한다.
@@ -122,11 +141,15 @@ class TestEnqueueByOrderId:
         for stores in (vr.GOOGLE_STORES, vr.WEB_STORES):
             sess = MagicMock()
             sess.execute.return_value.scalars.return_value.all.return_value = []
-            vr.enqueue_revoke_by_order_id(sess, "order-x", stores=stores)
+            vr.enqueue_revoke_by_order_ids_in_session(
+                sess, ["order-x", "order-y"], stores=stores
+            )
             stmt = sess.execute.call_args.args[0]
             params = stmt.compile().params
-            assert params["order_id_1"] == "order-x"
+            # order_id 는 IN 한 방 — N번 조회하면 겹침 배수만큼 seq scan 이 곱해진다.
+            assert params["order_id_1"] == ["order-x", "order-y"]
             assert params["store_1"] == stores
+            assert sess.execute.call_count == 1
 
     def test_google_and_web_store_lists_are_disjoint(self):
         # 두 신호원이 서로의 영수증을 절대 건드리지 못해야 한다(크로스-스토어 오회수 방지).

@@ -70,24 +70,36 @@ class TestRevocableOrderIds:
             _refund("pi_canceled", "canceled"),
             _refund("pi_action", "requires_action"),
         ]
-        assert tw._revocable_order_ids(refunds) == ["pi_ok", "pi_pending"]
+        order_ids, pending_only = tw._revocable_order_ids(refunds)
+        assert order_ids == ["pi_ok", "pi_pending"]
+        # 뒤집힘 위험이 가장 큰 subset 을 따로 뽑아 로그에 남긴다(오회수 사후 추적).
+        assert pending_only == ["pi_pending"]
 
     def test_dedups_partial_refunds_of_same_payment_intent(self):
         refunds = [_refund("pi_same"), _refund("pi_same"), _refund("pi_other")]
-        assert tw._revocable_order_ids(refunds) == ["pi_same", "pi_other"]
+        order_ids, _ = tw._revocable_order_ids(refunds)
+        assert order_ids == ["pi_same", "pi_other"]
+
+    def test_pending_plus_succeeded_is_not_pending_only(self):
+        # 같은 PI 에 pending + succeeded 가 섞이면 이미 확정된 환불이므로 pending-only 가 아니다.
+        refunds = [_refund("pi_mixed", "pending"), _refund("pi_mixed", "succeeded")]
+        order_ids, pending_only = tw._revocable_order_ids(refunds)
+        assert order_ids == ["pi_mixed"] and pending_only == []
 
     def test_skips_refund_without_payment_intent(self):
         # Charge 직접 환불(payment_intent=None)은 WEB 결제 경로가 아니다.
         refunds = [_refund(None), _refund(""), _refund(MagicMock()), _refund("pi_ok")]
-        assert tw._revocable_order_ids(refunds) == ["pi_ok"]
+        order_ids, _ = tw._revocable_order_ids(refunds)
+        assert order_ids == ["pi_ok"]
 
 
 class TestHandle:
-    def _run(self, refunds, queued=0):
+    def _run(self, refunds, queued=0, lookback_hours=24):
         mock_stripe = _stripe_returning(refunds)
         with patch.object(tw.config, "voucher_grant_enabled", True), \
             patch.object(tw.config, "stripe_secret_key", "sk_test_dummy"), \
             patch.object(tw.config, "stripe_api_version", "2025-09-30.clover"), \
+            patch.object(tw.config, "stripe_refund_lookback_hours", lookback_hours), \
             patch.object(tw, "stripe", mock_stripe), \
             patch.object(
                 tw, "enqueue_revoke_by_order_ids", return_value=queued
@@ -109,9 +121,24 @@ class TestHandle:
         assert kwargs["api_key"] == "sk_test_dummy"
         assert kwargs["stripe_version"] == "2025-09-30.clover"
         assert kwargs["limit"] == tw.PAGE_SIZE
-        expected = int((before - tw.POLL_WINDOW).timestamp())
+        expected = int((before - datetime.timedelta(hours=24)).timestamp())
         # 룩백 윈도우 경계(초 단위 오차 허용). 커서 없이 겹침으로 유실을 막는 전략의 고정점.
         assert abs(kwargs["created"]["gte"] - expected) <= 5
+
+    def test_lookback_is_configurable(self):
+        # 컷오버 때 재배포 없이 광역 스캔을 돌릴 수 있어야 한다(홀드 72h > 기본 룩백 24h).
+        before = datetime.datetime.now(datetime.timezone.utc)
+        _, mock_stripe, _ = self._run([], lookback_hours=96)
+        expected = int((before - datetime.timedelta(hours=96)).timestamp())
+        assert abs(mock_stripe.Refund.list.call_args.kwargs["created"]["gte"] - expected) <= 5
+
+    def test_invalid_lookback_falls_back_to_default(self):
+        # 창이 0 이면 신호가 조용히 끊긴다 → 기본값으로 되돌린다.
+        before = datetime.datetime.now(datetime.timezone.utc)
+        for bad in (0, -5, None):
+            _, mock_stripe, _ = self._run([], lookback_hours=bad)
+            expected = int((before - datetime.timedelta(hours=24)).timestamp())
+            assert abs(mock_stripe.Refund.list.call_args.kwargs["created"]["gte"] - expected) <= 5
 
     def test_no_refunds_is_noop(self):
         result, _, enqueue = self._run([])
@@ -130,6 +157,60 @@ class TestHandle:
         result, _, enqueue = self._run(many, queued=tw.MAX_REFUNDS)
         assert len(enqueue.call_args.args[0]) == tw.MAX_REFUNDS
         assert result.startswith(f"refunds={tw.MAX_REFUNDS} ")
+
+
+class TestScanFailureAlerting:
+    """신호원이 조용히 죽는 것(키 폐기·refund:read 누락 등)을 경보로 드러내야 한다."""
+
+    def _fail_once(self, error=RuntimeError("stripe down")):
+        mock_stripe = MagicMock()
+        mock_stripe.Refund.list.side_effect = error
+        with patch.object(tw.config, "voucher_grant_enabled", True), \
+            patch.object(tw.config, "stripe_secret_key", "sk_test_dummy"), \
+            patch.object(tw.config, "stripe_refund_lookback_hours", 24), \
+            patch.object(tw, "stripe", mock_stripe), \
+            patch.object(tw, "_alert") as alert, \
+            patch.object(tw, "enqueue_revoke_by_order_ids") as enqueue:
+            raised = False
+            try:
+                tw.handle()
+            except RuntimeError:
+                raised = True
+        return raised, alert, enqueue
+
+    def setup_method(self):
+        tw._consecutive_failures = 0
+
+    def teardown_method(self):
+        tw._consecutive_failures = 0
+
+    def test_failure_propagates_and_skips_enqueue(self):
+        raised, alert, enqueue = self._fail_once()
+        # 다음 tick 이 같은 창을 되짚으므로 삼키지 않고 올린다.
+        assert raised is True
+        enqueue.assert_not_called()
+        # 1회 실패로는 경보하지 않는다(일시 오류로 슬랙을 때리지 않게).
+        alert.assert_not_called()
+
+    def test_alerts_after_consecutive_failures(self):
+        for _ in range(tw.ALERT_FAILURES - 1):
+            _, alert, _ = self._fail_once()
+            alert.assert_not_called()
+        _, alert, _ = self._fail_once()
+        alert.assert_called_once()
+        assert "환불 회수 신호가 끊긴" in alert.call_args.args[0]
+
+    def test_success_resets_failure_counter(self):
+        self._fail_once()
+        assert tw._consecutive_failures == 1
+        mock_stripe = _stripe_returning([])
+        with patch.object(tw.config, "voucher_grant_enabled", True), \
+            patch.object(tw.config, "stripe_secret_key", "sk_test_dummy"), \
+            patch.object(tw.config, "stripe_refund_lookback_hours", 24), \
+            patch.object(tw, "stripe", mock_stripe), \
+            patch.object(tw, "enqueue_revoke_by_order_ids", return_value=0):
+            tw.handle()
+        assert tw._consecutive_failures == 0
 
 
 class _FakeReceipt:
@@ -156,7 +237,7 @@ class _FilteringSession:
         matched = [
             r
             for r in self.receipts
-            if r.order_id == params["order_id_1"] and r.store in params["store_1"]
+            if r.order_id in params["order_id_1"] and r.store in params["store_1"]
         ]
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: list(matched))
@@ -178,10 +259,12 @@ class TestCrossStoreIsolation:
             _FakeReceipt(5, "pi_other", Store.WEB_TEST),  # 샌드박스 WEB
         ]
 
-    def _queued_ids(self, order_id, stores):
+    def _queued_ids(self, order_ids, stores):
+        if isinstance(order_ids, str):
+            order_ids = [order_ids]
         sess = _FilteringSession(self._receipts())
         with patch.object(vr, "enqueue_revoke_for_receipt", return_value=True) as m:
-            vr.enqueue_revoke_by_order_id(sess, order_id, stores=stores)
+            vr.enqueue_revoke_by_order_ids_in_session(sess, order_ids, stores=stores)
             return [c.args[1] for c in m.call_args_list]
 
     def test_web_signal_touches_only_web_receipt(self):
@@ -201,12 +284,10 @@ class TestCrossStoreIsolation:
         for order_id in ("pi_shared", "pi_other", "pi_absent"):
             for stores in (vr.WEB_STORES, vr.GOOGLE_STORES):
                 assert not (set(self._queued_ids(order_id, stores)) & free_ids)
-        # 반대 방향도 고정: 그 접두어들은 pi_ 로 시작하지 않는다.
-        assert not any(
-            r.order_id.startswith("pi_")
-            for r in self._receipts()
-            if r.id in free_ids
-        )
+        # 그 접두어들을 통째로 넘겨도(있을 수 없는 입력) WEB 계열에서 실제 매칭돼 회수되지만,
+        #   Stripe 는 그런 order_id 를 만들지 않는다 — 즉 방어선은 "pi_ 로만 조회된다"는 사실 자체다.
+        #   여기서는 무료/마일리지 영수증이 **pi_ 조회로는 절대 안 잡힌다**는 것만 고정한다.
+        assert set(self._queued_ids(["pi_shared", "pi_other"], vr.WEB_STORES)) == {1, 5}
 
     def test_sandbox_web_receipt_matched_by_web_stores(self):
         # dev/staging 에서 sk_test_ 키를 넣으면 WEB_TEST 영수증이 그대로 회수된다(env 하나로 커버).

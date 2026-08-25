@@ -4,7 +4,7 @@
 환불 감지 → 포탈 revoke 호출을 아웃박스(voucher_grant_outbox)를 단일 조율점으로 처리.
 
 세 갈래로 REVOKE_PENDING이 큐잉된다:
-  - google buyer 환불: track_google_refund가 void 감지 시 `enqueue_revoke_by_order_id`로 큐잉
+  - google buyer 환불: track_google_refund가 void 감지 시 `enqueue_revoke_by_order_ids`로 큐잉
     (google 환불은 receipt.status를 갱신하지 않으므로 훅이 유일 신호원).
   - WEB(Stripe) 환불: track_web_refund가 stripe.Refund 폴링으로 감지해 같은 헬퍼로 큐잉
     (역시 receipt.status를 갱신하지 않으므로 훅이 유일 신호원).
@@ -21,6 +21,15 @@
    Apple 환불 회수는 App Store Server Notifications 처리기 도입 시 같은 enqueue_revoke_for_receipt로 연결 필요.
 ⚠️ 범위 경계: buyer 환불(google void / Stripe refund)은 **receipt.status를 갱신하지 않는다**. 상태 반영은
    환불 회계·구매제한·재구매 판정에 물려 있어 별건으로 다뤄야 한다 — 여기 갈래들은 바우처 회수만 한다.
+
+⚠️ 회수는 자동으로 되살릴 수 없다(오회수 시 수동 복구):
+   포탈 purchase_voucher 의 ISSUED → REVOKED 는 소프트 상태 변경인데 **되돌리는 코드가 포탈·백오피스
+   어디에도 없다**(REVOKED→ISSUED 사용처 0건). IAP 쪽도 grant enroll 이
+   `Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id))` 라 아웃박스 행이 남아 있는 한 재발급이 영구 차단된다.
+   따라서 복구는 DB 직접 수정 2단계다(전용 툴 없음):
+     1. 포탈 DB: 해당 purchase_voucher 행을 REVOKED → ISSUED 로(홀드 만료 시각·개봉 여부 함께 확인).
+     2. IAP DB: voucher_grant_outbox 의 그 receipt_id 행을 GRANTED 로 되돌리거나, 삭제해서 enroll 이 다시 집게 한다.
+   대상을 찾는 단서는 로그뿐이다 → enqueue 시 큐잉한 order_id 목록을 INFO 로 남긴다(아래 helper).
 """
 
 import datetime
@@ -48,6 +57,7 @@ HTTP_TIMEOUT = 10
 REVOKE_BATCH = 200
 ENROLL_BATCH = 500
 ALERT_ATTEMPTS = 5  # REVOKE_PENDING이 이 횟수 이상 재시도 중이면 스톨로 간주해 경보(회수 유실 진행중).
+LOG_ID_CAP = 50  # 추적 로그에 실을 order_id 최대 개수(폭주 시 로그가 본문을 삼키지 않게).
 _TRANSIENT_STATUS = {401, 403, 408, 429}
 # 환불/무효 — 발급된 바우처를 회수해야 하는 receipt 상태.
 _REFUNDED_STATUSES = [
@@ -154,27 +164,34 @@ def enqueue_revoke_for_receipt(sess, receipt_id: int) -> bool:
     return True
 
 
-def enqueue_revoke_by_order_id(sess, order_id: str, *, stores) -> bool:
+def enqueue_revoke_by_order_ids_in_session(sess, order_ids, *, stores) -> list:
     """
-    환불된 order_id로 receipt 찾아 revoke 큐잉. 반환: 하나라도 큐잉되면 True.
+    환불된 order_id 목록으로 receipt 찾아 revoke 큐잉. 반환: **실제로 큐잉된 order_id 목록**(추적 로그용).
       stores: 매칭을 허용할 스토어(GOOGLE_STORES / WEB_STORES). 키워드 필수 — 위 상수 주석 참고.
       ⚠️ order_id는 (store, order_id)로만 유일 → 신호원 스토어 계열로 좁혀 크로스-스토어 오매칭 방지.
          (다른 스토어의 동일 order_id를 잘못 회수하면 정상 유저 손해). 다중 매치는 모두 큐잉.
+      ⚠️ order_id를 하나씩 N번 조회하지 않고 IN 한 방으로 간다 — (store, order_id) 인덱스는 메인넷 라이브에만
+         있고 alembic 에는 없어서 internal/dev 는 seq scan 이다. 폴링 겹침이 큰 신호원(track_web_refund)에서
+         N배로 곱해지면 그대로 부하가 된다.
+    한 건 실패가 나머지를 막지 않음(건별 swallow + warning).
     """
     receipts = (
         sess.execute(
             select(Receipt).where(
-                Receipt.order_id == order_id,
+                Receipt.order_id.in_(order_ids),
                 Receipt.store.in_(stores),
             )
         )
         .scalars()
         .all()
     )
-    queued = False
+    queued = []
     for r in receipts:
-        if enqueue_revoke_for_receipt(sess, r.id):
-            queued = True
+        try:
+            if enqueue_revoke_for_receipt(sess, r.id):
+                queued.append(r.order_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("enqueue revoke failed", order_id=r.order_id, error=str(e))
     return queued
 
 
@@ -182,28 +199,30 @@ def enqueue_revoke_by_order_ids(order_ids, *, stores) -> int:
     """
     여러 order_id에 대해 revoke 큐잉(자체 세션 관리). 환불 감지 훅용(track_google_refund / track_web_refund).
     stores는 신호원별 스토어 화이트리스트(키워드 필수).
-    voucher_grant_enabled=False면 no-op(0). 한 건 실패가 나머지를 막지 않음.
+    voucher_grant_enabled=False면 no-op(0). 반환: 큐잉된 **영수증 수**(한 order_id에 다중 매치면 그만큼).
     """
     if not config.voucher_grant_enabled or not order_ids:
         return 0
     sess = scoped_session(sessionmaker(bind=engine))
-    n = 0
     try:
-        for oid in order_ids:
-            try:
-                if enqueue_revoke_by_order_id(sess, oid, stores=stores):
-                    n += 1
-            except Exception as e:  # noqa: BLE001
-                logger.warning("enqueue revoke failed", order_id=oid, error=str(e))
+        queued = enqueue_revoke_by_order_ids_in_session(sess, order_ids, stores=stores)
         sess.commit()
-        if n:
-            logger.info("refund → revoke queued", count=n)
+        if queued:
+            # 어떤 주문을 회수 큐에 넣었는지 남긴다 — revoke 는 되살리는 코드가 없어서(모듈 docstring 참고)
+            #   오회수 사후 추적의 유일한 단서가 이 로그다.
+            logger.info(
+                "refund → revoke queued",
+                count=len(queued),
+                order_ids=queued[:LOG_ID_CAP],
+                truncated=len(queued) > LOG_ID_CAP,
+                stores=[s.name for s in stores],
+            )
+        return len(queued)
     except Exception:
         sess.rollback()
         raise
     finally:
         sess.remove()
-    return n
 
 
 @app.task(
