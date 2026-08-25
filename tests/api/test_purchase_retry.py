@@ -92,15 +92,22 @@ GOOGLE_SKU = "g_pkg_couragepass33premium"
 
 
 class FakeSession:
-    """`sess.scalar()`만 쓰는 코드 경로를 위한 최소 스텁."""
+    """`sess.scalar()` / `sess.execute()` 만 쓰는 코드 경로를 위한 최소 스텁."""
 
     def __init__(self, receipt):
         self._receipt = receipt
         self.scalar_calls = 0
+        self.execute_calls = []
 
     def scalar(self, *_args, **_kwargs):
         self.scalar_calls += 1
         return self._receipt
+
+    def execute(self, statement, params=None, *_args, **_kwargs):
+        # 중복 검사 앞의 pg_advisory_xact_lock. 스텁은 락을 흉내내지 않고
+        #   호출됐다는 사실만 기록한다(직렬화 자체는 실 Postgres 로 검증한다).
+        self.execute_calls.append((str(statement), params))
+        return None
 
 
 def make_receipt(**overrides) -> Receipt:
@@ -325,3 +332,23 @@ def test_request_refuses_invalid(purchase_api, store):
 
     with pytest.raises(ValueError, match="is not deliverable"):
         call_request(purchase_api, sess, store)
+
+
+def test_request_takes_advisory_lock_before_dedup_check(purchase_api):
+    """중복 검사 앞에서 (store, order_id) 로 advisory lock 을 잡는지 고정.
+
+    (store, order_id) 에 unique 제약이 없어서, 이 락이 빠지면 동시 요청 둘이
+    같이 통과해 영수증이 두 개 만들어지고 지급도 두 번 나간다.
+    """
+    sess = FakeSession(make_receipt(tx_status=TxStatus.SUCCESS))
+
+    call_request(purchase_api, sess)
+
+    sqls = [sql for sql, _ in sess.execute_calls]
+    assert any("SET LOCAL lock_timeout" in s for s in sqls), "대기를 유한하게 묶어야 한다"
+
+    locks = [(sql, params) for sql, params in sess.execute_calls
+             if "pg_advisory_xact_lock" in sql]
+    assert len(locks) == 1, "락을 정확히 한 번 잡아야 한다"
+    # 키에 store 와 order_id 가 모두 들어가야 서로 다른 주문이 직렬화되지 않는다.
+    assert locks[0][1]["key"] == f"{Store.GOOGLE.value}:{ORDER_ID}"

@@ -35,7 +35,7 @@ from shared.validator.apple import validate_apple
 from shared.validator.common import get_order_data
 from shared.validator.google import ack_google, validate_google
 from shared.validator.web import validate_web, validate_web_test
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, or_, select, text
 from sqlalchemy.orm import joinedload, with_loader_criteria
 from starlette.responses import JSONResponse
 
@@ -305,6 +305,40 @@ def request_product(
         )
 
     order_id, product_id, purchased_at = get_order_data(receipt_data)
+
+    # Serialize concurrent requests for the same purchase.
+    #
+    # The duplicate check below is a read-then-write: SELECT, and INSERT if nothing was
+    # found. There is no unique constraint on (store, order_id), so two requests that
+    # arrive together both see "not found" and both insert — two receipts, two
+    # deliveries, one payment. Measured on mainnet: 66 duplicate (store, order_id)
+    # groups, 34 of which produced two on-chain transactions. 33 of those 34 pairs were
+    # created less than a second apart, so this race is the cause, not any re-grant.
+    #
+    # The client can legitimately call this twice for one purchase: `ProcessPurchase`
+    # is invoked again when the store re-delivers an unconfirmed transaction, and its
+    # own PlayerPrefs guard is itself a read-then-write.
+    #
+    # The lock is held until this transaction commits — that is, past the INSERT below —
+    # so the second request blocks and then sees the row. Advisory locks are per
+    # database, so this holds across API pods.
+    #
+    # The durable fix is a unique index on (store, order_id), which also makes the
+    # INSERT itself safe. It cannot be added yet: the 66 existing duplicates would make
+    # the index creation fail, and deciding what to do with the already-delivered pairs
+    # is a separate call.
+    # `pg_advisory_xact_lock` is the blocking variant, and this database has
+    # `lock_timeout = 0`. If a holder stalls, every later request for the same order
+    # waits forever, each pinning a pool connection and a threadpool thread. Bound it:
+    # the worst case becomes one failed request instead of a slow pile-up. 10s is well
+    # above the observed hold time (the dedup SELECT is ~0.2s warm) while staying under
+    # the client's own 10s HTTP timeout budget.
+    sess.execute(text("SET LOCAL lock_timeout = '10s'"))
+    sess.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"{receipt_data.store.value}:{order_id}"},
+    )
+
     prev_receipt = sess.scalar(
         select(Receipt).where(
             Receipt.store == receipt_data.store, Receipt.order_id == order_id
