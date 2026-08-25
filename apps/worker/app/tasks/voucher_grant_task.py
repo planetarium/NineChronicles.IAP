@@ -23,7 +23,14 @@ from typing import Optional, Tuple
 import jwt
 import requests
 import structlog
-from shared.enums import ReceiptStatus, Store, TxStatus, VoucherGrantStatus
+from shared.enums import (
+    ProductType,
+    ReceiptStatus,
+    Store,
+    TxStatus,
+    VoucherGrantStatus,
+)
+from shared.models.product import Product
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
@@ -70,14 +77,67 @@ def platform_for_store(store: Store) -> Optional[str]:
     return None
 
 
+def grantable_product_ids():
+    """
+    (C6) 바우처 발급 대상 상품 id 서브쿼리 — active 매핑이 있고 **결제 상품(IAP)** 인 것만.
+
+    얼로우리스트다. FREE 는 무료 클레임도 VALID+SUCCESS 영수증을 만들어 결제 0원 발급이 되고,
+    MILEAGE 는 그 무료 클레임으로 적립한 마일리지로 사는 상품이라 같은 사슬의 연장이다.
+    `!= FREE` 로 두면 MILEAGE 우회가 열리고 컬럼이 나중에 nullable 이 되면 fail-open 한다.
+
+    설정시점 가드(admin PUT / CSV import)와 별개의 2선 방어 — DB 직접수정·구버전 경로,
+    그리고 enroll 이후 상품유형이 바뀌는 경우까지 덮는다. enroll 과 dispatch 가 같은 조건을
+    쓰도록 여기 한 곳에 둔다.
+    """
+    return (
+        select(ProductVoucherGrant.product_id)
+        .join(Product, Product.id == ProductVoucherGrant.product_id)
+        .where(
+            ProductVoucherGrant.active.is_(True),
+            Product.product_type == ProductType.IAP,
+        )
+    )
+
+
+def ineligible_active_mappings(sess) -> list:
+    """
+    (C6) 발급 대상이 아닌 상품유형(FREE·MILEAGE)에 붙어 있는 active 매핑 [(product_id, sku, type), ...].
+
+    grantable_product_ids() 가 걸러내므로 발급은 안 되지만, 제외가 조용하면 운영자는
+    "왜 티켓이 안 나오지"를 디버깅하게 된다. 매 회차 경고로 표면화한다(테이블 수십 행 규모).
+    """
+    rows = sess.execute(
+        select(
+            ProductVoucherGrant.product_id,
+            Product.google_sku,
+            Product.product_type,
+        )
+        .join(Product, Product.id == ProductVoucherGrant.product_id)
+        .where(
+            ProductVoucherGrant.active.is_(True),
+            Product.product_type != ProductType.IAP,
+        )
+    ).all()
+    return [(r[0], r[1], getattr(r[2], "name", r[2])) for r in rows]
+
+
 def tickets_for_product(sess, product_id: int) -> list:
-    """(PLD-1472) 상품 → 복권 티켓 매핑(active). [{"ticketType": str, "count": int}, ...]. 없으면 []."""
+    """
+    (PLD-1472) 상품 → 복권 티켓 매핑(active). [{"ticketType": str, "count": int}, ...]. 없으면 [].
+
+    (C6) 결제 상품(IAP)만. enroll 과 같은 조건을 dispatch 에서도 다시 본다 — enroll 이후에
+    상품유형이 IAP→FREE 로 바뀌는 경로가 있어서다(voucher 컬럼이 빈 CSV 행은 매핑을 그대로 두고
+    product_type 만 갱신한다). 여기서 []가 되면 기존 "no active mapping (retry)" 분기가 받아
+    PENDING 재시도 → stall 경보로 사람에게 도달한다(새 상태전이 불필요).
+    """
     rows = (
         sess.execute(
             select(ProductVoucherGrant)
+            .join(Product, Product.id == ProductVoucherGrant.product_id)
             .where(
                 ProductVoucherGrant.product_id == product_id,
                 ProductVoucherGrant.active.is_(True),
+                Product.product_type == ProductType.IAP,
             )
             .order_by(ProductVoucherGrant.ticket_type)
         )
@@ -174,6 +234,20 @@ def grant_vouchers(self):
     sess = scoped_session(sessionmaker(bind=engine))
     enrolled = granted = failed = 0
     try:
+        # (C6) 발급 불가 유형에 붙은 매핑은 아래 enroll 에서 제외된다 — 조용히 무시되지 않게 경고.
+        #   ⚠️ 진단 목적이므로 실패가 정상 발급을 막으면 안 된다 → swallow.
+        try:
+            ineligible = ineligible_active_mappings(sess)
+            if ineligible:
+                logger.warning(
+                    "active voucher mapping on non-IAP product — enroll 제외됨(설정 확인 필요)",
+                    mappings=[
+                        f"{pid}:{sku or '?'}:{ptype}" for (pid, sku, ptype) in ineligible
+                    ],
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ineligible mapping check failed", error=str(e))
+
         # (A) enroll — 적격 영수증(실스토어) 중 아웃박스 없는 건을 PENDING으로.
         #   ⚠️ 스토어 필터를 SQL에 둠: skip 대상(REDEEM 등)을 Python에서 거르면 아웃박스가 안 생겨
         #      매 회차 재조회되어 limit 윈도우를 침전·starve시킨다(리뷰 지적).
@@ -182,12 +256,9 @@ def grant_vouchers(self):
             Receipt.tx_status == TxStatus.SUCCESS,
             Receipt.product_id.isnot(None),
             Receipt.store.in_(grantable),
-            # 바우처 발급 대상 상품만(active 티켓 매핑 존재) — 미대상 상품이 윈도우 침전하지 않게.
-            Receipt.product_id.in_(
-                select(ProductVoucherGrant.product_id).where(
-                    ProductVoucherGrant.active.is_(True)
-                )
-            ),
+            # 바우처 발급 대상 상품만(active 매핑 + 결제 상품) — 미대상 상품이 윈도우 침전하지 않게.
+            #   (C6) 상품유형 조건은 grantable_product_ids() 한 곳에 둔다(dispatch 와 동일 조건).
+            Receipt.product_id.in_(grantable_product_ids()),
             Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
         ]
         # 타임스탬프 컷오프(설정 시): 이 시각(created_at) 이후 결제만 대상 — 과거 소급 방지.

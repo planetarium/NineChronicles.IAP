@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.tasks import voucher_grant_task as vg
-from shared.enums import Store
+from shared.enums import ProductType, Store
 
 
 class TestPlatformForStore:
@@ -161,3 +161,40 @@ class TestGrantVouchersGating:
             patch.object(vg.config, "portal_grant_url", None), \
             patch.object(vg.config, "portal_iap_jwt_secret", None):
             assert vg.grant_vouchers.run() == "not configured"
+
+class TestProductTypeAllowlist:
+    """(C6) 발급 대상 상품유형 — 결제 상품(IAP)만. FREE/MILEAGE 는 결제 0원 사슬이라 제외."""
+
+    def test_grantable_subquery_filters_product_type(self):
+        """프로덕션 헬퍼의 SQL 을 검사한다(테스트에서 재구성하면 tautology 가 된다)."""
+        sql = str(vg.grantable_product_ids().compile(compile_kwargs={"literal_binds": True}))
+        flat = " ".join(sql.split())
+        assert "JOIN product ON product.id = product_voucher_grant.product_id" in flat
+        assert "product_voucher_grant.active IS true" in flat
+        # 얼로우리스트여야 한다 — `!= 'FREE'` 면 MILEAGE 가 통과하고 NULL 에 fail-open 한다.
+        assert "product.product_type = 'IAP'" in flat
+        assert "!=" not in flat
+
+    def test_tickets_for_product_joins_product_type(self):
+        """dispatch 단계도 같은 조건을 본다(enroll 이후 타입 플립 방어)."""
+        sess = MagicMock()
+        sess.execute.return_value.scalars.return_value.all.return_value = []
+        assert vg.tickets_for_product(sess, 111) == []
+        stmt = sess.execute.call_args[0][0]
+        flat = " ".join(str(stmt.compile(compile_kwargs={"literal_binds": True})).split())
+        assert "JOIN product" in flat
+        assert "product.product_type = 'IAP'" in flat
+
+    def test_ineligible_mappings_reports_type(self):
+        sess = MagicMock()
+        sess.execute.return_value.all.return_value = [
+            (111, "g_pkg_freedaily200", ProductType.FREE)
+        ]
+        assert vg.ineligible_active_mappings(sess) == [
+            (111, "g_pkg_freedaily200", "FREE")
+        ]
+
+    def test_ineligible_mappings_empty(self):
+        sess = MagicMock()
+        sess.execute.return_value.all.return_value = []
+        assert vg.ineligible_active_mappings(sess) == []
