@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-
 from shared.enums import ProductType
 
 from app import voucher_validation as vv
@@ -155,6 +154,7 @@ class TestParseVoucherColumns:
         with pytest.raises(HTTPException) as e:
             vv.parse_voucher_columns([("-", ""), ("STANDARD", "1")], TABLES, None)
         assert e.value.status_code == 400
+
 
 class TestProductTypeAllowlist:
     """(C6) 바우처 매핑 가능 상품유형 — 결제 상품(IAP)만 통과."""

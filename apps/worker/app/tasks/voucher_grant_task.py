@@ -151,6 +151,28 @@ def tickets_for_product(sess, product_id: int) -> list:
     ]
 
 
+def _has_active_mapping(sess, product_id) -> bool:
+    """
+    (C6) 상품유형 조건 **없이** active 매핑 존재 여부. dispatch 가 빈 티켓의 사유를 구분하는 용도.
+
+    이 상태(매핑 있음 + 유형 부적격)를 FAILED 로 종단시키지 않는 것은 의도다. 유형을 실수로
+    뒤집었다가 되돌리는 경우가 있고, 종단시키면 그 사이 들어온 **유료** 영수증이 영구 미지급으로
+    굳는다. PENDING 재시도로 두면 유형을 되돌리는 순간 self-heal 하고, 그때까지는 stall 경보가
+    사람에게 도달한다. 대신 해소 전까지 경보가 계속 나가므로 방치하면 안 된다.
+    """
+    if not product_id:
+        return False
+    return (
+        sess.execute(
+            select(ProductVoucherGrant.id).where(
+                ProductVoucherGrant.product_id == product_id,
+                ProductVoucherGrant.active.is_(True),
+            )
+        ).first()
+        is not None
+    )
+
+
 def _planet_str(planet_id) -> str:
     """planet_id(LargeBinary) → hex 문자열('0x...')."""
     if isinstance(planet_id, (bytes, bytearray, memoryview)):
@@ -246,6 +268,10 @@ def grant_vouchers(self):
                     ],
                 )
         except Exception as e:  # noqa: BLE001
+            # DB 오류면 서버 쪽 트랜잭션이 abort 상태로 남아 다음 문장이 전부 25P02 로 거부된다.
+            #   그대로 두면 "진단 실패가 발급을 막지 않는다"는 목적이 깨지고, 로그엔 원인이 아니라
+            #   25P02 만 남아 원인이 은폐된다. 반드시 되감는다.
+            sess.rollback()
             logger.warning("ineligible mapping check failed", error=str(e))
 
         # (A) enroll — 적격 영수증(실스토어) 중 아웃박스 없는 건을 PENDING으로.
@@ -324,8 +350,15 @@ def grant_vouchers(self):
                 )
                 if not tickets:
                     # 티켓 매핑이 아직 미설정/비활성일 수 있음 → 종단 아닌 재시도(PENDING 유지).
+                    #   (C6) 매핑은 있는데 상품유형 때문에 빈 경우와 구분한다. 타입 플립
+                    #   (IAP→FREE/MILEAGE) 케이스는 매핑이 **존재**하므로, 사유를 뭉치면 알림받은
+                    #   사람이 "매핑 없다"는 메시지를 들고 있는 매핑을 찾아 헤맨다.
                     ob.attempts = (ob.attempts or 0) + 1
-                    ob.last_error = "no active voucher ticket mapping (retry)"
+                    ob.last_error = (
+                        "product_type not grantable (retry)"
+                        if _has_active_mapping(sess, r.product_id)
+                        else "no active voucher ticket mapping (retry)"
+                    )
                     continue
 
                 payload = {

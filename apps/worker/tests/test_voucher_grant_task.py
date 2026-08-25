@@ -162,6 +162,7 @@ class TestGrantVouchersGating:
             patch.object(vg.config, "portal_iap_jwt_secret", None):
             assert vg.grant_vouchers.run() == "not configured"
 
+
 class TestProductTypeAllowlist:
     """(C6) 발급 대상 상품유형 — 결제 상품(IAP)만. FREE/MILEAGE 는 결제 0원 사슬이라 제외."""
 
@@ -198,3 +199,29 @@ class TestProductTypeAllowlist:
         sess = MagicMock()
         sess.execute.return_value.all.return_value = []
         assert vg.ineligible_active_mappings(sess) == []
+
+    def test_has_active_mapping_true(self):
+        """(C6) dispatch 가 "매핑 없음" 과 "유형 부적격" 을 구분하는 근거."""
+        sess = MagicMock()
+        sess.execute.return_value.first.return_value = (1,)
+        assert vg._has_active_mapping(sess, 111) is True
+        flat = " ".join(
+            str(
+                sess.execute.call_args[0][0].compile(
+                    compile_kwargs={"literal_binds": True}
+                )
+            ).split()
+        )
+        # 유형 조건이 **없어야** 한다 — 있으면 타입 플립 케이스를 못 잡는다.
+        assert "product.product_type" not in flat
+
+    def test_has_active_mapping_false(self):
+        sess = MagicMock()
+        sess.execute.return_value.first.return_value = None
+        assert vg._has_active_mapping(sess, 111) is False
+
+    def test_has_active_mapping_no_product_id(self):
+        sess = MagicMock()
+        assert vg._has_active_mapping(sess, None) is False
+        sess.execute.assert_not_called()
+
