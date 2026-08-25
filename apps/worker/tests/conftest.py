@@ -14,6 +14,8 @@
    않는다) 리포의 `shared/**/*.py` 와 대조한다. `import shared.models.…` 로 판정하면 그 시점에
    부모 패키지가 스테일 경로로 sys.modules 에 박혀서 뒤늦은 sys.path 삽입이 무효가 된다.
    특정 모듈을 canary 로 하드코딩하지 않는 이유는 다음에 추가되는 모듈에서 또 새기 때문이다.
+   범위는 **파일 누락**까지다 — 기존 모듈의 내용 변경(예: shared/enums.py 수정)은 감지하지
+   못한다. 목표가 `ModuleNotFoundError` 로 인한 수집 실패 회피이므로 그게 정확한 범위다.
 
 ⚠️ 알려진 선행 실패: `test_track_google_refund` 4건은 이 conftest 로 처음 실행되면서 드러난
    기존 문제다(`VoidReason` 에 없는 멤버 단정, `google_package_dict` 키 타입 불일치). main

@@ -164,10 +164,12 @@ def _has_active_mapping(sess, product_id) -> bool:
         return False
     return (
         sess.execute(
-            select(ProductVoucherGrant.id).where(
+            select(ProductVoucherGrant.id)
+            .where(
                 ProductVoucherGrant.product_id == product_id,
                 ProductVoucherGrant.active.is_(True),
             )
+            .limit(1)  # 존재검사 — 의도를 SQL 에 드러낸다
         ).first()
         is not None
     )
