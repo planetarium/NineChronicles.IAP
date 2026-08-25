@@ -20,6 +20,9 @@ shared = { path = "../shared" }
 celery = { extras = ["redis"], version = "^5.4" }
 flower = "^2.0.1"
 requests = "^2.31.0"
+# (PLD-1470) track_web_refund 의 Stripe 환불 폴링용. shared 가 이미 같은 버전을 쓰지만
+#   워커가 직접 임포트하므로 전이 의존에 기대지 않고 명시한다(shared 의 의존이 바뀌면 조용히 깨진다).
+stripe = "^13.0.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0,<7.2"

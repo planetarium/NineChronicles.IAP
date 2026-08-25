@@ -9,7 +9,10 @@ from shared.utils.google import get_google_client
 
 from app.celery_app import app
 from app.config import config
-from app.tasks.voucher_reconcile_task import enqueue_revoke_by_order_ids
+from app.tasks.voucher_reconcile_task import (
+    GOOGLE_STORES,
+    enqueue_revoke_by_order_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -132,8 +135,10 @@ def handle(event, context):
 
     # (PLD-1470) 환불된 결제의 NCG 바우처 회수 큐잉(아웃박스 REVOKE_PENDING). 알림 흐름과 독립·best-effort.
     #   google buyer 환불은 receipt.status를 갱신하지 않으므로 이 훅이 유일 신호원.
+    #   stores=GOOGLE_STORES 를 명시로 넘긴다 — order_id 는 (store, order_id) 로만 유일해서
+    #   스토어를 좁히지 않으면 다른 스토어의 동일 order_id 를 잘못 회수한다(동작은 종전과 동일).
     try:
-        queued = enqueue_revoke_by_order_ids(refunded_order_ids)
+        queued = enqueue_revoke_by_order_ids(refunded_order_ids, stores=GOOGLE_STORES)
         if queued:
             logger.info(f"바우처 회수 큐잉 {queued}건")
     except Exception as e:  # noqa: BLE001

@@ -44,6 +44,13 @@ beat_schedule = {
         "schedule": crontab(minute="*/60"),
         "options": {"queue": "background_job_queue"},
     },
+    # (PLD-1470) WEB(Stripe) 환불 → 바우처 회수 신호원. 15분 주기 근거는 track_web_refund 모듈 주석 참고
+    #   (룩백 24h × 15분 스케줄 = 96배 겹침: 홀드 72h 대비 충분히 촘촘하면서 하루 ~100 콜로 Stripe API 절약).
+    "track-web-refund-every-15-minutes": {
+        "task": "iap.track_web_refund",
+        "schedule": crontab(minute="*/15"),
+        "options": {"queue": "background_job_queue"},
+    },
     "voucher-grant-every-2-minutes": {
         "task": "iap.voucher_grant",
         "schedule": crontab(minute="*/2"),

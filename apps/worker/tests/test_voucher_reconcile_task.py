@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from app.tasks import voucher_reconcile_task as vr
-from shared.enums import VoucherGrantStatus
+from shared.enums import Store, VoucherGrantStatus
 
 
 class TestPostRevoke:
@@ -102,13 +102,37 @@ class TestEnqueueByOrderId:
         r1.id, r2.id = 1, 2
         sess.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
         with patch.object(vr, "enqueue_revoke_for_receipt", return_value=True) as m:
-            assert vr.enqueue_revoke_by_order_id(sess, "order-x") is True
+            assert (
+                vr.enqueue_revoke_by_order_id(sess, "order-x", stores=vr.GOOGLE_STORES)
+                is True
+            )
             assert m.call_count == 2
 
     def test_no_match_returns_false(self):
         sess = MagicMock()
         sess.execute.return_value.scalars.return_value.all.return_value = []
-        assert vr.enqueue_revoke_by_order_id(sess, "order-x") is False
+        assert (
+            vr.enqueue_revoke_by_order_id(sess, "order-x", stores=vr.GOOGLE_STORES)
+            is False
+        )
+
+    def test_store_filter_is_bound_from_argument(self):
+        # (PLD-1470) 스토어 필터 일반화 회귀 — GOOGLE_STORES/WEB_STORES가 그대로 쿼리에 실려야 한다.
+        #   하드코딩을 지운 뒤에도 google 경로가 종전과 동일한 필터를 쓰는지 고정한다.
+        for stores in (vr.GOOGLE_STORES, vr.WEB_STORES):
+            sess = MagicMock()
+            sess.execute.return_value.scalars.return_value.all.return_value = []
+            vr.enqueue_revoke_by_order_id(sess, "order-x", stores=stores)
+            stmt = sess.execute.call_args.args[0]
+            params = stmt.compile().params
+            assert params["order_id_1"] == "order-x"
+            assert params["store_1"] == stores
+
+    def test_google_and_web_store_lists_are_disjoint(self):
+        # 두 신호원이 서로의 영수증을 절대 건드리지 못해야 한다(크로스-스토어 오회수 방지).
+        assert set(vr.GOOGLE_STORES).isdisjoint(vr.WEB_STORES)
+        assert set(vr.GOOGLE_STORES) == {Store.GOOGLE, Store.GOOGLE_TEST}
+        assert set(vr.WEB_STORES) == {Store.WEB, Store.WEB_TEST}
 
 
 class TestReconcileGating:
@@ -126,8 +150,11 @@ class TestReconcileGating:
 class TestEnqueueByOrderIds:
     def test_noop_when_disabled(self):
         with patch.object(vr.config, "voucher_grant_enabled", False):
-            assert vr.enqueue_revoke_by_order_ids(["o1", "o2"]) == 0
+            assert (
+                vr.enqueue_revoke_by_order_ids(["o1", "o2"], stores=vr.GOOGLE_STORES)
+                == 0
+            )
 
     def test_noop_when_empty(self):
         with patch.object(vr.config, "voucher_grant_enabled", True):
-            assert vr.enqueue_revoke_by_order_ids([]) == 0
+            assert vr.enqueue_revoke_by_order_ids([], stores=vr.GOOGLE_STORES) == 0

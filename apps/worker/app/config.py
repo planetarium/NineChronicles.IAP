@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # 이 시각(created_at) 이후 영수증만 바우처 대상(과거 소급 방지). ISO8601 env, 미설정(None)=컷오프 없음.
     voucher_grant_cutoff: Optional[datetime] = None
 
+    # (PLD-1470) WEB(Stripe) 환불 감지용 시크릿(env WORKER_STRIPE_SECRET_KEY).
+    #   **Optional 인 이유는 "휴면 배포"** 다 — 메인넷엔 아직 이 env 가 없으므로, 미설정이면 track_web_refund 가
+    #   Stripe 를 부르기도 전에 즉시 no-op 한다(이미지만 올라가도 아무 일 안 일어남 = voucher_grant_enabled 와 같은 결).
+    #   값은 stage 에 맞춰 넣는다: production=sk_live_…(Store.WEB), dev/staging=sk_test_…(Store.WEB_TEST).
+    #   키 하나로 두 스토어를 덮는 이유는 Stripe 의 live/test 가 키로 갈리는 별개 네임스페이스라
+    #   "그 키로 보이는 환불"만 조회되기 때문이다(교차 조회가 애초에 불가능).
+    stripe_secret_key: Optional[str] = None
+    # apps/api 와 같은 값으로 고정 — Stripe 계정 기본 버전이 롤포워드해도 응답 필드가 흔들리지 않게.
+    stripe_api_version: str = "2025-09-30.clover"
+
     google_credential: Optional[str] = None
     google_package_dict: dict[PackageName, str] = {
         PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
