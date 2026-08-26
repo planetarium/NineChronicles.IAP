@@ -76,7 +76,7 @@ class SimpleProductSchema(BaseSchema):
     #   `model_validate(product)` 만으로는 항상 []. 그래서 이 스키마를 재사용하는
     #   FullReceiptSchema(영수증 조회)에서는 언제나 []이며, 매핑 유무의 진실이 아니다
     #   (그쪽 진실은 `GET /api/admin/product-voucher-grants`).
-    voucher_tickets: List[VoucherTicketSchema] = Field(default_factory=list)
+    voucher_ticket_list: List[VoucherTicketSchema] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

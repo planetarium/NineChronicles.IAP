@@ -86,15 +86,15 @@ CSV로 상품 정보 + 바우처 매핑 일괄. body `{"environment":"internal"|
 - 응답 분류: 200/기수령/소액=종단 GRANTED · 5xx/401/403/429/408/'voucher disabled'/`body.retryable==true`(**R2**, 예: 409 ERR-TICKET-TYPE-UNKNOWN=정책 전파 지연)=transient(PENDING 재시도, self-heal) · 그 외 4xx=FAILED.
 
 ## 클라 노출 (상품 조회 API, PLD-1472)
-`GET /api/product` · `GET /api/product/all` 응답의 각 상품에 **`voucher_tickets`** 가 실린다 — 게임 샵이 "이 상품을 사면 복권 N장"을 표시하는 용도. `mileage` 와 같은 결.
+`GET /api/product` · `GET /api/product/all` 응답의 각 상품에 **`voucher_ticket_list`** 가 실린다 — 게임 샵이 "이 상품을 사면 복권 N장"을 표시하는 용도. `mileage` 와 같은 결.
 ```json
-"voucher_tickets": [{"ticket_type": "GOLD", "count": 1}, {"ticket_type": "STANDARD", "count": 2}]
+"voucher_ticket_list": [{"ticket_type": "GOLD", "count": 1}, {"ticket_type": "STANDARD", "count": 2}]
 ```
 - **상금·확률은 싣지 않는다.** IAP 는 발급까지만 알고 상금표는 포탈 소유(기획 소유권 원칙).
 - 노출 조건 = `active=true` + `count>0` + 상품유형 `IAP`(C6). 매핑이 없거나 조건에 안 맞으면 `[]` — **구버전 클라(필드를 모름)와 같은 모양**이라 하위호환.
 - 정렬 `ticket_type` 오름차순 고정. 구현: [`app/voucher_display.py`](app/voucher_display.py).
 - `GET /api/product/all` 은 `@cache(expire=3600)` 선언이 붙어 있으나 **현재 캐시 키에 요청별 세션이 섞여 사실상 미스**라 지연이 없다. 캐시를 살리면 그때 매핑 변경이 최대 1h 늦게 반영되므로 무효화 전략을 함께 정할 것(엔드포인트 주석에 선택지 정리).
-- ⚠️ 영수증 조회(`FullReceiptSchema.product`)에도 같은 스키마가 쓰여 `voucher_tickets` 가 보이지만 **거긴 항상 `[]`** 다. 매핑 진실은 `GET /api/admin/product-voucher-grants`.
+- ⚠️ 영수증 조회(`FullReceiptSchema.product`)에도 같은 스키마가 쓰여 `voucher_ticket_list` 가 보이지만 **거긴 항상 `[]`** 다. 매핑 진실은 `GET /api/admin/product-voucher-grants`.
 
 ### 롤아웃 순서 (중요)
 **표시 킬스위치(`active` 컬럼)와 발급 킬스위치(워커 env)는 서로 다른 스위치다.** 매핑만 켜면 클라는 즉시 광고하는데 워커가 안 주는 구간이 생기고, 그 구간 유료 결제는 나중에 컷오프를 런칭 시각으로 잡는 순간 되돌릴 수 없이 미지급으로 굳는다. 그래서 **켤 때는 워커 먼저, 끌 때는 매핑 먼저.**

@@ -271,10 +271,10 @@ class TestAttachVoucherTickets:
         attach_voucher_tickets(sess, schemas.items())
 
         assert [
-            (t.ticket_type, t.count) for t in schemas[with_mapping.id].voucher_tickets
+            (t.ticket_type, t.count) for t in schemas[with_mapping.id].voucher_ticket_list
         ] == [("STANDARD", 2)]
         # 매핑 없는 상품은 기본값 그대로 — "매핑 없음"과 "필드 없음"이 같게 보인다(하위호환).
-        assert schemas[without_mapping.id].voucher_tickets == []
+        assert schemas[without_mapping.id].voucher_ticket_list == []
 
     def test_same_product_in_two_categories_gets_own_list(self, sess):
         """상품↔카테고리가 다대다라 같은 상품이 서로 다른 스키마로 두 번 실릴 수 있다."""
@@ -284,9 +284,9 @@ class TestAttachVoucherTickets:
 
         attach_voucher_tickets(sess, [(product.id, first), (product.id, second)])
 
-        assert first.voucher_tickets[0].ticket_type == "STANDARD"
-        assert second.voucher_tickets[0].ticket_type == "STANDARD"
-        assert first.voucher_tickets is not second.voucher_tickets
+        assert first.voucher_ticket_list[0].ticket_type == "STANDARD"
+        assert second.voucher_ticket_list[0].ticket_type == "STANDARD"
+        assert first.voucher_ticket_list is not second.voucher_ticket_list
 
     def test_single_query_regardless_of_product_count(self, sess, engine):
         """
@@ -304,7 +304,7 @@ class TestAttachVoucherTickets:
             attach_voucher_tickets(sess, schemas)
 
         assert counter["n"] == 1
-        assert all(len(schema.voucher_tickets) == 2 for _, schema in schemas)
+        assert all(len(schema.voucher_ticket_list) == 2 for _, schema in schemas)
 
     def test_empty_targets_does_not_query(self, sess, engine):
         with count_select(engine) as counter:
@@ -344,9 +344,9 @@ class TestEndpoints:
         assert counter["n"] == 1
         by_name = {p.name: p for p in result[0].product_list}
         assert [
-            (t.ticket_type, t.count) for t in by_name["p00"].voucher_tickets
+            (t.ticket_type, t.count) for t in by_name["p00"].voucher_ticket_list
         ] == [("GOLD", 1), ("STANDARD", 2)]
-        assert by_name["p11"].voucher_tickets == []
+        assert by_name["p11"].voucher_ticket_list == []
 
     def test_all_product_list_single_voucher_query(self, product_api, sess, engine):
         """`/all` 도 마찬가지. (`@cache` 데코레이터를 벗겨 본체를 직접 부른다.)"""
@@ -356,7 +356,7 @@ class TestEndpoints:
             result = product_api.all_product_list.__wrapped__(sess=sess)
 
         assert counter["n"] == 1
-        dumped = {p.name: p.model_dump()["voucher_tickets"] for p in result}
+        dumped = {p.name: p.model_dump()["voucher_ticket_list"] for p in result}
         assert dumped["p00"] == [
             {"ticket_type": "GOLD", "count": 1},
             {"ticket_type": "STANDARD", "count": 2},
@@ -405,12 +405,12 @@ class TestEndpoints:
             all_products = client.get("/product/all").json()
 
         by_name = {p["name"]: p for p in categories[0]["product_list"]}
-        assert by_name["p00"]["voucher_tickets"] == [
+        assert by_name["p00"]["voucher_ticket_list"] == [
             {"ticket_type": "GOLD", "count": 1},
             {"ticket_type": "STANDARD", "count": 2},
         ]
-        assert by_name["p01"]["voucher_tickets"] == []
-        assert {p["name"]: p["voucher_tickets"] for p in all_products} == {
+        assert by_name["p01"]["voucher_ticket_list"] == []
+        assert {p["name"]: p["voucher_ticket_list"] for p in all_products} == {
             "p00": [
                 {"ticket_type": "GOLD", "count": 1},
                 {"ticket_type": "STANDARD", "count": 2},
@@ -429,7 +429,7 @@ class TestEndpoints:
         product_schema = result[0].product_list[0]
         assert product_schema.mileage == 20  # 2배 적용된 것 확인(대조군)
         assert [
-            (t.ticket_type, t.count) for t in product_schema.voucher_tickets
+            (t.ticket_type, t.count) for t in product_schema.voucher_ticket_list
         ] == [("GOLD", 1), ("STANDARD", 2)]
 
 
@@ -438,7 +438,7 @@ class TestSchemaBackwardCompatibility:
         """ORM Product 에는 대응 속성이 없다 — 검증만으로는 항상 빈 리스트(구버전과 동일한 모양)."""
         product = make_product(sess, "p1")
 
-        assert SimpleProductSchema.model_validate(product).voucher_tickets == []
+        assert SimpleProductSchema.model_validate(product).voucher_ticket_list == []
 
     def test_default_list_is_not_shared_between_instances(self, sess):
         """기본값을 공유하면 한 상품에 붙인 티켓이 다른 상품에 새어 나간다."""
@@ -446,7 +446,7 @@ class TestSchemaBackwardCompatibility:
         first = SimpleProductSchema.model_validate(product)
         second = SimpleProductSchema.model_validate(product)
 
-        assert first.voucher_tickets is not second.voucher_tickets
+        assert first.voucher_ticket_list is not second.voucher_ticket_list
 
     def test_serialized_field_is_snake_case(self, sess):
         product = make_product(sess, "p1")
@@ -455,6 +455,6 @@ class TestSchemaBackwardCompatibility:
 
         attach_voucher_tickets(sess, [(product.id, schema)])
 
-        assert schema.model_dump()["voucher_tickets"] == [
+        assert schema.model_dump()["voucher_ticket_list"] == [
             {"ticket_type": "STANDARD", "count": 2}
         ]

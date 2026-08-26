@@ -12,7 +12,7 @@
      `app.config.Settings()` 를 평가하고(부모 패키지 `app.api.__init__` 가 admin/purchase 까지
      끌어온다) 전체 런타임 설정 없이는 임포트 자체가 실패한다 — `app/voucher_validation.py` 와 같은 사정.
      (엔드포인트까지 테스트하려면 우회가 필요하다. 방법은
-      `apps/api/tests/test_product_voucher_tickets.py` 의 `product_api` 픽스처에 있다 —
+      `apps/api/tests/test_product_voucher_ticket_list.py` 의 `product_api` 픽스처에 있다 —
       env 를 채우는 걸로는 안 뚫린다. 로컬 `.env` 의 옛 키가 `extra_forbidden` 을 유발한다.)
 """
 
@@ -103,4 +103,4 @@ def attach_voucher_tickets(
         tickets = ticket_map.get(product_id)
         if tickets:
             # 리스트는 쌍마다 새로 만든다(같은 상품이 두 카테고리에 실릴 때 리스트를 공유하지 않게).
-            schema.voucher_tickets = list(tickets)
+            schema.voucher_ticket_list = list(tickets)
