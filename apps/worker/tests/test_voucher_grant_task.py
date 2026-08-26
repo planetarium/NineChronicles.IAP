@@ -145,10 +145,22 @@ class TestGrantableStores:
         assert Store.APPLE in s and Store.GOOGLE in s and Store.WEB in s
         assert Store.APPLE_TEST not in s and Store.WEB_TEST not in s
 
+    def test_mainnet_excludes_sandbox(self):
+        # 🔴 이 저장소의 실제 어휘는 "mainnet" 이다(라이브 파드 API_STAGE=mainnet).
+        #   "production" 만 보면 메인넷에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다.
+        with patch.object(vg.config, "stage", "mainnet"):
+            s = vg._grantable_stores()
+        assert s == {Store.APPLE, Store.GOOGLE, Store.WEB}
+
     def test_nonprod_includes_sandbox(self):
         with patch.object(vg.config, "stage", "development"):
             s = vg._grantable_stores()
         assert Store.APPLE_TEST in s and Store.WEB_TEST in s and Store.GOOGLE_TEST in s
+
+    def test_default_stage_is_not_production(self):
+        # 배선 함정 고정: STAGE env 가 없으면 기본값 "development" 라 샌드박스가 열린다.
+        #   즉 코드 수정만으로는 메인넷이 닫히지 않는다(WORKER_STAGE=mainnet 배선 필요).
+        assert "development" not in vg._PROD_STAGES
 
 
 class TestGrantVouchersGating:
@@ -224,4 +236,28 @@ class TestProductTypeAllowlist:
         sess = MagicMock()
         assert vg._has_active_mapping(sess, None) is False
         sess.execute.assert_not_called()
+
+
+class TestStageDiscriminator:
+    """(C6/stage) 미배선 감지의 판별자가 실제 Settings 기본값과 묶여 있어야 한다."""
+
+    def test_default_stage_matches_settings_default(self):
+        """
+        `_DEFAULT_STAGE` 는 "STAGE env 가 안 들어왔다"를 판정하는 유일한 근거다.
+        Settings 의 기본값이 바뀌면 이 상수도 같이 바뀌어야 하고, 아니면 미배선 경고가
+        조용히 안 뜬다(경고가 안 뜨는 건 테스트 없이는 아무도 모른다).
+        """
+        from app.config import Settings
+
+        assert vg._DEFAULT_STAGE == Settings.model_fields["stage"].default
+
+    @pytest.mark.parametrize("stage", ["production", "mainnet"])
+    def test_prod_stages_exclude_sandbox(self, stage):
+        with patch.object(vg.config, "stage", stage):
+            assert vg._grantable_stores() == set(vg._PROD_STORES)
+
+    @pytest.mark.parametrize("stage", ["development", "internal"])
+    def test_non_prod_includes_sandbox(self, stage):
+        with patch.object(vg.config, "stage", stage):
+            assert vg._grantable_stores() == vg._PROD_STORES | vg._TEST_STORES
 
