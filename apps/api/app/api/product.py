@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 from app.config import config
 from app.dependencies import session
 from app.utils import get_purchase_history
+from app.voucher_display import attach_voucher_tickets
 
 router = APIRouter(
     prefix="/product",
@@ -53,6 +54,9 @@ def product_list(
     )
 
     category_schema_list = []
+    # (PLD-1472) 복권 티켓을 붙일 대상. 응답에 실리는 것만 모아 **마지막에 한 번** 조회한다
+    #   (여기서 상품마다 조회하면 카테고리×상품 수만큼 쿼리가 늘어난다 = N+1).
+    voucher_targets = []
     purchase_history = get_purchase_history(sess, planet_id, agent_addr)
     for category in all_category_list:
         cat_schema = CategorySchema.model_validate(category)
@@ -103,9 +107,15 @@ def product_list(
                     fav.amount *= 2
 
             schema_dict[product.id] = schema
+            voucher_targets.append((product.id, schema))
 
         cat_schema.product_list = list(schema_dict.values())
         category_schema_list.append(cat_schema)
+
+    # (PLD-1472) 복권 티켓은 응답 전체를 모아 쿼리 한 번으로 붙인다.
+    #   ⚠️ 위 Thor 2배(mileage·아이템·FAV)의 대상이 **아니다**. 발급은 워커가 매핑 count 를 그대로
+    #      쓰므로 여기서 부풀리면 표시 장수와 실제 지급 장수가 어긋난다.
+    attach_voucher_tickets(sess, voucher_targets)
 
     return category_schema_list
 
@@ -113,4 +123,21 @@ def product_list(
 @router.get("/all", response_model=List[SimpleProductSchema])
 @cache(expire=3600)
 def all_product_list(sess=Depends(session)):
-    return sess.scalars(select(Product)).fetchall()
+    """전 상품 목록."""
+    # ⚠️ 복권 티켓 매핑(`product_voucher_grant`)과 이 엔드포인트의 캐시 관계 — 선언과 실제가 다르다.
+    #   선언상 `@cache(expire=3600)` 이므로 매핑을 백오피스에서 바꿔도 최대 1시간 늦게 반영돼야 한다.
+    #   그런데 fastapi-cache 기본 key_builder 가 **kwargs 를 그대로 키에 넣는데**, 여기 kwargs 에는
+    #   요청마다 새로 만들어지는 `sess`(scoped_session) 가 있어 키가 매번 달라진다 → 실측 5회 요청에
+    #   5회 모두 MISS. 즉 **현재는 캐시가 사실상 동작하지 않아 지연도 없다**(대신 InMemoryBackend 에
+    #   요청당 항목이 쌓이고 다시 읽히지 않아 만료 삭제도 안 된다 — 이 PR 범위 밖의 선행 문제).
+    #   그래서 여기서는 캐시를 살리지도, TTL 을 손대지도 않는다. 살리는 순간 위 1시간 지연이
+    #   **그때 처음** 생기므로 의식적으로 결정해야 한다. 살릴 때의 선택지:
+    #     (a) TTL 단축, (b) 매핑 변경 시 admin PUT/DELETE 에서 `FastAPICache.clear`,
+    #     (c) 캐시 키에 매핑 버전(max(updated_at)) 포함.
+    #   (b)/(c) 는 백엔드가 프로세스 내 InMemoryBackend 라(main.py) 파드마다 따로 만료된다는 점까지
+    #   같이 봐야 한다. 어느 쪽이든 게임 샵 UI 가 쓰는 건 캐시 없는 `GET /api/product` 라 영향은 없다.
+    product_list = sess.scalars(select(Product)).fetchall()
+    schema_list = [SimpleProductSchema.model_validate(p) for p in product_list]
+    # 상품별 조회 금지(N+1) — 전 상품분을 한 번에 붙인다.
+    attach_voucher_tickets(sess, zip((p.id for p in product_list), schema_list))
+    return schema_list
