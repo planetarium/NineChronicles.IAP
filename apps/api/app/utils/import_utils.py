@@ -1,6 +1,6 @@
 import csv
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from fastapi import HTTPException
 from shared.models.product import (
@@ -18,7 +18,10 @@ from shared.models.product_voucher_grant import ProductVoucherGrant
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.voucher_validation import parse_voucher_columns
+from app.voucher_validation import (
+    parse_voucher_columns,
+    validate_product_voucher_eligible,
+)
 
 # (C1b) CSV의 voucher (type, count) 고정 쌍 슬롯 수. voucher_ticket_type_1..N / voucher_count_1..N.
 VOUCHER_SLOTS = 3
@@ -150,6 +153,7 @@ def _apply_voucher_row(
     row: dict,
     voucher_tables: Optional[dict],
     voucher_cap: Optional[int],
+    product_type: Optional[Union[ProductType, str]] = None,
 ) -> None:
     """
     (C1b) CSV 행의 voucher 컬럼을 product_voucher_grant에 적용(REPLACE 시맨틱).
@@ -183,6 +187,14 @@ def _apply_voucher_row(
         raise ValueError(f"product {product_id}: {e.detail}")
     if desired is None:
         return
+    # (C6) 매핑을 **붙이는** 경우에만 상품유형 검사. desired=={} 는 '-'(전체 비활성)이라 통과시켜야
+    #   잘못 붙은 매핑을 CSV 로 되돌릴 수 있다(막으면 정리 수단이 없어지고, 그 시트를 쓰는 다음
+    #   정기 임포트가 통째로 롤백된다). 검사는 이 행이 **쓰려는** product_type 기준.
+    if desired:
+        try:
+            validate_product_voucher_eligible(product_id, product_type)
+        except HTTPException as e:
+            raise ValueError(f"product {product_id}: {e.detail}")
     db.flush()  # 기존 상품이면 no-op, 신규(명시 id)면 FK 위해 먼저 반영
     existing = {
         r.ticket_type: r
@@ -249,7 +261,14 @@ def import_products_from_csv(
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
                 # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).
-                _apply_voucher_row(db, csv_data["id"], row, voucher_tables, voucher_cap)
+                _apply_voucher_row(
+                    db,
+                    csv_data["id"],
+                    row,
+                    voucher_tables,
+                    voucher_cap,
+                    product_type=csv_data.get("product_type"),
+                )
 
             db.commit()
             print(f"\n✅ CSV 데이터 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")

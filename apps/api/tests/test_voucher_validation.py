@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from shared.enums import ProductType
 
 from app import voucher_validation as vv
 
@@ -153,3 +154,49 @@ class TestParseVoucherColumns:
         with pytest.raises(HTTPException) as e:
             vv.parse_voucher_columns([("-", ""), ("STANDARD", "1")], TABLES, None)
         assert e.value.status_code == 400
+
+
+class TestProductTypeAllowlist:
+    """(C6) 바우처 매핑 가능 상품유형 — 결제 상품(IAP)만 통과."""
+
+    def test_iap_enum_passes(self):
+        vv.validate_product_voucher_eligible(3, ProductType.IAP)
+
+    def test_iap_string_passes(self):
+        vv.validate_product_voucher_eligible(3, "IAP")
+
+    @pytest.mark.parametrize(
+        "ptype",
+        [
+            ProductType.FREE,
+            ProductType.MILEAGE,
+            "FREE",
+            "MILEAGE",
+            "free",  # 소문자 — 정규화 후 판정
+            " FREE ",  # 공백
+            None,  # 미지값은 통과시키지 않는다(fail-closed)
+            "",
+            123,
+        ],
+    )
+    def test_everything_else_400(self, ptype):
+        with pytest.raises(HTTPException) as e:
+            vv.validate_product_voucher_eligible(111, ptype)
+        assert e.value.status_code == 400
+
+    def test_orm_class_attribute_is_rejected(self):
+        """`product.product_type`(정상) 과 `Product.product_type`(오전달)은 한 글자 차이 — 후자는 막아야."""
+        from shared.models.product import Product
+
+        with pytest.raises(HTTPException) as e:
+            vv.validate_product_voucher_eligible(111, Product.product_type)
+        assert e.value.status_code == 400
+
+    def test_free_detail_mentions_iap(self):
+        with pytest.raises(HTTPException) as e:
+            vv.validate_product_voucher_eligible(111, ProductType.FREE)
+        assert "IAP" in e.value.detail
+
+    # CSV 경로(_apply_voucher_row)는 여기서 테스트하지 않는다 — `app.utils` 임포트가
+    # app.config.Settings() 를 즉시 평가해서 전체 런타임 설정 없이는 임포트 자체가 실패한다.
+    # 해당 경로는 위 순수 가드 + import_utils 의 배선(리뷰 대상)으로 커버한다.

@@ -43,7 +43,11 @@ from app.utils.r2 import (
     upload_image_to_r2,
 )
 from app.utils.s3 import invalidate_cloudfront, upload_image_to_s3, upload_to_s3
-from app.voucher_validation import fetch_live_prize_tables, validate_voucher_mapping
+from app.voucher_validation import (
+    fetch_live_prize_tables,
+    validate_product_voucher_eligible,
+    validate_voucher_mapping,
+)
 
 security = HTTPBearer()
 
@@ -1352,6 +1356,8 @@ def upsert_product_voucher_grant(
 
     # active로 켜는 경우에만 정책 검증(끄는 건 발급 대상 아니라 검증 불요).
     if request.active:
+        # (C6) 결제 상품(IAP)만 매핑 허용 — 네트워크 호출(C1) 전에 먼저 거른다.
+        validate_product_voucher_eligible(product.id, product.product_type)
         # (리뷰) prod에서 C3-lite cap 미설정 상태로 발급 매핑을 켜는 것 금지 — 머니 가드 fail-open 방지.
         if config.voucher_grant_max_ncg_per_grant is None and config.stage in (
             "production",

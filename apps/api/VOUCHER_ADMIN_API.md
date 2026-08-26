@@ -47,6 +47,7 @@ token = jwt.encode({"iat": now, "exp": now + timedelta(minutes=10), "aud": "iap"
 ```
 - `active=true`일 때만 정책 검증(C1 + C3-lite). **끄는 것/placeholder는 미검증**.
 - `active=true` + prod + cap 미설정 → **400**(fail-open 방지).
+- `active=true` + **결제 상품이 아닌 상품**(`product.product_type != IAP`) → **400**(C6). 무료 클레임도 VALID+SUCCESS 영수증을 만들어 결제 0원 발급이 되고, MILEAGE 는 그 무료 클레임으로 적립한 마일리지로 사는 상품이라 같은 사슬이다. `active=false` 저장은 허용(placeholder), 켜는 순간 막힌다.
 - **C5**: `base_updated_at` 제공 시 현재 행 `updated_at`과 대조(행 잠금 하). 불일치 → **409** "stale — reload before save". 신규인데 base 제공 → 409 "mapping gone".
 - 신규 삽입 레이스는 `UNIQUE(product_id, ticket_type)`가 최종 가드.
 - 응답 `{"id":.., "action":"created"|"updated"}`.
@@ -59,6 +60,7 @@ token = jwt.encode({"iat": now, "exp": now + timedelta(minutes=10), "aud": "iap"
 CSV로 상품 정보 + 바우처 매핑 일괄. body `{"environment":"internal"|"mainnet", "csv_content":"<csv>"}`.
 - 바우처 컬럼(아래)에 **실제 값이 있는 행**이 하나라도 있을 때만 포탈 라이브 정책을 fetch(C1). voucher 없는 일반 import은 포탈 미의존.
 - prod + voucher 값 있음 + cap 미설정 → 400.
+- voucher 값 있음 + 그 행의 `product_type != IAP` → 400(C6). 같은 import 에서 타입을 바꾸는 경우도 포함 — 검사는 **CSV 가 쓰려는 타입** 기준이다. 위반 1행이면 import 전체 롤백. 단 `-`(전체 비활성)과 빈칸은 검사 대상이 아니다 — 잘못 붙은 매핑을 CSV 로 되돌릴 수 있어야 한다.
 - 위반 행 하나라도 → **import 전체 롤백**(원자적). 에러엔 상품 컨텍스트 포함.
 - 응답 `{"message":..,"processed_count":N,"updated_count":M}`.
 > ⚠️ 상품 행 **전체 upsert**다. `path`/`l10n_key`는 코드상 무조건 `"="`로 세팅되고, 빈 CSV 셀은 해당 필드를 null화한다. 기존 상품 필드를 덮을 수 있으니, **매핑만** 바꿀 목적이면 `PUT`을 써라.
@@ -73,6 +75,7 @@ CSV로 상품 정보 + 바우처 매핑 일괄. body `{"environment":"internal"|
 - `-`를 다른 종류와 섞으면 거부(400). 중복 ticket_type 거부(400). voucher 행은 product id 필수(빈칸이면 신규 autoincrement라 FK 불가 → 거부).
 
 ## 설정시점 가드 (`voucher_validation.py`)
+- **C6** — 바우처 매핑은 **결제 상품(IAP)만**(얼로우리스트). admin PUT(active=true)·CSV import 양쪽에서 400. 워커도 enroll·dispatch 양쪽에서 같은 조건을 본다(`grantable_product_ids()` / `tickets_for_product`) — enroll 이후 상품유형이 바뀌는 경로까지 덮는 2선 방어. IAP 아닌 상품에 active 매핑이 남아 있으면 매 회차 경고 로그.
 - **C1** — `ticket_type`이 포탈 라이브 상금표(`prizeTables`)에 실재(빈 표도 거부). **fail-closed**: url 미설정→503, 도달불가/비200→502, `temporary`(placeholder 정책)→409. → 활성 정책 없는데 매핑 저장해 발급 미스매치 만드는 것 차단.
 - **count** — 1 이상 정수.
 - **C3-lite** — cap 설정 시 `count × 최대상금(NCG) ≤ cap`. 가격/환율 무관 머니펌프 방어. cap None이면 스킵.
@@ -86,7 +89,7 @@ CSV로 상품 정보 + 바우처 매핑 일괄. body `{"environment":"internal"|
 | code | 상황 |
 |---|---|
 | 200 | 정상 |
-| 400 | count/파싱/C3-lite/CSV 위반, prod cap 미설정 활성 |
+| 400 | count/파싱/C3-lite/CSV 위반, prod cap 미설정 활성, **C6 비IAP 상품 매핑** |
 | 401 | JWT 실패 |
 | 404 | product/grant 없음 |
 | 409 | C1(unknown ticket_type) / C5(stale) / 정책 temporary |

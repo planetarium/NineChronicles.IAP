@@ -168,3 +168,7 @@ cdk.out/
 # env
 .env*
 .direnv
+
+# 테스트 런타임 산출물(test_web_payment_with_db 등)
+test.db
+*.db

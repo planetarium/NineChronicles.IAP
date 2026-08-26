@@ -4,10 +4,11 @@
 admin CRUD와 CSV import가 **공유**하는 순수 검증 로직. config/DB에 의존하지 않게(테스트 용이)
 url·cap을 인자로 받는다. 위반은 FastAPI HTTPException으로 표면화(호출부에서 그대로 전파).
 """
-from typing import Optional
+from typing import Optional, Union
 
 import requests
 from fastapi import HTTPException
+from shared.enums import ProductType
 
 
 def fetch_live_prize_tables(url: Optional[str]) -> dict:
@@ -65,6 +66,35 @@ def validate_voucher_mapping(
                 status_code=400,
                 detail=f"C3-lite exceeded: count*maxPrize({count}*{max_prize}) > cap({cap})",
             )
+
+
+def validate_product_voucher_eligible(
+    product_id: int, product_type: Optional[Union[ProductType, str]]
+) -> None:
+    """
+    (C6) 바우처 티켓을 매핑할 수 있는 상품인지 — **결제 상품(IAP)만 허용**. 위반 시 400.
+
+    무료 상품(FREE)도 결제와 동일하게 VALID+SUCCESS 영수증을 만들고, 발급 enroll 조건은
+    status/tx_status/store/cutoff 뿐이라 무료 클레임 1회가 곧 티켓 N장이 된다. 메인넷 실측
+    (2026-08) FREE 상품 영수증이 일 ~790건이므로 매핑 1행이 결제 0원짜리 NCG faucet 이 된다.
+
+    MILEAGE 도 막는다. 마일리지는 무료 클레임으로도 적립되므로(`/purchase/free` → upsert_mileage)
+    "무료 클레임 → 마일리지 → MILEAGE 상품 구매 → VALID+SUCCESS" 사슬이 FREE 차단을 우회한다.
+    현금이 새로 들어오지 않은 결제라 티켓 지급 대상이 아니다. 기획 확정 매핑도 $ SKU(IAP)뿐이다.
+
+    얼로우리스트인 이유: ProductType 에 타입이 추가돼도 기본이 차단이고, 미지값·None·오전달
+    (예: ORM 클래스 속성 `Product.product_type`)이 조용히 통과하지 않는다(fail-closed).
+    """
+    name = getattr(product_type, "name", None) or str(product_type)
+    if name.strip().upper() != ProductType.IAP.name:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"product {product_id} product_type={name} — 바우처 티켓은 결제 상품"
+                f"({ProductType.IAP.name})에만 매핑할 수 있습니다"
+                " (무료·마일리지 상품은 결제 없이 발급되어 NCG faucet 이 됨)"
+            ),
+        )
 
 
 def parse_voucher_columns(
