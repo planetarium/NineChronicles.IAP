@@ -61,10 +61,40 @@ ALERT_ATTEMPTS = 5  # PENDING이 이 횟수 이상 재시도 중이면 stall로 
 _TRANSIENT_STATUS = {401, 403, 408, 429}
 
 
+# 실 운영으로 간주하는 stage 값. **두 어휘를 다 받는 이유**:
+#   이 저장소의 실제 어휘는 "mainnet" 이다(redeem.py / product.py / purchase.py 가 모두 `== "mainnet"`,
+#   라이브 API 파드도 API_STAGE=mainnet). 반면 바우처 코드는 "production" 으로 짜였다.
+#   admin.py 의 머니 가드가 이미 `in ("production", "mainnet")` 로 양쪽을 보므로 그 패턴에 맞춘다.
+#   한쪽만 보면 실 운영에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다(아래 참고).
+_PROD_STAGES = ("production", "mainnet")
+# Settings 의 stage 기본값. 이 값이 그대로 보이면 STAGE env 가 주입되지 않았다는 뜻이다.
+_DEFAULT_STAGE = "development"
+
+
 def _grantable_stores() -> set:
-    """바우처 대상 스토어. production에선 실 스토어만, 그 외(dev/staging)엔 샌드박스도 포함(e2e)."""
-    if config.stage == "production":
+    """
+    바우처 대상 스토어. 실 운영(stage in _PROD_STAGES)에선 실 스토어만, 그 외(dev/internal)엔 샌드박스도 포함(e2e).
+
+    🔴 배선 주의 — **코드 수정만으로는 닫히지 않는다.** 워커 Deployment 에 STAGE env 가 없으면
+       config.stage 는 기본값 "development"(config.py) 이고, 그러면 여기서 _TEST_STORES 가 포함돼
+       샌드박스/TEST 스토어 영수증이 실제 NCG 바우처를 발급한다.
+       (`9c-main/external-services/values.yaml` 의 `iap.worker.stage` 는 템플릿이 렌더하지 않는 죽은 값이다.)
+       따라서 메인넷에서 바우처를 켜기 전에 **WORKER_STAGE=mainnet 배선이 선행돼야 한다**(9c-infra 별건).
+       반대로 env 만 넣고 이 함수가 "production" 만 봤다면 `"mainnet" != "production"` 이라 역시 안 닫힌다 —
+       그래서 코드(_PROD_STAGES)와 env 배선이 **둘 다** 필요하다.
+    """
+    if config.stage in _PROD_STAGES:
         return set(_PROD_STORES)
+    # 샌드박스를 여는 순간을 로그에 남긴다. 단 **레벨을 가른다** — 배선된 non-prod(internal/staging)는
+    #   정상 구성이므로 2분마다 WARNING 을 찍으면(≈720줄/일) 경보가 태어나면서 무뎌지고, 정작
+    #   메인넷 미배선 사고와 문구가 같아져 구분이 안 된다.
+    #   판별자는 config.stage 의 **기본값** 이다 — Settings 기본값이 그대로 보이면 env 가 안 들어온 것이다.
+    unwired = config.stage == _DEFAULT_STAGE
+    (logger.warning if unwired else logger.info)(
+        "voucher: sandbox stores are grantable"
+        + (" — STAGE env 미배선 의심(기본값)" if unwired else " (explicit non-production stage)"),
+        stage=config.stage,
+    )
     return _PROD_STORES | _TEST_STORES
 
 
