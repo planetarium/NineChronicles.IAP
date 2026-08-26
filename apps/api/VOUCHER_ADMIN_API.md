@@ -85,6 +85,28 @@ CSV로 상품 정보 + 바우처 매핑 일괄. body `{"environment":"internal"|
 - 포탈 호출: `POST config.portal_grant_url`, `Authorization: Bearer <jwt>` — 이 JWT는 **`portal_iap_jwt_secret`(기존 IAP 키 재사용)**, `iss="iap"`, 수명 1분. (admin의 `voucher-admin` JWT와 다름)
 - 응답 분류: 200/기수령/소액=종단 GRANTED · 5xx/401/403/429/408/'voucher disabled'/`body.retryable==true`(**R2**, 예: 409 ERR-TICKET-TYPE-UNKNOWN=정책 전파 지연)=transient(PENDING 재시도, self-heal) · 그 외 4xx=FAILED.
 
+## 클라 노출 (상품 조회 API, PLD-1472)
+`GET /api/product` · `GET /api/product/all` 응답의 각 상품에 **`voucher_ticket_list`** 가 실린다 — 게임 샵이 "이 상품을 사면 복권 N장"을 표시하는 용도. `mileage` 와 같은 결.
+```json
+"voucher_ticket_list": [{"ticket_type": "GOLD", "count": 1}, {"ticket_type": "STANDARD", "count": 2}]
+```
+- **상금·확률은 싣지 않는다.** IAP 는 발급까지만 알고 상금표는 포탈 소유(기획 소유권 원칙).
+- 노출 조건 = `active=true` + `count>0` + 상품유형 `IAP`(C6). 매핑이 없거나 조건에 안 맞으면 `[]` — **구버전 클라(필드를 모름)와 같은 모양**이라 하위호환.
+- 정렬 `ticket_type` 오름차순 고정. 구현: [`app/voucher_display.py`](app/voucher_display.py).
+- `GET /api/product/all` 은 `@cache(expire=3600)` 선언이 붙어 있으나 **현재 캐시 키에 요청별 세션이 섞여 사실상 미스**라 지연이 없다. 캐시를 살리면 그때 매핑 변경이 최대 1h 늦게 반영되므로 무효화 전략을 함께 정할 것(엔드포인트 주석에 선택지 정리).
+- ⚠️ 영수증 조회(`FullReceiptSchema.product`)에도 같은 스키마가 쓰여 `voucher_ticket_list` 가 보이지만 **거긴 항상 `[]`** 다. 매핑 진실은 `GET /api/admin/product-voucher-grants`.
+
+### 롤아웃 순서 (중요)
+**표시 킬스위치(`active` 컬럼)와 발급 킬스위치(워커 env)는 서로 다른 스위치다.** 매핑만 켜면 클라는 즉시 광고하는데 워커가 안 주는 구간이 생기고, 그 구간 유료 결제는 나중에 컷오프를 런칭 시각으로 잡는 순간 되돌릴 수 없이 미지급으로 굳는다. 그래서 **켤 때는 워커 먼저, 끌 때는 매핑 먼저.**
+1. **(worker)** `WORKER_PORTAL_GRANT_URL` · `WORKER_PORTAL_IAP_JWT_SECRET` · `WORKER_STAGE` 배선
+2. **(worker)** `WORKER_VOUCHER_GRANT_CUTOFF` 를 **5번을 실행할 시각 직전으로 정확히** 설정
+   > 🔴 enroll 의 시간 하한은 이 값 **하나뿐**이고 **기본값은 `None`(하한 없음)** 이다. 미설정이거나 넉넉히 과거로 잡으면, 5번에서 매핑을 켜는 순간 그 상품의 **과거 전체** VALID+SUCCESS 실스토어 영수증이 enroll 대상이 된다(2분마다 500건씩). 실제 NCG 대량 소급 발급이고 되돌릴 수 없다.
+3. **(worker)** `WORKER_VOUCHER_GRANT_ENABLED=true` (기본값 false)
+4. **(api)** `API_VOUCHER_GRANT_MAX_NCG_PER_GRANT`(C3-lite cap) — prod 에서 이게 없으면 5번의 `active=true` 요청이 **400** 으로 거부된다
+5. 마지막에 매핑 `active=true` (= 이 순간부터 클라에 보이고 발급도 된다)
+
+1~3 은 워커 프로세스, 4 는 API 프로세스 env 라 배포 대상이 다르다.
+
 ## 상태코드 요약
 | code | 상황 |
 |---|---|

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel as BaseSchema
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from shared.enums import ProductAssetUISize, ProductRarity, ProductType, Store
 
@@ -38,6 +38,22 @@ class GoogleIAPProductSchema:
         }
 
 
+class VoucherTicketSchema(BaseSchema):
+    """
+    (PLD-1472) 이 상품을 사면 지급되는 복권(NCG Voucher) 티켓 — **종류와 장수만**.
+
+    상금표·확률·개봉은 **포탈이 소유**한다(기획 소유권 원칙: "IAP 는 상금을 몰라야 한다").
+    IAP 의 역할은 발급까지이므로 여기에 상금을 실으면 진실이 두 곳이 되고, 상금 조정이
+    IAP 배포를 기다리게 된다. 클라는 "티켓 N장"만 표시하고 상금은 포탈에서 본다.
+    """
+
+    ticket_type: str = Field(description="포탈 prizeTables 키 (예: STANDARD)")
+    count: int = Field(description="지급 장수")
+
+    class Config:
+        from_attributes = True
+
+
 class SimpleProductSchema(BaseSchema):
     name: str
     order: int
@@ -53,6 +69,14 @@ class SimpleProductSchema(BaseSchema):
     required_level: Optional[int] = None
     mileage: int
     mileage_price: Optional[int] = None
+    # (PLD-1472) 복권 티켓. 마일리지(mileage)와 같은 결로 "이 상품을 사면 뭘 받는지"를 상품에 실어 보낸다.
+    #   기본값 빈 리스트 = **하위호환**. 필드를 모르는 구버전 클라와, 매핑이 없는 상품(메인넷은 현재
+    #   product_voucher_grant 0행이라 전부 여기 해당)이 같은 모양으로 보인다.
+    #   채우는 주체는 상품 조회 API 뿐이다(app/voucher_display.py) — ORM Product 에 대응 속성이 없어
+    #   `model_validate(product)` 만으로는 항상 []. 그래서 이 스키마를 재사용하는
+    #   FullReceiptSchema(영수증 조회)에서는 언제나 []이며, 매핑 유무의 진실이 아니다
+    #   (그쪽 진실은 `GET /api/admin/product-voucher-grants`).
+    voucher_ticket_list: List[VoucherTicketSchema] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

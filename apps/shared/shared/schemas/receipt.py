@@ -165,6 +165,9 @@ class FullReceiptSchema(BaseSchema):
     store: Store
     uuid: UUID
     order_id: str
+    # ⚠️ `product.voucher_ticket_list` 는 여기선 **언제나 빈 리스트**다(상품 조회 API 만 채운다).
+    #    "이 결제는 복권이 안 나갔다"로 읽지 말 것 — 매핑의 진실은 `GET /api/admin/product-voucher-grants`,
+    #    발급의 진실은 voucher_grant_outbox 다. 자세한 사정은 schemas/product.py 의 해당 필드 주석.
     product: Optional[SimpleProductSchema] = None
     agent_addr: str
     avatar_addr: str
