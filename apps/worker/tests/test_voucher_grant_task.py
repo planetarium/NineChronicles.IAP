@@ -320,7 +320,7 @@ class TestSeasonPassDiscriminator:
         sess = MagicMock()
         product = MagicMock()
         product.google_sku = "g_pkg_couragepass34premium"
-        sess.scalar.return_value = product
+        sess.get.return_value = product
         receipt = MagicMock()
         receipt.product_id = 363
         assert vg.is_season_pass_receipt(sess, receipt) is True
@@ -330,14 +330,86 @@ class TestSeasonPassDiscriminator:
         sess = MagicMock()
         product = MagicMock()
         product.google_sku = "g_pkg_ncuragupc"
-        sess.scalar.return_value = product
+        sess.get.return_value = product
         receipt = MagicMock()
         receipt.product_id = 999
         assert vg.is_season_pass_receipt(sess, receipt) is False
 
     def test_dispatch_handles_missing_product(self):
         sess = MagicMock()
-        sess.scalar.return_value = None
+        sess.get.return_value = None
         receipt = MagicMock()
         receipt.product_id = 1
         assert vg.is_season_pass_receipt(sess, receipt) is False
+
+
+class TestGrantableTxCondition:
+    """
+    enroll 의 tx 조건을 **프로덕션 헬퍼의 SQL 로** 고정한다.
+      직전 판(테스트 없이 or_ 만 추가)에서는 or_ 를 지우고 원래 코드로 되돌려도 전 테스트가
+      green 이었다 — 정작 회귀가 있던 지점을 아무도 안 보고 있었다.
+      (테스트에서 조건을 재구성하면 tautology 가 되므로 컴파일된 SQL 을 검사한다 —
+       TestProductTypeAllowlist 의 선례와 같은 방식.)
+    """
+
+    @staticmethod
+    def _sql() -> str:
+        cond = vg.grantable_tx_condition()
+        return " ".join(
+            str(cond.compile(compile_kwargs={"literal_binds": True})).split()
+        )
+
+    def test_success_leg_still_present(self):
+        assert "receipt.tx_status = 'SUCCESS'" in self._sql()
+
+    def test_season_pass_leg_requires_null_tx_and_null_msg(self):
+        """
+        상품만 보면 **패스 지급이 실패한 영수증까지** 통과한다(mainnet 실측 75건).
+        season_pass_host non-200 경로는 msg 만 채우고 status 는 VALID, tx_status 는 NULL 이다.
+        그 경로에서는 마일리지도 안 나가므로, msg 게이트 없이는 인용한 선례보다 관대해진다.
+        """
+        sql = self._sql()
+        assert "receipt.tx_status IS NULL" in sql
+        assert "receipt.msg IS NULL" in sql
+
+    def test_season_pass_leg_scoped_to_pass_products(self):
+        """NULL 을 통째로 허용하면 온체인 전송이 멈춘 일반 상품까지 새어들어간다."""
+        sql = self._sql()
+        assert "receipt.product_id IN" in sql
+        assert "product.google_sku LIKE '%pass%'" in sql
+
+    def test_legs_are_or_and_season_pass_leg_is_and(self):
+        """구조 고정 — 두 leg 는 OR, 시즌패스 leg 내부는 AND(하나라도 OR 이면 게이트가 뚫린다)."""
+        sql = self._sql()
+        assert " OR " in sql
+        assert sql.count(" AND ") >= 2
+
+    def test_dispatch_mirrors_enroll(self):
+        """dispatch 재검증이 enroll 과 같은 3조건을 본다 — 한쪽만 엄격하면 enroll 된 건이 죽는다."""
+        import inspect
+
+        src = inspect.getsource(vg.grant_vouchers)
+        assert "r.tx_status is None" in src
+        assert "r.msg is None" in src
+        assert "is_season_pass_receipt(sess, r)" in src
+
+
+class TestRetryerSharesSeasonPassToken:
+    """
+    retryer 는 시즌패스를 send_product 재전송에서 제외한다 — 하드코딩 사본이 남아 있으면
+    토큰이 바뀔 때 시즌패스가 재전송되어 **패스(claim)와 온체인 아이템이 이중 지급**된다.
+    """
+
+    def test_uses_shared_token_not_hardcoded(self):
+        import inspect
+
+        import importlib
+
+        from shared.models.product import SEASON_PASS_SKU_TOKEN
+
+        # app.tasks.retryer 는 __init__ 에서 celery task 객체로 덮여 있어 모듈을 직접 가져온다.
+        retryer_mod = importlib.import_module("app.tasks.retryer")
+        src = inspect.getsource(retryer_mod.get_null_tx_status_receipts)
+        assert ":season_pass_pattern" in src, "바인드 파라미터를 써야 한다"
+        assert "NOT LIKE '%pass%'" not in src, "하드코딩 사본이 남았다"
+        assert SEASON_PASS_SKU_TOKEN == "pass"
