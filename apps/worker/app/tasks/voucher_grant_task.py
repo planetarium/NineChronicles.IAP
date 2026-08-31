@@ -30,11 +30,15 @@ from shared.enums import (
     TxStatus,
     VoucherGrantStatus,
 )
-from shared.models.product import Product
+from shared.models.product import (
+    Product,
+    is_season_pass_product,
+    season_pass_sku_filter,
+)
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -105,6 +109,22 @@ def platform_for_store(store: Store) -> Optional[str]:
     if store in _MOBILE_STORES:
         return "MOBILE"
     return None
+
+
+def season_pass_product_ids():
+    """
+    시즌패스 상품 id 서브쿼리 — tx_status 가 NULL 로 남는 상품 집합.
+
+    판별식은 shared.models.product 한 곳에 있다(purchase.py 의 분기와 같은 것). 여기서 규칙을
+    복제하면 SKU 규칙이 바뀔 때 구매 분기와 발급 예외가 어긋난다.
+    """
+    return select(Product.id).where(season_pass_sku_filter())
+
+
+def is_season_pass_receipt(sess, receipt) -> bool:
+    """dispatch 재검증용 — 영수증의 상품이 시즌패스인가."""
+    product = sess.scalar(select(Product).where(Product.id == receipt.product_id))
+    return product is not None and is_season_pass_product(product)
 
 
 def grantable_product_ids():
@@ -311,7 +331,19 @@ def grant_vouchers(self):
         #      매 회차 재조회되어 limit 윈도우를 침전·starve시킨다(리뷰 지적).
         conditions = [
             Receipt.status == ReceiptStatus.VALID,
-            Receipt.tx_status == TxStatus.SUCCESS,
+            # tx_status 는 **온체인 지급이 있는 상품에만** 요구한다.
+            #   시즌패스는 send_product 큐를 타지 않아(purchase.py 가 season_pass_host 를 직접
+            #   호출한다) tx_status 가 영구히 NULL 이다. 이 조건을 무조건 걸면 시즌패스가
+            #   구조적으로 전부 탈락한다 — 실제로 그랬고, 매핑이 켜져 있어도 아웃박스가 아예
+            #   생기지 않았다. 마일리지는 purchase.py 안에서 동기로 주므로 같은 영수증에서
+            #   정상 지급됐다(조건을 안 보기 때문).
+            #   ⚠️ NULL 을 통째로 허용하면 안 된다 — 온체인 전송이 멈춘 일반 상품 영수증
+            #      (NCU Ragnarok Upcoming Pack 등 실측 4건)까지 발급 대상이 된다.
+            #      그래서 예외를 시즌패스 상품으로만 좁힌다.
+            or_(
+                Receipt.tx_status == TxStatus.SUCCESS,
+                Receipt.product_id.in_(season_pass_product_ids()),
+            ),
             Receipt.product_id.isnot(None),
             Receipt.store.in_(grantable),
             # 바우처 발급 대상 상품만(active 매핑 + 결제 상품) — 미대상 상품이 윈도우 침전하지 않게.
@@ -361,7 +393,10 @@ def grant_vouchers(self):
                     continue
 
                 # dispatch 시점 상태 재검증 — enroll 이후 환불/무효 전이 시 발급 금지(종단).
-                if r.status != ReceiptStatus.VALID or r.tx_status != TxStatus.SUCCESS:
+                #   tx_status 는 enroll 과 **같은 규칙**으로 본다(시즌패스는 NULL 이 정상).
+                #   여기만 엄격하게 두면 enroll 된 시즌패스가 곧바로 FAILED 로 종단된다.
+                tx_ok = r.tx_status == TxStatus.SUCCESS or is_season_pass_receipt(sess, r)
+                if r.status != ReceiptStatus.VALID or not tx_ok:
                     ob.status = VoucherGrantStatus.FAILED
                     ob.last_error = (
                         f"receipt no longer grantable: status={r.status} tx={r.tx_status}"

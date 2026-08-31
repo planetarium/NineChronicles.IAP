@@ -261,3 +261,83 @@ class TestStageDiscriminator:
         with patch.object(vg.config, "stage", stage):
             assert vg._grantable_stores() == vg._PROD_STORES | vg._TEST_STORES
 
+
+
+class TestSeasonPassDiscriminator:
+    """
+    (제보) 인터널에서 시즌패스를 사도 바우처가 안 나갔다.
+      원인: 시즌패스는 send_product 큐를 타지 않아 tx_status 가 영구 NULL 인데,
+            enroll·dispatch 가 tx_status == SUCCESS 를 요구했다.
+      마일리지는 purchase.py 안에서 동기로 주므로(조건을 안 본다) 같은 영수증에서 정상 지급됐다.
+    """
+
+    @pytest.mark.parametrize(
+        "sku,expected",
+        [
+            ("g_pkg_couragepass34premium", True),
+            ("g_pkg_adventurebosspass22premium", True),
+            ("g_pkg_worldclearpass1premium", True),
+            ("a_pkg_couragepass34premiumplus", True),
+            # 시즌패스가 아닌 것들 — tx 를 만드는 상품이라 예외가 새면 안 된다
+            ("g_single_ap01", False),
+            ("g_pkg_travel01", False),
+            ("g_pkg_ncuragupc", False),
+            ("PLT_PACKAGE_STARTER", False),
+            (None, False),  # sku 미설정
+            ("", False),
+        ],
+    )
+    def test_sku_discriminator(self, sku, expected):
+        from shared.models.product import is_season_pass_product
+
+        product = MagicMock()
+        product.google_sku = sku
+        assert is_season_pass_product(product) is expected
+
+    def test_case_sensitive_matches_purchase_branch(self):
+        """
+        대소문자를 구분한다. purchase.py 의 분기와 **정확히 같은 집합**이어야 하는데,
+        거기가 `"pass" in google_sku` 라 대문자 SKU 는 else(=tx 생성) 로 간다.
+        여기서만 관대해지면 tx 를 만드는 상품에 예외가 새어나간다.
+        """
+        from shared.models.product import is_season_pass_product
+
+        product = MagicMock()
+        product.google_sku = "G_PKG_COURAGEPASS34PREMIUM"
+        assert is_season_pass_product(product) is False
+
+    def test_worker_sql_filter_uses_same_token(self):
+        """SQL 판(season_pass_sku_filter)과 파이썬 판이 같은 토큰을 쓴다."""
+        from shared.models.product import SEASON_PASS_SKU_TOKEN, season_pass_sku_filter
+
+        assert SEASON_PASS_SKU_TOKEN == "pass"
+        assert f"%{SEASON_PASS_SKU_TOKEN}%" in str(
+            season_pass_sku_filter().compile(compile_kwargs={"literal_binds": True})
+        )
+
+    def test_dispatch_accepts_null_tx_for_season_pass(self):
+        """dispatch 재검증도 enroll 과 같은 규칙 — 여기만 엄격하면 즉시 FAILED 종단된다."""
+        sess = MagicMock()
+        product = MagicMock()
+        product.google_sku = "g_pkg_couragepass34premium"
+        sess.scalar.return_value = product
+        receipt = MagicMock()
+        receipt.product_id = 363
+        assert vg.is_season_pass_receipt(sess, receipt) is True
+
+    def test_dispatch_rejects_null_tx_for_normal_product(self):
+        """온체인 전송이 멈춘 일반 상품(NCU Pack 등 실측 4건)은 여전히 발급 대상이 아니다."""
+        sess = MagicMock()
+        product = MagicMock()
+        product.google_sku = "g_pkg_ncuragupc"
+        sess.scalar.return_value = product
+        receipt = MagicMock()
+        receipt.product_id = 999
+        assert vg.is_season_pass_receipt(sess, receipt) is False
+
+    def test_dispatch_handles_missing_product(self):
+        sess = MagicMock()
+        sess.scalar.return_value = None
+        receipt = MagicMock()
+        receipt.product_id = 1
+        assert vg.is_season_pass_receipt(sess, receipt) is False

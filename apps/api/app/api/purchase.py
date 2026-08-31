@@ -19,7 +19,7 @@ from shared.enums import (
     Store,
     TxStatus,
 )
-from shared.models.product import Price, Product
+from shared.models.product import Price, Product, is_season_pass_product
 from shared.models.receipt import Receipt
 from shared.models.user import AvatarLevel
 from shared.schemas.message import SendProductMessage
@@ -645,8 +645,9 @@ def request_product(
     receipt = check_required_level(sess, receipt, product)
 
     # Handle season pass products differently
-    # FIXME: Can we get season pass product without magic string?
-    if "pass" in product.google_sku:
+    #   판별은 shared.models.product.is_season_pass_product 한 곳에 둔다 — 바우처 발급 워커도
+    #   같은 집합을 알아야 하는데(시즌패스는 tx_status 가 NULL 로 남는다) 규칙을 복제하면 어긋난다.
+    if is_season_pass_product(product):
         """
         SKU Rule : {store}_pkg_{passType}{seasonIndex}{suffix}
         passType : [[seasonpass | couragepass] | adventurebosspass | worldclearpass]

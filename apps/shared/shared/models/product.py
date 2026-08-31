@@ -211,3 +211,38 @@ class Price(AutoIdMixin, TimeStampMixin, Base):
     )
     regular_price = Column(Numeric, nullable=False, default=0)
     active = Column(Boolean, nullable=False, default=False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 시즌패스 판별 — **한 곳에만 둔다**
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# SKU 규칙: {store}_pkg_{passType}{seasonIndex}{suffix}
+#   passType: seasonpass | couragepass | adventurebosspass | worldclearpass
+#
+# 왜 판별이 필요한가:
+#   시즌패스는 구매 처리가 다른 분기로 간다(purchase.py) — send_product 큐에 넣지 않고
+#   season_pass_host /api/user/upgrade 를 직접 호출한다. tx_status 를 세팅하는 건 그 워커뿐이라
+#   **시즌패스 영수증의 tx_status 는 영구히 NULL** 이다.
+#   바우처 발급(voucher_grant_task)이 enroll 조건에 tx_status == SUCCESS 를 걸고 있어
+#   시즌패스가 구조적으로 전부 탈락했다(마일리지는 purchase.py 안에서 동기로 주므로 정상 지급됨 —
+#   조건을 안 보기 때문이다).
+#
+# 왜 SKU 인가 — 다른 판별식은 검증 결과 전부 실패한다:
+#   · "온체인 지급물 없음"  ✗ 시즌패스도 fungible_item_list 를 갖는다(claim_list 로 넘긴다)
+#   · 카테고리             ✗ 3종 모두 NoShow 인데 거기 Planetarium A/B Pack 이 섞여 있다
+#   · product_type         ✗ 전부 IAP 다
+#
+# ⚠️ 대소문자를 구분한다(파이썬 `in` / SQL `LIKE` 둘 다). purchase.py 의 분기와 **정확히 같은**
+#    집합이어야 하기 때문이다 — 여기서만 관대해지면 tx 를 만드는 상품에까지 예외가 새어나간다.
+SEASON_PASS_SKU_TOKEN = "pass"
+
+
+def is_season_pass_product(product: "Product") -> bool:
+    """이 상품이 시즌패스인가(= send_product 큐를 타지 않아 tx_status 가 NULL 로 남는가)."""
+    return SEASON_PASS_SKU_TOKEN in (product.google_sku or "")
+
+
+def season_pass_sku_filter():
+    """`is_season_pass_product` 의 SQL 판(같은 토큰·같은 대소문자 규칙)."""
+    return Product.google_sku.like(f"%{SEASON_PASS_SKU_TOKEN}%")
