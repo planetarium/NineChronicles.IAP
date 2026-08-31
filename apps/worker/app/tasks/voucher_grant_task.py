@@ -30,11 +30,15 @@ from shared.enums import (
     TxStatus,
     VoucherGrantStatus,
 )
-from shared.models.product import Product
+from shared.models.product import (
+    Product,
+    is_season_pass_product,
+    season_pass_sku_filter,
+)
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import and_, create_engine, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -105,6 +109,55 @@ def platform_for_store(store: Store) -> Optional[str]:
     if store in _MOBILE_STORES:
         return "MOBILE"
     return None
+
+
+def season_pass_product_ids():
+    """
+    시즌패스 상품 id 서브쿼리 — tx_status 가 NULL 로 남는 상품 집합.
+
+    판별식은 shared.models.product 한 곳에 있다(purchase.py 의 분기와 같은 것). 여기서 규칙을
+    복제하면 SKU 규칙이 바뀔 때 구매 분기와 발급 예외가 어긋난다.
+    """
+    return select(Product.id).where(season_pass_sku_filter())
+
+
+def is_season_pass_receipt(sess, receipt) -> bool:
+    """dispatch 재검증용 — 영수증의 상품이 시즌패스인가."""
+    # sess.get 은 identity map 히트 시 쿼리를 내지 않는다 — 같은 상품이 배치에 여러 번
+    #   나오는 게 정상(한 시즌패스를 여러 유저가 산다)이라 반복분이 0쿼리가 된다.
+    product = sess.get(Product, receipt.product_id)
+    return product is not None and is_season_pass_product(product)
+
+
+def grantable_tx_condition():
+    """
+    발급 대상 영수증의 tx 조건 — enroll·dispatch 가 같은 규칙을 보도록 한 곳에 둔다.
+
+    `tx_status == SUCCESS` 를 무조건 요구하면 시즌패스가 전부 탈락한다. 시즌패스는 send_product
+    큐를 타지 않아(purchase.py 가 season_pass_host 를 직접 호출) tx_status 가 영구히 NULL 이다.
+
+    그래서 예외를 두지만 **"tx 가 없고 실패 기록도 없는"** 건으로 좁힌다:
+      · 상품만 보면 **패스 지급이 실패한 영수증까지** 통과한다. season_pass_host non-200 경로는
+        receipt.msg 만 채우고 raise_error 로 커밋하는데, status 는 그 앞에서 이미 VALID 이고
+        tx_status 는 NULL 이다(mainnet 실측 75건 — "결제는 됐고 패스는 못 받은" 상태).
+        ⚠️ 그 경로에서는 **마일리지도 안 나간다**(upsert_mileage 가 예외 뒤에 있다). 이 수정의
+           근거로 든 "마일리지는 조건을 안 본다"는 선례가 정확히 여기서 깨지므로 msg 게이트가
+           필요하다 — 없으면 선례보다 관대해진다.
+        msg 규약: "실패 경로만, 그리고 tx 없는 영수증에만 쓴다"(purchase.py 주석).
+      · tx_status.is_(None) 도 함께 본다. 시즌패스 상품인데 tx_status 가 채워진 영수증이
+        실재한다(수동 재전송 흔적, mainnet 3건/internal 4건) — 상품만 보면 FAILURE 도 통과한다.
+
+    ⚠️ NULL 을 통째로 허용하면 안 된다. 온체인 전송이 멈춘 일반 상품 영수증(mainnet 30건)까지
+       발급 대상이 된다 — 그게 이 게이트가 존재하는 이유다.
+    """
+    return or_(
+        Receipt.tx_status == TxStatus.SUCCESS,
+        and_(
+            Receipt.tx_status.is_(None),
+            Receipt.msg.is_(None),
+            Receipt.product_id.in_(season_pass_product_ids()),
+        ),
+    )
 
 
 def grantable_product_ids():
@@ -311,7 +364,9 @@ def grant_vouchers(self):
         #      매 회차 재조회되어 limit 윈도우를 침전·starve시킨다(리뷰 지적).
         conditions = [
             Receipt.status == ReceiptStatus.VALID,
-            Receipt.tx_status == TxStatus.SUCCESS,
+            # tx 조건은 grantable_tx_condition() 한 곳에 둔다(근거는 그 docstring).
+            #   dispatch 재검증도 같은 규칙을 봐야 한다 — 한쪽만 엄격하면 enroll 된 건이 죽는다.
+            grantable_tx_condition(),
             Receipt.product_id.isnot(None),
             Receipt.store.in_(grantable),
             # 바우처 발급 대상 상품만(active 매핑 + 결제 상품) — 미대상 상품이 윈도우 침전하지 않게.
@@ -361,7 +416,14 @@ def grant_vouchers(self):
                     continue
 
                 # dispatch 시점 상태 재검증 — enroll 이후 환불/무효 전이 시 발급 금지(종단).
-                if r.status != ReceiptStatus.VALID or r.tx_status != TxStatus.SUCCESS:
+                #   tx_status 는 enroll 과 **같은 규칙**으로 본다(시즌패스는 NULL 이 정상).
+                #   여기만 엄격하게 두면 enroll 된 시즌패스가 곧바로 FAILED 로 종단된다.
+                tx_ok = r.tx_status == TxStatus.SUCCESS or (
+                    r.tx_status is None
+                    and r.msg is None
+                    and is_season_pass_receipt(sess, r)
+                )
+                if r.status != ReceiptStatus.VALID or not tx_ok:
                     ob.status = VoucherGrantStatus.FAILED
                     ob.last_error = (
                         f"receipt no longer grantable: status={r.status} tx={r.tx_status}"

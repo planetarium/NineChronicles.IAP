@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 import structlog
+from shared.models.product import SEASON_PASS_SKU_TOKEN
 from shared.schemas.message import SendProductMessage
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import scoped_session, sessionmaker
@@ -59,14 +60,18 @@ def get_null_tx_status_receipts(session) -> List[Dict]:
         WHERE r.tx_status IS NULL
         AND r.created_at < NOW() - INTERVAL '10 minutes'
         AND r.created_at >= '2025-01-01'
-        AND p.google_sku NOT LIKE '%pass%'
+        -- 시즌패스 제외 — send_product 로 재전송하면 패스(claim)와 온체인 아이템이 이중 지급된다.
+        --   판별 토큰은 shared.models.product.SEASON_PASS_SKU_TOKEN 한 곳에서 온다(하드코딩 금지).
+        AND p.google_sku NOT LIKE :season_pass_pattern
         AND r.status = 'VALID'
         ORDER BY r.id DESC
         """
     )
 
     result = []
-    for row in session.execute(query):
+    for row in session.execute(
+        query, {"season_pass_pattern": f"%{SEASON_PASS_SKU_TOKEN}%"}
+    ):
         result.append(
             {
                 "uuid": row[0],

@@ -200,3 +200,66 @@ class TestProductTypeAllowlist:
     # CSV 경로(_apply_voucher_row)는 여기서 테스트하지 않는다 — `app.utils` 임포트가
     # app.config.Settings() 를 즉시 평가해서 전체 런타임 설정 없이는 임포트 자체가 실패한다.
     # 해당 경로는 위 순수 가드 + import_utils 의 배선(리뷰 대상)으로 커버한다.
+
+
+class TestSeasonPassDiscriminatorSharedWithWorker:
+    """
+    (제보) 인터널에서 시즌패스를 사도 바우처가 안 나갔다 — 시즌패스는 send_product 큐를 타지
+    않아 tx_status 가 영구 NULL 인데 발급 워커가 tx_status == SUCCESS 를 요구했다.
+
+    구매 분기(purchase.py)와 발급 예외(voucher_grant_task)가 **같은 판별식**을 써야 한다.
+    복제하면 SKU 규칙이 바뀔 때 한쪽만 따라가 조용히 어긋난다.
+
+    ⚠️ purchase 모듈을 import 하지 않고 소스로 검사한다 — import 하면 app.config 의 Settings
+       검증이 걸려 테스트 환경에서 실패한다(기존 api 테스트도 purchase 를 import 하지 않는다).
+    """
+
+    @staticmethod
+    def _purchase_source() -> str:
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "app" / "api" / "purchase.py"
+        return path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _code_lines(src: str) -> list:
+        return [
+            l for l in src.splitlines() if l.strip() and not l.strip().startswith("#")
+        ]
+
+    def test_purchase_imports_shared_helper(self):
+        src = self._purchase_source()
+        assert "is_season_pass_product" in src
+        assert any(
+            "from shared.models.product import" in l and "is_season_pass_product" in l
+            for l in self._code_lines(src)
+        ), "공용 판별식을 import 해야 한다"
+
+    def test_purchase_branches_on_shared_helper(self):
+        src = self._purchase_source()
+        assert any(
+            "if is_season_pass_product(product):" in l for l in self._code_lines(src)
+        ), "구매 분기가 공용 판별식을 써야 한다"
+
+    def test_no_duplicated_magic_string_in_purchase(self):
+        """`"pass" in product.google_sku` 가 코드 조건으로 다시 생기지 않게(주석은 허용)."""
+        src = self._purchase_source()
+        assert not any(
+            '"pass" in product.google_sku' in l for l in self._code_lines(src)
+        ), "판별식이 복제됐다 — shared.models.product.is_season_pass_product 를 쓸 것"
+
+    def test_shared_helper_behaviour(self):
+        from unittest.mock import MagicMock
+
+        from shared.models.product import is_season_pass_product
+
+        for sku, expected in [
+            ("g_pkg_couragepass34premium", True),
+            ("g_pkg_worldclearpass1premium", True),
+            ("g_pkg_ncuragupc", False),
+            ("PLT_PACKAGE_STARTER", False),
+            (None, False),
+        ]:
+            product = MagicMock()
+            product.google_sku = sku
+            assert is_season_pass_product(product) is expected, sku
