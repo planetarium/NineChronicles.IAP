@@ -523,6 +523,7 @@ def request_product(
             product_id,
             receipt_data.order["purchaseToken"],
             order_id,
+            config.onestore_market_code,
         )
         if purchase is not None:
             # 조회 결과를 영수증에 남긴다. 실패한 건도 남겨야 CS 때 상태를 볼 수 있다.
@@ -821,6 +822,7 @@ def request_product(
             config.onestore_client_secret,
             product_id,
             receipt_data.order["purchaseToken"],
+            config.onestore_market_code,
         )
         if not acked:
             logger.error(

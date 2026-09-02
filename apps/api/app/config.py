@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     onestore_client_id: Optional[str] = None
     onestore_client_secret: Optional[str] = None
     onestore_host: Optional[str] = None
+    # 마켓 구분 코드. 배포국가가 글로벌이면 MKT_GLB, 한국이면 MKT_ONE.
+    #   **헤더를 안 보내면 원스토어가 한국 마켓에서 조회해 모든 구매가 NoSuchData 로
+    #   보인다**(2026-09-02 실측). 우리 앱은 배포국가가 미국이라 MKT_GLB 가 기본이다.
+    #   비밀이 아니므로 코드 기본값을 두고, 필요하면 env 로 덮는다.
+    onestore_market_code: str = "MKT_GLB"
 
     # Stripe configuration (기존 web_payment_* 설정 대체)
     stripe_secret_key: str

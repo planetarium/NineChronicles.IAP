@@ -102,9 +102,12 @@ class TestValidateOneStore:
         #   2026-09-02 샌드박스 실측: %2B %3D %25 %2E%2E 는 전부 원스토어 앱까지 도달한다.
         assert "purchase.token+with=special%chars" not in url
         assert "purchase.token%2Bwith%3Dspecial%25chars" in url
-        assert get.call_args.kwargs["headers"]["Authorization"] == (
-            f"Bearer {TOKEN_BODY['access_token']}"
-        )
+        headers = get.call_args.kwargs["headers"]
+        assert headers["Authorization"] == f"Bearer {TOKEN_BODY['access_token']}"
+        # 🔴 x-market-code 가 없으면 원스토어가 한국 마켓에서 조회해 모든 구매가
+        #    NoSuchData 로 보인다(2026-09-02 실측: 헤더없음/MKT_ONE=404, MKT_GLB=200).
+        assert headers["x-market-code"] == "MKT_GLB"
+        assert headers["Content-Type"] == "application/json"
 
     def test_canceled_purchase_is_rejected(self):
         body = {**PURCHASE_BODY, "purchaseState": OneStorePurchaseState.CANCELED.value}
@@ -243,6 +246,30 @@ class TestValidateOneStore:
         assert success is False
         assert get.call_count == 2
         assert purchase is None
+
+    def test_market_code_is_overridable(self):
+        """배포국가가 한국이면 MKT_ONE 이다. 코드 수정 없이 바꿀 수 있어야 한다."""
+        get = Mock(return_value=_resp(200, PURCHASE_BODY))
+        with patch.object(
+            onestore_validator.requests, "post", return_value=_resp(200, TOKEN_BODY)
+        ), patch.object(onestore_validator.requests, "get", get):
+            _call(market_code="MKT_ONE")
+
+        assert get.call_args.kwargs["headers"]["x-market-code"] == "MKT_ONE"
+
+    def test_not_found_message_names_the_market(self):
+        """마켓 오설정이면 모든 구매가 NoSuchData 로 떨어진다 — 어디로 물었는지 남긴다."""
+        err = {"error": {"code": "NoSuchData", "message": "no such data"}}
+        with patch.object(
+            onestore_validator.requests, "post", return_value=_resp(200, TOKEN_BODY)
+        ), patch.object(
+            onestore_validator.requests, "get", return_value=_resp(404, err)
+        ):
+            success, msg, _ = _call(market_code="MKT_ONE")
+
+        assert success is False
+        assert "NoSuchData" in msg
+        assert "market=MKT_ONE" in msg
 
     def test_slash_in_token_is_rejected_without_calling(self):
         """`/` 가 든 토큰은 원스토어 프론트 서버가 HTML 404 로 끊는다(실측).
@@ -396,6 +423,8 @@ class TestAcknowledge:
         assert url.startswith(f"{HOST}/v7/apps/{CLIENT_ID}/purchases/all/products/")
         assert url.endswith("/acknowledge")
         assert "purchase.token%2Bwith%3Dspecial%25chars" in url
+        # 조회와 같은 마켓으로 승인해야 한다 — 안 그러면 승인이 안 먹고 자동환불된다.
+        assert post.call_args.kwargs["headers"]["x-market-code"] == "MKT_GLB"
 
     def test_acknowledge_failure_is_reported_not_raised(self):
         post = Mock(

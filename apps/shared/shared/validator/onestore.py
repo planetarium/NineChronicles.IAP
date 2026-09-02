@@ -43,6 +43,23 @@ from shared.schemas.receipt import OneStorePurchaseSchema
 # 이 호출은 `/purchase/request` 안에서, 그것도 pg_advisory_xact_lock 을 잡은 뒤에 일어난다
 #   (purchase.py 의 dedup 주석 참조). 스레드와 DB 커넥션을 물고 기다리는 시간이라
 #   짧게 잡는다. 최악 경로는 토큰 발급 + 조회 + (401 이면) 재발급 + 재조회 = 4×timeout.
+# 마켓 구분 코드. **없으면 원스토어가 한국 마켓(MKT_ONE)에서 조회한다** — 문서상 선택
+#   항목이지만 글로벌 배포에는 사실상 필수다. 2026-09-02 실측:
+#
+#       헤더 없음    404 NoSuchData
+#       MKT_ONE      404 NoSuchData
+#       MKT_GLB      200 구매 정보          ← 우리 앱(배포국가 미국, 테스트계정 싱가포르)
+#
+#   즉 이 헤더가 빠지면 **모든 구매가 "없는 구매"로 보인다.** 오래 헤맬 수 있는 자리라
+#   실패 메시지에 어떤 마켓으로 물었는지 같이 남긴다.
+#
+#   마켓에 따라 응답의 **시각 기준도 다르다**(MKT_ONE=UTC+09, MKT_GLB=UTC+00).
+#   지금 쓰는 `purchaseTime` 은 epoch 밀리초라 영향이 없지만, 다른 시각 필드를 쓰게 되면
+#   반드시 확인할 것 — 잘못 잡으면 9시간이 어긋난다.
+MARKET_CODE_GLOBAL = "MKT_GLB"
+MARKET_CODE_KOREA = "MKT_ONE"
+DEFAULT_MARKET_CODE = MARKET_CODE_GLOBAL
+
 HTTP_TIMEOUT = 5
 # 문서: "기본적으로 3600초의 유효기간이 있으며, 유효기간이 만료되거나 600초 미만으로 남은 경우"
 #   신규 발급 가능. 그래서 잔여 600초를 캐시 만료선으로 쓴다.
@@ -154,6 +171,19 @@ def get_access_token(
     return token, ""
 
 
+def _request_headers(access_token: str, market_code: str) -> dict:
+    """구매 조회·구매확인 공통 헤더.
+
+    `Content-Type` 은 본문이 없는 요청(GET/인자 없는 POST)에도 붙인다 — 2026-09-02 에
+    실제로 200 을 받은 요청 모양을 그대로 유지하려는 것이다.
+    """
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "x-market-code": market_code,
+    }
+
+
 def _unqueryable_reason(product_id: str, purchase_token: str) -> Optional[str]:
     """조회 자체가 불가능한 입력인지. 불가능하면 사람이 읽을 이유를 돌려준다.
 
@@ -188,6 +218,7 @@ def _fetch_purchase(
     client_secret: str,
     product_id: str,
     purchase_token: str,
+    market_code: str,
 ) -> Tuple[Optional[requests.Response], str]:
     """구매 조회. 최대 2회 시도한다.
 
@@ -210,7 +241,7 @@ def _fetch_purchase(
         try:
             resp = requests.get(
                 url,
-                headers={"Authorization": f"Bearer {access_token}"},
+                headers=_request_headers(access_token, market_code),
                 timeout=HTTP_TIMEOUT,
             )
         except requests.RequestException as e:
@@ -241,6 +272,7 @@ def validate_onestore(
     product_id: str,
     purchase_token: str,
     purchase_id: str,
+    market_code: str = DEFAULT_MARKET_CODE,
 ) -> Tuple[bool, str, Optional[OneStorePurchaseSchema]]:
     """구매를 원스토어에 물어서 확인한다.
 
@@ -256,17 +288,20 @@ def validate_onestore(
         return False, "ONE Store credentials are not configured", None
 
     resp, msg = _fetch_purchase(
-        host, client_id, client_secret, product_id, purchase_token
+        host, client_id, client_secret, product_id, purchase_token, market_code
     )
     if resp is None:
         return False, msg, None
 
     if resp.status_code != 200:
-        # 상용 호스트에 샌드박스 구매를 물으면 NoSuchData(404) 로 여기 떨어진다.
-        # 토큰과 맞지 않는 productId 로 물어도 여기다 — 상품 치환을 막는 유일한 방어선.
+        # NoSuchData(404) 가 오는 경우가 여러 개다 — 상용 호스트에 샌드박스 구매를 물었을 때,
+        #   토큰과 맞지 않는 productId 로 물었을 때(상품 치환을 막는 유일한 방어선), 그리고
+        #   **마켓 코드가 틀렸을 때**. 셋을 응답으로는 구분할 수 없으므로 어떤 마켓으로
+        #   물었는지를 메시지에 남긴다(마켓 오설정이면 모든 구매가 이 경로로 떨어진다).
         return (
             False,
-            f"Error occurred validating ONE Store receipt: {_error_detail(resp)}",
+            f"Error occurred validating ONE Store receipt: {_error_detail(resp)} "
+            f"(market={market_code})",
             None,
         )
 
@@ -322,6 +357,7 @@ def acknowledge_onestore(
     client_secret: str,
     product_id: str,
     purchase_token: str,
+    market_code: str = DEFAULT_MARKET_CODE,
 ) -> Tuple[bool, str]:
     """구매확인(acknowledge). **지급을 내보낸 뒤에만** 부를 것.
 
@@ -354,12 +390,16 @@ def acknowledge_onestore(
     try:
         resp = requests.post(
             url,
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers=_request_headers(access_token, market_code),
             timeout=HTTP_TIMEOUT,
         )
     except requests.RequestException as e:
         return False, f"Failed to acknowledge ONE Store purchase: {e}"
 
     if resp.status_code != 200:
-        return False, f"Failed to acknowledge ONE Store purchase: {_error_detail(resp)}"
+        return (
+            False,
+            f"Failed to acknowledge ONE Store purchase: {_error_detail(resp)} "
+            f"(market={market_code})",
+        )
     return True, ""
