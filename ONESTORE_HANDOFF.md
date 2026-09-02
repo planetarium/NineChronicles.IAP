@@ -295,10 +295,33 @@ SKU 를 따로 두면 이 로직들을 전부 손봐야 한다. 접두사 `g_`(g
 3. ~~`validator/onestore.py`~~ ✅
 4. ~~`common.py` 추출 분기~~ ✅
 5. ~~API·워커 분기~~ ✅
-6. `client_id` / `client_secret` / `host` 시크릿 주입 — **남음**. 넣을 곳:
-   AWS Secrets Manager `9c-internal-v2/external-services/iap-env`(인터널) ·
-   `9c-main-v2/external-services/iap-env`(메인넷). 키 이름은 `env_prefix="API_"` 라
-   `API_ONESTORE_CLIENT_ID` / `API_ONESTORE_CLIENT_SECRET` / `API_ONESTORE_HOST`.
-   인터널 host = `https://sbpp.onestore.net`, 메인넷 = `https://iap-apis.onestore.net`.
+6. `client_id` / `client_secret` / `host` 시크릿 주입 — **남음**. 두 군데를 같이 해야 한다.
+
+   **(a) AWS Secrets Manager** — `9c-internal-v2/external-services/iap-env` (인터널) ·
+   `9c-main-v2/external-services/iap-env` (메인넷). 리전은 **us-east-2**
+   (`charts/external-services/templates/secret-store.yaml` 의 SecretStore).
+   키 이름은 **kebab-case** 다 — 이 시크릿의 관례가 그렇고(`google-credential`,
+   `apple-bundle-id`, `db-uri` …), env 이름(`API_*`)과 다르다:
+
+       onestore-client-id
+       onestore-client-secret
+       onestore-host        인터널 https://sbpp.onestore.net / 메인넷 https://iap-apis.onestore.net
+
+   `dataFrom: extract` 로 시크릿 전체를 끌어오는 구조라 부분 갱신 API 가 없다 —
+   현재 JSON 을 읽어 병합하고 되써야 한다(기존 50개 키 보존).
+
+   **(b) 9c-infra 차트** — `iap-api` 는 `envFrom` 이 아니라 **키마다 `secretKeyRef` 를 명시**
+   한다. 그래서 시크릿에 키만 넣어도 컨테이너엔 안 들어온다.
+   `charts/external-services/templates/iap-api.yaml` 에 `API_ONESTORE_*` 3개를
+   `optional: true` 로 추가해야 한다(9c-infra PR #3592). optional 이 없으면 키가 없는
+   메인넷 파드가 `CreateContainerConfigError` 로 못 뜬다.
+
+   **순서**: alembic `a5f3c8d21b7e` 적용 확인 → AWS 시크릿에 키 3개 → 차트 PR 머지 →
+   `9c-external-services` 앱 **수동 sync**(auto-sync 없음) → 이미지 태그 bump.
+   env 는 파드 기동 시 스냅샷이라 시크릿만 갱신해도 도는 파드는 안 바뀐다.
+
+   ⚠️ 인터널 `9c-external-services` 는 지금 이미 OutOfSync 다(worker 3개에 `WORKER_STAGE`
+   주입 미적용). sync 하면 그것도 같이 적용되며 워커가 재시작한다 — 인터널은
+   `stage="internal"` 이라 바우처 게이트 동작은 전후 동일하다.
 
 1~2 만 해도 클라이언트에서 영수증이 서버에 도달해 파싱되는 것까지 로그로 확인할 수 있다.
