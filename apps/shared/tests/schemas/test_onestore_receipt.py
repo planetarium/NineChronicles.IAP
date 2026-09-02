@@ -35,9 +35,10 @@ def build_onestore_receipt(store: str = "OneStore") -> dict:
     """`BuildOneStoreReceipt` 가 만드는 봉투."""
     return {
         "Store": store,
-        # 클라이언트가 TransactionID 에 PurchaseId 를 넣는다. 다만 플러그인에서
-        # `PurchaseData.PurchaseId` 는 [Obsolete] 라, 검증기 단계의 order_id 는
-        # Google 분기와 같이 order["orderId"] 를 쓰는 쪽이 안전하다.
+        # 클라이언트가 TransactionID 에 PurchaseId 를 넣는다. 서버의 order_id 도 같은
+        # 값을 쓴다 — 구매 조회 응답이 돌려주는 유일한 식별자라 대조가 되기 때문
+        # (응답에 orderId/productId 는 없다). C# 쪽 [Obsolete] 표시와 무관하게
+        # 서버 API 는 여전히 purchaseId 로 답한다.
         "TransactionID": ONESTORE_ORDER["purchaseId"],
         "Payload": json.dumps(
             {"json": json.dumps(ONESTORE_ORDER), "signature": "c2lnbmF0dXJl"}
@@ -100,18 +101,19 @@ class TestOneStoreReceiptParsing:
         assert receipt.order is None
 
 
-class TestNotYetWired:
-    def test_get_order_data_rejects_onestore(self):
-        """지금은 여기서 멈춘다(인수인계 문서 4단계 미착수).
+class TestDownstream:
+    def test_get_order_data_reads_the_envelope(self):
+        """파싱 결과가 `request_product` 첫 문장으로 그대로 흘러간다.
 
-        `request_product` 의 첫 문장이라 DB 접근 전에 400 으로 끝난다 — 영수증도 tx 도
-        안 생기고, 클라이언트는 배송 미확정으로 보고 소비하지 않는다. **4단계에서 이
-        테스트가 빨개지는 것이 정상 신호다.**
+        `order_id` 가 `orderId` 가 아니라 `purchaseId` 인 이유는 common.py 주석 참조.
         """
         receipt = SimpleReceiptSchema(data=build_onestore_receipt())
 
-        with pytest.raises(ValueError, match="ONESTORE is unsupported store"):
-            get_order_data(receipt)
+        order_id, product_id, purchased_at = get_order_data(receipt)
+
+        assert order_id == ONESTORE_ORDER["purchaseId"]
+        assert product_id == ONESTORE_ORDER["productId"]
+        assert purchased_at.timestamp() == ONESTORE_ORDER["purchaseTime"] / 1000
 
 
 class TestStoreEnum:

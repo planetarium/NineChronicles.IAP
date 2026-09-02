@@ -16,6 +16,7 @@ class TestPlatformForStore:
             (Store.APPLE_TEST, "MOBILE"),
             (Store.GOOGLE, "MOBILE"),
             (Store.GOOGLE_TEST, "MOBILE"),
+            (Store.ONESTORE, "MOBILE"),  # 샌드박스 짝은 없다 — 검증기가 호스트로 가른다
             (Store.TEST, None),  # 디버그 — 바우처 대상 아님
             (Store.REDEEM, None),  # 코드 리딤 — 결제 아님
         ],
@@ -143,6 +144,7 @@ class TestGrantableStores:
         with patch.object(vg.config, "stage", "production"):
             s = vg._grantable_stores()
         assert Store.APPLE in s and Store.GOOGLE in s and Store.WEB in s
+        assert Store.ONESTORE in s
         assert Store.APPLE_TEST not in s and Store.WEB_TEST not in s
 
     def test_mainnet_excludes_sandbox(self):
@@ -150,7 +152,7 @@ class TestGrantableStores:
         #   "production" 만 보면 메인넷에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다.
         with patch.object(vg.config, "stage", "mainnet"):
             s = vg._grantable_stores()
-        assert s == {Store.APPLE, Store.GOOGLE, Store.WEB}
+        assert s == {Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE}
 
     def test_nonprod_includes_sandbox(self):
         with patch.object(vg.config, "stage", "development"):

@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     apple_issuer_id: str
     apple_validation_url: str
 
+    # ONE Store (원스토어). 셋 다 없으면 검증기가 거절로 끝낸다(fail-closed) — 필수로 두면
+    #   시크릿을 아직 안 넣은 배포가 기동조차 못 한다. client_id/secret 은 개발자센터
+    #   공통정보 > 라이선스 관리에서 확인하고 환경별로 같은 값이며, 갈리는 건 호스트다:
+    #     검증(개발) https://sbpp.onestore.net / 상용 https://iap-apis.onestore.net
+    onestore_client_id: Optional[str] = None
+    onestore_client_secret: Optional[str] = None
+    onestore_host: Optional[str] = None
+
     # Stripe configuration (기존 web_payment_* 설정 대체)
     stripe_secret_key: str
     stripe_test_secret_key: str

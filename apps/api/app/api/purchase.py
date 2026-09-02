@@ -34,6 +34,11 @@ from shared.utils.apple import get_jwt
 from shared.validator.apple import validate_apple
 from shared.validator.common import get_order_data
 from shared.validator.google import ack_google, validate_google
+from shared.validator.onestore import (
+    acknowledge_onestore,
+    is_onestore_configured,
+    validate_onestore,
+)
 from shared.validator.web import validate_web, validate_web_test
 from sqlalchemy import desc, func, or_, select, text
 from sqlalchemy.orm import joinedload, with_loader_criteria
@@ -391,7 +396,8 @@ def request_product(
 
     product = None
     # If prev. receipt exists, check current status and returns result
-    if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST):
+    # 원스토어는 Google Play SKU 를 그대로 등록해 쓴다(전용 SKU 컬럼 없음) → 같은 조회.
+    if receipt_data.store in (Store.GOOGLE, Store.GOOGLE_TEST, Store.ONESTORE):
         product = sess.scalar(
             select(Product)
             .options(joinedload(Product.fav_list))
@@ -429,6 +435,30 @@ def request_product(
             .options(joinedload(Product.fungible_item_list))
             .where(Product.active.is_(True), Product.id == product_id)
         )
+
+    # 원스토어는 **영수증을 만들기 전에** 전제조건을 본다. 여기서 만들어 두고 아래 검증에서
+    #   실패하면 그 영수증이 INVALID 로 굳는데, dedup 게이트는 INVALID 를 종단으로 취급한다
+    #   (위 prev_receipt 주석). 그러면 시크릿을 나중에 넣어도 그 사이 들어온 구매는 영영
+    #   지급되지 않는다. 아직 아무것도 저장하지 않은 지금 끝내면 클라이언트가 소비하지 않고
+    #   다음 회수에서 그대로 재시도한다.
+    if receipt_data.store == Store.ONESTORE:
+        if not is_onestore_configured(
+            config.onestore_host,
+            config.onestore_client_id,
+            config.onestore_client_secret,
+        ):
+            # 알람을 붙일 수 있게 구분되는 문구로 남긴다 — 이 실패는 invalid-receipt-count
+            # 에 안 잡힌다(영수증을 안 만드니까).
+            logger.error(
+                "[ONESTORE_NOT_CONFIGURED] rejecting purchase before persisting :: "
+                f"{order_id}"
+            )
+            raise ValueError("ONE Store credentials are not configured")
+        if not (product_id and order_id and receipt_data.order.get("purchaseToken")):
+            raise ValueError(
+                "Invalid Receipt: productId, purchaseId and purchaseToken must be "
+                "present in receipt data"
+            )
 
     # Save incoming data first
     receipt = Receipt(
@@ -483,6 +513,35 @@ def request_product(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         if success:
             ack_google(config.google_credential, x_iap_packagename, product_id, token)
+    ## ONE Store
+    elif receipt_data.store == Store.ONESTORE:
+        # 전제조건(시크릿·필수 필드)은 영수증을 만들기 전에 이미 봤다.
+        success, msg, purchase = validate_onestore(
+            config.onestore_host,
+            config.onestore_client_id,
+            config.onestore_client_secret,
+            product_id,
+            receipt_data.order["purchaseToken"],
+            order_id,
+        )
+        if purchase is not None:
+            # 조회 결과를 영수증에 남긴다. 실패한 건도 남겨야 CS 때 상태를 볼 수 있다.
+            #   Apple/Web 처럼 평평하게 합치지 않고 키 하나에 넣는다 — 봉투(Store/
+            #   TransactionID/Payload)와 필드명이 겹칠 여지를 아예 없앤다.
+            data = receipt_data.data.copy()
+            data["OneStoreVerification"] = purchase.json_data
+            receipt.data = data
+
+        if success:
+            # 구매시각은 **원스토어가 준 값**으로 덮는다. 영수증 안의 purchaseTime 은
+            #   서명 검증을 안 하는 이상 클라이언트가 고칠 수 있는 값인데, 일/주 구매
+            #   제한이 purchased_at 으로 걸린다(utils.get_purchase_count) — 시각을 밀면
+            #   제한을 넘길 수 있다. Apple/Web 도 검증 결과로 덮는다.
+            #   아래 check_purchase_limit 이 이 값을 보려면 flush 가 먼저 일어나야 하는데,
+            #   sessionmaker 가 기본 autoflush 라 쿼리 시점에 자동으로 나간다.
+            receipt.purchased_at = datetime.fromtimestamp(
+                purchase.purchaseTime // 1000, tz=timezone.utc
+            )
     ## Apple
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         encoded_tx_id = urllib.parse.quote_plus(order_id)
@@ -746,6 +805,28 @@ def request_product(
         logging.debug(
             f"Task for product {receipt.uuid} sent to Celery worker with task_id: {task_id}"
         )
+
+    # 지급을 내보낸 뒤에 원스토어 구매확인을 친다. 원스토어는 3일 안에 소비/승인되지 않은
+    #   구매를 자동 환불하는데, 클라이언트가 consume 을 안 하면(앱을 죽이거나 호출을 막으면)
+    #   **지급은 나갔는데 결제만 사라진다.** 정상 흐름에서는 클라이언트 consume 이 먼저
+    #   닫지만, 그걸 믿을 수 없으니 서버가 같은 창을 닫는다.
+    #   Google(`ack_google`)과 달리 검증 직후가 아니라 여기서 하는 이유는, 검증만 되고
+    #   지급이 막힌 건(TIME_LIMIT·구매제한·시즌패스 실패 등)은 환불되게 두려는 것이다 —
+    #   그 경로들은 위에서 raise_error 로 빠져나가 여기까지 오지 않는다.
+    #   실패해도 지급은 이미 나갔으므로 로그만 남기고 진행한다.
+    if receipt.store == Store.ONESTORE:
+        acked, ack_msg = acknowledge_onestore(
+            config.onestore_host,
+            config.onestore_client_id,
+            config.onestore_client_secret,
+            product_id,
+            receipt_data.order["purchaseToken"],
+        )
+        if not acked:
+            logger.error(
+                f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
+                "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나감)"
+            )
 
     receipt = upsert_mileage(sess, product, receipt)
     sess.add(receipt)

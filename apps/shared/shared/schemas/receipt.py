@@ -12,6 +12,9 @@ from shared.enums import (
     GoogleConsumptionState,
     GooglePurchaseState,
     GooglePurchaseType,
+    OneStoreAckState,
+    OneStoreConsumptionState,
+    OneStorePurchaseState,
     PlanetID,
     ReceiptStatus,
     Store,
@@ -38,6 +41,34 @@ class GooglePurchaseSchema(BaseSchema):
     productId: Optional[str] = None
     obfuscatedExternalAccountId: Optional[str] = None
     obfuscatedExternalProfileId: Optional[str] = None
+
+
+class OneStorePurchaseSchema(BaseSchema):
+    """원스토어 구매 단건 조회 응답.
+
+    https://onestore-dev.gitbook.io/dev/tools/billing/v21/serverapi
+
+    Google 응답과 달리 **`productId` 도 `orderId` 도 들어 있지 않다.** 둘 다 요청 경로와
+    영수증에만 있다. 그래서 서버 응답으로 대조할 수 있는 식별자는 `purchaseId` 뿐이고,
+    영수증의 `order_id` 로도 그것을 쓴다(`validator/common.py`).
+    """
+
+    # 상태값은 enum 이 아니라 int 로 받는다. 문서에 없는 값이 오면 enum 검증이 먼저 터져서
+    #   "Malformed ONE Store purchase data" 로 묻히는데, 그러면 CS 때 원인을 오해한다.
+    #   비교는 `OneStorePurchaseState` 등으로 하고(IntEnum 이라 int 와 그대로 비교된다),
+    #   모르는 값은 검증기가 UNKNOWN(n) 으로 풀어서 알려 준다.
+    purchaseState: int
+    purchaseTime: int  # 밀리초
+    purchaseId: str
+    consumptionState: int = OneStoreConsumptionState.YET_BE_CONSUMED
+    acknowledgeState: int = OneStoreAckState.YET_TO_BE_ACKNOWLEDGED
+    developerPayload: str = ""
+    quantity: int = 1
+
+    @property
+    def json_data(self) -> dict:
+        """`receipt.data` 에 합쳐 넣을 형태. JSONB 라 enum 은 정수로 편다."""
+        return self.model_dump(mode="json")
 
 
 class ApplePurchaseSchema(BaseSchema):

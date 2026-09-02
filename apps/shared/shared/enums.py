@@ -292,6 +292,27 @@ class GoogleConsumptionState(IntEnum):
     CONSUMED = 1
 
 
+# ONE STORE
+class OneStorePurchaseState(IntEnum):
+    """https://onestore-dev.gitbook.io/dev/tools/billing/v21/serverapi
+
+    Google 과 달리 PENDING 이 없다 — 0(구매완료) / 1(취소완료) 둘뿐이다.
+    """
+
+    PURCHASED = 0
+    CANCELED = 1
+
+
+class OneStoreConsumptionState(IntEnum):
+    YET_BE_CONSUMED = 0
+    CONSUMED = 1
+
+
+class OneStoreAckState(IntEnum):
+    YET_TO_BE_ACKNOWLEDGED = 0
+    ACKNOWLEDGED = 1
+
+
 class GooglePurchaseType(IntEnum):
     TEST = 0  # Purchase from license testing account
     PROMO = 1  # Purchase using promo code

@@ -23,6 +23,17 @@ def get_order_data(
             receipt_data.order.get("purchaseTime") // 1000,
             tz=timezone.utc
         )  # Remove millisecond
+    elif receipt_data.store == Store.ONESTORE:
+        # 봉투가 Google 과 같아 구매 데이터는 `order` 에 들어 있다(schemas/receipt.py).
+        # order_id 로 `purchaseId` 를 쓰는 이유: 원스토어 구매 조회 응답에 `orderId` 가
+        #   없어서 대조가 안 된다. purchaseId 는 응답에 있고, 클라이언트도 봉투의
+        #   TransactionID 로 같은 값을 보낸다(Apple 이 TransactionID 를 쓰는 것과 같은 자리).
+        order_id = receipt_data.order.get("purchaseId")
+        product_id = receipt_data.order.get("productId")
+        purchased_at = datetime.fromtimestamp(
+            receipt_data.order.get("purchaseTime") // 1000,
+            tz=timezone.utc
+        )  # Google 과 같이 밀리초로 온다
     elif receipt_data.store in (Store.APPLE, Store.APPLE_TEST):
         order_id = receipt_data.data.get("TransactionID")
         # product_id = receipt_data.data.get("productId")
