@@ -85,7 +85,9 @@ def _error_detail(resp: requests.Response) -> str:
             return f"{code}: {message}"
     except Exception:  # noqa: BLE001 - 본문이 JSON 이 아닐 수도 있다
         pass
-    return f"HTTP {resp.status_code} {resp.text[:200]}"
+    # 원스토어 앱까지 못 간 응답(프론트 서버의 HTML 404 등). 본문을 그대로 영수증 msg 에
+    #   넣으면 HTML 덩어리가 들어가 읽을 수 없다 — 성격만 남긴다.
+    return f"HTTP {resp.status_code} (non-JSON — 원스토어 앱에 도달하지 못한 응답)"
 
 
 def _state_name(enum_cls, value: int) -> str:
@@ -152,6 +154,24 @@ def get_access_token(
     return token, ""
 
 
+def _unqueryable_reason(product_id: str, purchase_token: str) -> Optional[str]:
+    """조회 자체가 불가능한 입력인지. 불가능하면 사람이 읽을 이유를 돌려준다.
+
+    2026-09-02 샌드박스 실측: 경로 세그먼트에 **`%2F` 만** 원스토어 프론트 서버가 HTML 404
+    로 거부한다(Apache `AllowEncodedSlashes Off` 로 보인다). `%2B` `%3D` `%25` `%2E%2E` 는
+    전부 원스토어 앱까지 도달해 정상 JSON 오류(`NoSuchData`)를 받는다 — 즉 인코딩은
+    필요하고 옳다(`%2E%2E` 가 `..` 로 정규화되지 않는 것도 확인했다).
+
+    따라서 `/` 가 든 purchaseToken 은 **원스토어 자신의 엔드포인트로도 주소를 지정할 수
+    없다.** 실제 토큰에 `/` 가 안 들어온다는 뜻이지만, 들어오면 HTML 404 를 "구매 없음"
+    으로 오해하게 되므로 여기서 끊는다.
+    """
+    for label, value in (("productId", product_id), ("purchaseToken", purchase_token)):
+        if "/" in value:
+            return f"{label} contains '/', which ONE Store's own endpoint cannot address"
+    return None
+
+
 def _purchase_url(host: str, client_id: str, product_id: str, purchase_token: str) -> str:
     # purchaseToken 은 URL 경로에 들어가는데 `/` `+` `=` 가 섞여 나온다. 그대로 붙이면
     # 경로가 갈라져 엉뚱한 엔드포인트를 친다. safe="" 로 슬래시까지 인코딩한다.
@@ -176,6 +196,10 @@ def _fetch_purchase(
       - 5xx/네트워크 : 원스토어 일시 장애 → 그대로 1회 (apple.py 선례)
     나머지(404 NoSuchData 등)는 영수증 자체의 문제라 재시도해도 같은 답이다.
     """
+    unqueryable = _unqueryable_reason(product_id, purchase_token)
+    if unqueryable is not None:
+        return None, f"Error occurred validating ONE Store receipt: {unqueryable}"
+
     access_token, msg = get_access_token(host, client_id, client_secret)
     if access_token is None:
         return None, msg
@@ -312,6 +336,10 @@ def acknowledge_onestore(
     """
     if not is_onestore_configured(host, client_id, client_secret):
         return False, "ONE Store credentials are not configured"
+
+    unqueryable = _unqueryable_reason(product_id, purchase_token)
+    if unqueryable is not None:
+        return False, f"Failed to acknowledge ONE Store purchase: {unqueryable}"
 
     access_token, msg = get_access_token(host, client_id, client_secret)
     if access_token is None:

@@ -16,7 +16,7 @@ HOST = "https://sbpp.onestore.net"
 CLIENT_ID = "0000000001"
 CLIENT_SECRET = "s3cr3t"
 PRODUCT_ID = "g_pkg_worldclearpass1premium"
-TOKEN = "purchase.token/with+special=chars"
+TOKEN = "purchase.token+with=special%chars"
 PURCHASE_ID = "17070421461015116878"
 
 TOKEN_BODY = {
@@ -98,9 +98,10 @@ class TestValidateOneStore:
 
         url = get.call_args.args[0]
         assert url.startswith(f"{HOST}/v7/apps/{CLIENT_ID}/purchases/inapp/products/")
-        # purchaseToken 에 / + = 가 들어간다. 그대로 붙이면 경로가 깨진다.
-        assert "purchase.token/with+special=chars" not in url
-        assert "purchase.token%2Fwith%2Bspecial%3Dchars" in url
+        # purchaseToken 에 + = % 가 섞여 온다. 인코딩해야 경로가 안 깨진다.
+        #   2026-09-02 샌드박스 실측: %2B %3D %25 %2E%2E 는 전부 원스토어 앱까지 도달한다.
+        assert "purchase.token+with=special%chars" not in url
+        assert "purchase.token%2Bwith%3Dspecial%25chars" in url
         assert get.call_args.kwargs["headers"]["Authorization"] == (
             f"Bearer {TOKEN_BODY['access_token']}"
         )
@@ -243,6 +244,39 @@ class TestValidateOneStore:
         assert get.call_count == 2
         assert purchase is None
 
+    def test_slash_in_token_is_rejected_without_calling(self):
+        """`/` 가 든 토큰은 원스토어 프론트 서버가 HTML 404 로 끊는다(실측).
+
+        그 응답을 "구매 없음" 으로 오해하면 안 되므로 부르기 전에 끊는다.
+        """
+        post = Mock(return_value=_resp(200, TOKEN_BODY))
+        get = Mock()
+        with patch.object(onestore_validator.requests, "post", post), patch.object(
+            onestore_validator.requests, "get", get
+        ):
+            success, msg, purchase = _call(purchase_token="tok/with/slash")
+
+        assert success is False
+        assert "cannot address" in msg
+        assert purchase is None
+        assert get.call_count == 0  # 무의미한 왕복을 하지 않는다
+        assert post.call_count == 0
+
+    def test_non_json_error_body_is_summarized(self):
+        """HTML 응답 본문을 영수증 msg 에 그대로 넣지 않는다."""
+        html = Mock()
+        html.status_code = 404
+        html.json.side_effect = ValueError("not json")
+        html.text = "<!DOCTYPE HTML><html><head><title>404 Not Found</title></head></html>"
+        with patch.object(
+            onestore_validator.requests, "post", return_value=_resp(200, TOKEN_BODY)
+        ), patch.object(onestore_validator.requests, "get", return_value=html):
+            success, msg, _ = _call()
+
+        assert success is False
+        assert "DOCTYPE" not in msg
+        assert "non-JSON" in msg
+
     def test_not_found_is_not_retried(self):
         """404 는 영수증 자체의 문제다 — 다시 물어도 같은 답이라 락을 더 잡을 이유가 없다."""
         get = Mock(return_value=_resp(404, {"error": {"code": "NoSuchData", "message": "x"}}))
@@ -361,7 +395,7 @@ class TestAcknowledge:
         # 조회는 purchases/inapp, 확인은 purchases/all 이다.
         assert url.startswith(f"{HOST}/v7/apps/{CLIENT_ID}/purchases/all/products/")
         assert url.endswith("/acknowledge")
-        assert "purchase.token%2Fwith%2Bspecial%3Dchars" in url
+        assert "purchase.token%2Bwith%3Dspecial%25chars" in url
 
     def test_acknowledge_failure_is_reported_not_raised(self):
         post = Mock(
