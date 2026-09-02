@@ -25,9 +25,11 @@ export const STORE_MAP = {
   1: "APPLE",
   2: "GOOGLE",
   3: "WEB",
+  4: "ONESTORE",
   91: "APPLE_TEST",
   92: "GOOGLE_TEST",
   93: "WEB_TEST",
+  94: "REDEEM",
 };
 
 export const RECEIPT_STATUS_MAP = {

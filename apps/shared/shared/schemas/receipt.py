@@ -108,7 +108,7 @@ class SimpleReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
 
-    # Google
+    # Google / ONE Store (봉투 모양이 같다)
     payload: Optional[Dict] = None
     order: Optional[Dict] = None
 
@@ -126,10 +126,16 @@ class SimpleReceiptSchema:
                 self.store = Store.GOOGLE
             elif "WebPayment" in self.data.get("Store", ""):
                 self.store = Store.WEB
+            elif "OneStore" in self.data.get("Store", ""):
+                # 봉투 문자열이 상용/검증 환경 동일이라 여기서 둘을 구분할 수 없다. 그래서
+                # ONESTORE 하나뿐이고, 환경 분리는 배포별 credential 로 한다(enums.py 참조).
+                self.store = Store.ONESTORE
             else:
                 self.store = Store.TEST
 
-        if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
+        # 원스토어 봉투는 Google 과 같은 모양이다: Payload 안이 {json, signature} 이고
+        # json 이 구매 데이터다(클라이언트 `BuildOneStoreReceipt`). 그래서 분기를 공유한다.
+        if self.store in (Store.GOOGLE, Store.GOOGLE_TEST, Store.ONESTORE):
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):

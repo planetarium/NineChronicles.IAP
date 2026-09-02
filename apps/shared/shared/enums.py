@@ -62,6 +62,30 @@ class Store(IntEnum):
         This is `production` web payment store.
         This type of store validates receipts through external payment service API.
 
+    - **4: `ONESTORE` (ONE Store)**
+
+        This is ONE Store (Korean android store).
+
+        NOTE: this member has no `*_TEST` twin, unlike every store above. Nothing
+        could set one -- the client sends no store on `/purchase/request` and the
+        receipt envelope reads `"OneStore"` in both environments, so the server
+        cannot tell them apart.
+
+        It does not need one either. ONE Store issues a single client_id /
+        client_secret per app; the environments are separate *hosts*
+        (`sbpp.onestore.net` sandbox, `iap-apis.onestore.net` production) holding
+        separate purchase records, and an AccessToken from one is not valid
+        against the other. So the split is a per-deployment host setting: internal
+        points at the sandbox, mainnet at production. That fails closed -- a
+        sandbox purchase does not exist on the production host, so mainnet cannot
+        validate it and rejects it instead of paying out. (`GOOGLE_TEST` exists
+        because Google validates license-tester purchases with the very same
+        production credential, which is not the situation here.)
+
+        If a production deployment ever has to validate sandbox purchases, add
+        `ONESTORE_TEST = 95` back (94 is taken by `REDEEM`, so the `N` / `N + 90`
+        pairing does not hold here) together with a client that sends it.
+
     - **91: `APPLE_TEST` (Sandbox appstore)**
 
         This is `sandbox` apple appstore.
@@ -86,6 +110,7 @@ class Store(IntEnum):
     APPLE = 1
     GOOGLE = 2
     WEB = 3
+    ONESTORE = 4
     APPLE_TEST = 91
     GOOGLE_TEST = 92
     WEB_TEST = 93
