@@ -25,13 +25,51 @@
 - 상품 조회 성공 (개발자센터에 등록한 1개가 잡힘)
 - 상품이 개발자센터에서 `등록중` 상태여도 **Sandbox 조회는 된다** (문서에는 "등록중: 테스트 불가"로 되어 있으나 실제로는 조회됨)
 
-**서버 (1~2단계 완료 — 2026-09-02)**
+**서버 (1~6단계 완료 — 2026-09-02)**
 
-`Store` enum 과 영수증 파싱까지 들어갔다. 이제 `"OneStore"` 봉투가 `Store.ONESTORE`(4) 로 잡히고
-`payload`/`order` 가 Google 과 같은 경로로 파싱된다. 그다음 문장인 `get_order_data` 가
-`ValueError: ONESTORE is unsupported store.` 를 던져서 **400 으로 끝난다** — DB 접근 전이라
-영수증도 tx 도 안 생기고, 클라이언트는 배송 미확정으로 보고 소비하지 않는다. 조용한 오지급 경로는
-아니다. 나머지(3~6단계)는 미착수.
+영수증 파싱부터 원스토어 서버 검증·지급 경로·바우처 분류까지 다 들어갔다. 남은 건 **설정 주입**
+(개발자센터 값을 시크릿에 넣기)과 **클라이언트 `_store` 정리**, 그리고 아래 "안 한 것" 두 가지다.
+
+`config.onestore_*` 가 비어 있으면 **영수증을 만들기 전에** 거절한다(fail-closed). 시크릿을 안 넣은
+배포에 이 이미지를 올려도 기존 결제엔 영향이 없고, 원스토어 결제만 400 으로 끝난다 — 아무것도
+저장하지 않으므로 나중에 시크릿을 넣으면 그 구매들이 **다음 회수 때 정상 지급된다**.
+(영수증을 먼저 만들면 검증 실패가 `INVALID` 로 굳고, dedup 게이트가 INVALID 를 종단 취급해서
+그 구매는 영영 지급되지 않는다. 그래서 순서를 뒤집어 뒀다.)
+
+**지급 뒤 서버가 acknowledge 한다.** 원스토어는 3일 안에 소비/승인되지 않은 구매를 자동 환불하는데,
+클라이언트가 consume 을 안 하면(앱을 죽이거나 호출만 막으면) **지급은 나갔는데 결제만 사라진다** —
+재현 가능한 무료 경로다. Google 은 `ack_google` 이 검증 직후에 이 창을 닫아 막고 있었다. 원스토어는
+검증 직후가 아니라 **배송을 내보낸 뒤**에 친다: 지급이 막힌 건(TIME_LIMIT·구매제한·시즌패스 실패)은
+그 앞에서 빠져나가므로 창이 열린 채 남아 자동 환불된다. ack 실패는 `[ONESTORE_ACK_FAILED]` 로만
+남기고 진행한다(지급은 이미 나갔다).
+
+**여전히 남는 실패 모드**: 원스토어 서버 장애·타임아웃으로 검증이 두 번 다 실패하면 그 영수증은
+INVALID 로 굳는다. 돈은 3일 뒤 자동 환불되지만 **그 구매를 나중에 살려 지급할 수는 없다.**
+
+**안 한 것 (의도적)**
+
+- **`/api/validate` 엔드포인트** — 손대지 않았다. **애초에 앱에 등록되지 않는 라우터다**
+  (`app/api/__init__.py` 의 `__all__` 에 없다). 게다가 코드 자체가 깨져 있다: `ReceiptSchema` 에
+  `.id` 가 없고, `Receipt` 모델에 `receipt_id`/`receipt_data` 컬럼이 없으며, Google 분기는
+  `ReceiptDetailSchema` 를 돌려주는데 다음 줄이 `resp.status_code` 를 읽는다. 그 분기는 무조건
+  `valid=True` 를 주는 스텁이라, ONESTORE 를 끼우면 "원스토어 영수증은 언제나 유효" 스텁이 하나
+  더 생긴다.
+- **원스토어 환불 회수 폴링** — `track_google_refund` 대응물이 없다. `voucher_reconcile_task` 의
+  `_GOOGLE_STORES` 에 ONESTORE 를 넣는 건 **틀린 수정**이다(그 목록은 google void 폴링이 준
+  order_id 를 받는 자리다). 영수증 `data` 에 purchaseToken 이 남아 있어 재조회는 가능하니,
+  원스토어 취소 조회를 도는 별도 폴링을 붙이면 된다.
+  그 전까지: 사용자가 환불받아도 **NCG 바우처가 자동 회수되지 않는다**(ONESTORE 를
+  `_PROD_STORES` 에 넣었으므로 바우처는 나간다). 수동 경로는 열려 있다 — 운영자가 영수증을
+  `REFUNDED_BY_ADMIN` 으로 바꾸면 회수 enroll 은 store 무관이라 그대로 돈다.
+
+**오픈 전에 샌드박스에서 실측할 것 세 가지**
+
+1. **상품 치환이 막히는지** — 서명을 검증하지 않으므로, 싼 상품 토큰에 비싼 `productId` 를 붙이는
+   치환을 막는 건 "토큰과 안 맞는 productId 로 조회하면 404" 하나뿐이다. 상품 2개를 등록해
+   A 토큰 + B productId 로 조회해 404 를 눈으로 확인하고 결과를 여기 적어라. 깨지면 열려 있는 것이다.
+2. **401 강제 재발급이 진짜 새 토큰을 주는지** — 문서가 "600초 미만 남은 경우 신규 발급 가능"
+   이라, 잔여가 많은데 401 을 맞으면 같은 죽은 토큰을 돌려받아 재시도가 무의미해질 수 있다.
+3. **서버 ack 뒤에도 클라이언트 consume 이 정상인지** — 순서상 ack 가 먼저 나간다.
 
 클라이언트는 **지급이 확정되지 않으면 소비(consume)하지 않도록** 되어 있어서, 실패해도 구매가
 원스토어에 남고 다음 회수 때 재시도된다. 다만 **3일 안에 소비/승인하지 않으면 원스토어가 자동 환불**한다.
@@ -80,12 +118,13 @@ self.order = json.loads(self.payload["json"])
 | ~~`apps/shared/shared/schemas/receipt.py`~~ | ~~132-134~~ | ✅ payload 파싱을 Google 분기와 공유 |
 | ~~`apps/shared/tool/migrations/.../a5f3c8d21b7e`~~ | ~~신규~~ | ✅ PG `store` 타입에 라벨 추가 (**적용은 수동**, 아래 참조) |
 | ~~`apps/frontend/src/const.js`~~ | ~~23~~ | ✅ `STORE_MAP` 동기화 |
-| `apps/shared/shared/validator/common.py` | 19 | `order_id` / `product_id` / `purchased_at` 추출 분기 추가 |
-| `apps/shared/shared/validator/onestore.py` | 신규 | 원스토어 서버 API 검증 |
-| `apps/api/app/api/validate.py` | 103 | `case Store.GOOGLE | ...` 옆에 ONESTORE 분기 |
-| `apps/api/app/api/purchase.py` | 394, 463 | `if receipt_data.store in (Store.GOOGLE, ...)` 두 곳 |
-| `apps/worker/app/tasks/voucher_grant_task.py` | 55-56 | `_PROD_STORES` / `_TEST_STORES` 에 추가 |
-| `apps/worker/app/tasks/voucher_reconcile_task.py` | 55 | `_GOOGLE_STORES` 와 같은 취급이 필요한지 검토 |
+| ~~`apps/shared/shared/validator/common.py`~~ | ~~19~~ | ✅ order_id=`purchaseId`, product_id, purchased_at |
+| ~~`apps/shared/shared/validator/onestore.py`~~ | ~~신규~~ | ✅ 토큰 발급·캐시 + 구매 조회 |
+| ~~`apps/api/app/config.py`~~ | ~~39~~ | ✅ `onestore_client_id`/`_secret`/`_host` (Optional, 미배선=거절) |
+| ~~`apps/api/app/api/purchase.py`~~ | ~~394, 463~~ | ✅ 상품 조회(google_sku 공유) + 검증 분기 |
+| ~~`apps/worker/app/tasks/voucher_grant_task.py`~~ | ~~55-56~~ | ✅ `_PROD_STORES`/`_MOBILE_STORES` |
+| `apps/api/app/api/validate.py` | 103 | ❌ 안 함 — 죽은 코드(위 "안 한 것") |
+| `apps/worker/app/tasks/voucher_reconcile_task.py` | 55 | ❌ 넣으면 안 됨 — 별도 폴링 필요(위 "안 한 것") |
 | `NineChronicles` `ApiClients.cs` | 71-76 | 클라이언트 `_store` 를 ONESTORE 로 (아래 참조) |
 | `NineChronicles` `InAppPurchaseServiceClient.cs` | 980, 994 | 생성 enum + `StoreTypeConverter.InvalidEnumMapping` 에 `4` |
 
@@ -253,9 +292,13 @@ SKU 를 따로 두면 이 로직들을 전부 손봐야 한다. 접두사 `g_`(g
 
 1. ~~`Store` enum 에 `ONESTORE` 추가~~ ✅ (+ PG enum 마이그레이션 `a5f3c8d21b7e`)
 2. ~~`receipt.py` 파싱 분기~~ ✅ (테스트: `apps/shared/tests/schemas/test_onestore_receipt.py`)
-3. `validator/onestore.py` — AccessToken 발급 + 구매 조회. `web.py` 가 HTTP 호출 선례
-4. `common.py` 추출 분기 — `order` 에서 `productId`/`purchaseToken`/`purchaseTime` 꺼내기
-5. API·워커 분기
-6. `client_id` / `client_secret` 설정 주입 (운영은 9c-infra 시크릿)
+3. ~~`validator/onestore.py`~~ ✅
+4. ~~`common.py` 추출 분기~~ ✅
+5. ~~API·워커 분기~~ ✅
+6. `client_id` / `client_secret` / `host` 시크릿 주입 — **남음**. 넣을 곳:
+   AWS Secrets Manager `9c-internal-v2/external-services/iap-env`(인터널) ·
+   `9c-main-v2/external-services/iap-env`(메인넷). 키 이름은 `env_prefix="API_"` 라
+   `API_ONESTORE_CLIENT_ID` / `API_ONESTORE_CLIENT_SECRET` / `API_ONESTORE_HOST`.
+   인터널 host = `https://sbpp.onestore.net`, 메인넷 = `https://iap-apis.onestore.net`.
 
 1~2 만 해도 클라이언트에서 영수증이 서버에 도달해 파싱되는 것까지 로그로 확인할 수 있다.
