@@ -6,5 +6,6 @@ __all__ = [
     "voucher",
     "voucher_grant_outbox",
     "product_voucher_grant",
+    "grant_outbox",
     "user",
 ]

@@ -1,5 +1,8 @@
 """
-API 테스트 부트스트랩 — `shared` 설치본이 스테일하면 리포의 `apps/shared` 를 sys.path 앞에 둔다.
+API 테스트 부트스트랩 — 두 가지를 한다.
+  1. `app.config.Settings` 가 요구하는 필수 env 를 더미로 채운다(실 앱 `main.app` 을 띄우는
+     테스트가 임포트 시점에 죽지 않게). 아래 `os.environ.setdefault` 블록.
+  2. `shared` 설치본이 스테일하면 리포의 `apps/shared` 를 sys.path 앞에 둔다(이하 설명).
 
 `shared` 는 non-editable path 의존성(`pyproject.toml`: shared = { path = "../shared" })이라 venv 안에
 **복사본**으로 깔린다. 그래서 `apps/shared` 를 고쳐도 재설치 전까지 테스트는 옛 코드를 임포트한다.
@@ -23,8 +26,49 @@ API 테스트 부트스트랩 — `shared` 설치본이 스테일하면 리포�
 이 저장소 CI(.github/workflows/build_docker.yml)는 pytest 를 돌리지 않는다 — 로컬 실행이 유일하다.
 """
 import importlib.util
+import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
+from sqlalchemy import event
+
+# `main`/`app.config` 를 임포트하는 테스트용 더미 env. `app.config.Settings` 는 필수 값이 많아
+#   임포트 시점에 죽으므로 **테스트 모듈 임포트보다 먼저** 채워져 있어야 한다(conftest 는 항상
+#   먼저 로드된다). `setdefault` 라 실제 값이 있는 환경은 덮지 않는다.
+#   ⚠️ 이게 로컬 `.env` 문제를 해결해 주진 않는다 — env var 가 .env 보다 우선이긴 하지만,
+#      .env 에 현재 Settings 가 모르는 **옛 키**가 남아 있으면 `extra_forbidden` 으로 여전히
+#      임포트가 죽는다. 그래서 config 를 아예 임포트하지 않는 테스트도 있다
+#      (`test_product_voucher_tickets.py` 의 `product_api` 픽스처).
+#   (`test_admin_grant.py` 는 모듈 안에 같은 블록을 갖고 있다 — 이제 중복이지만 setdefault 라
+#    무해하고, 그 파일 단독 실행 시의 자기완결성을 남겨 둔다.)
+for _key, _value in {
+    "API_BACKOFFICE_JWT_SECRET": "test-secret",
+    "API_SEASON_PASS_HOST": "http://localhost",
+    "API_SEASON_PASS_JWT_SECRET": "x",
+    "API_GOOGLE_CREDENTIAL": "x",
+    "API_APPLE_CREDENTIAL": "x",
+    "API_APPLE_BUNDLE_ID": "x",
+    "API_APPLE_KEY_ID": "x",
+    "API_APPLE_ISSUER_ID": "x",
+    "API_APPLE_VALIDATION_URL": "http://localhost",
+    "API_STRIPE_SECRET_KEY": "x",
+    "API_STRIPE_TEST_SECRET_KEY": "x",
+    "API_CLOUDFLARE_API_KEY": "x",
+    "API_CLOUDFLARE_ASSETS_K_ZONE_ID": "x",
+    "API_CLOUDFLARE_ASSETS_ZONE_ID": "x",
+    "API_CLOUDFLARE_EMAIL": "x@example.com",
+    "API_R2_ACCESS_KEY_ID": "x",
+    "API_R2_ACCOUNT_ID": "x",
+    "API_R2_BUCKET": "x",
+    "API_R2_SECRET_ACCESS_KEY": "x",
+    "API_S3_BUCKET": "x",
+    "API_CLOUDFRONT_DISTRIBUTION_1": "x",
+    "API_CLOUDFRONT_DISTRIBUTION_2": "x",
+    "API_REDEEM_API_BASE_URL": "http://localhost",
+}.items():
+    os.environ.setdefault(_key, _value)
 
 _repo_shared = Path(__file__).resolve().parents[2] / "shared"
 
@@ -65,3 +109,33 @@ if _installed_root is not None:
             " 영구 해결은 `cd apps/api && poetry install`.",
             file=sys.stderr,
         )
+
+
+@pytest.fixture
+def count_select():
+    """
+    블록 안에서 나간 SELECT 수를 세는 컨텍스트매니저 팩토리. N+1 회귀를 숫자로 못박는 용도.
+
+    `count_select(engine, table="product_voucher_grant")` 처럼 테이블을 주면 그 테이블을 건드린
+    SELECT 만 센다 — 엔드포인트에는 측정 대상과 무관한 선행 lazy load(예: `price_list`)가 있어서
+    전체 수를 세면 보증하려는 것과 다른 걸 재게 된다.
+    """
+
+    @contextmanager
+    def _count(engine, table: str = ""):
+        counter = {"n": 0}
+
+        def _before(conn, cursor, statement, parameters, context, executemany):
+            if not statement.lstrip().upper().startswith("SELECT"):
+                return
+            if table and table not in statement:
+                return
+            counter["n"] += 1
+
+        event.listen(engine, "before_cursor_execute", _before)
+        try:
+            yield counter
+        finally:
+            event.remove(engine, "before_cursor_execute", _before)
+
+    return _count
