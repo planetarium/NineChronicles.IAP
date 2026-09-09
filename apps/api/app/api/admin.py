@@ -31,7 +31,7 @@ from shared.models.product import (
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.schemas.message import SendGrantMessage
-from shared.schemas.product import ProductSchema
+from shared.schemas.product import AdminProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
 from shared.utils.address import format_addr
 from shared.utils.alert import send_slack_alert
@@ -93,7 +93,10 @@ router = APIRouter(
 
 class PaginatedProductResponse(BaseModel):
     total: int
-    items: List[ProductSchema]
+    # (PLD-1575) 유저용 `ProductSchema` 가 아니라 admin 전용 서브클래스를 쓴다 —
+    #   `point_shop_grantable`(포인트 전용 상품 여부)이 상품 목록에서 보여야 한다.
+    #   유저용 응답(`GET /api/product`)은 `ProductSchema` 그대로라 이 필드가 나가지 않는다.
+    items: List[AdminProductSchema]
 
 
 class ImportProductsRequest(BaseModel):

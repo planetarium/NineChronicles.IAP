@@ -144,6 +144,26 @@ class ProductSchema(SimpleProductSchema):
         return self
 
 
+# (PLD-1575) `AdminProductSchema` 의 설계 근거. docstring 이 아니라 주석에 둔다 — 응답 모델의
+#   docstring 은 공개 `openapi.json` 의 스키마 description 으로 나간다.
+#
+# **유저용 `ProductSchema` 에 필드를 직접 넣지 않는 이유**: 그건 게임 클라·현금 웹샵·포탈이 받는
+#   유저용 응답 스키마다(`GET /api/product`). 필드를 늘리면 그대로 클라 계약이 바뀌고, "이 상품을
+#   영수증 없이 무상 발행할 수 있나"는 유저가 알 필요 없는 내부 정보다.
+# 반대로 백오피스 상품 목록(`GET /admin/products`)에는 **있어야** 한다. 없으면 포인트 전용 상품을
+#   구분할 방법이 `GET /admin/point-shop-products`(켜진 것만 나오는 감사용 별도 목록)뿐이라,
+#   상품 목록 화면에서는 눈에 보이지 않는다.
+#   ⚠️ 이건 **서버 선행 작업**이다. 백오피스(9c-backoffice) 의 `ProductResponse` DTO 에 대응
+#      필드가 없고 역직렬화가 모르는 멤버를 조용히 버리므로, 이 변경만으로 화면이 바뀌지는
+#      않는다(하위호환은 안전). DTO·UI 추가는 후속 티켓.
+class AdminProductSchema(ProductSchema):
+    """백오피스 전용 상품 스키마 = 유저용 `ProductSchema` + 운영 플래그."""
+
+    # ORM Product 에 컬럼이 있으므로 `model_validate(product)` 로 채워진다. 기본값 False 는
+    #   컬럼 없는 객체를 검증할 때의 fail-safe — 화이트리스트 밖이 안전한 쪽이다.
+    point_shop_grantable: bool = False
+
+
 class CategorySchema(BaseSchema):
     name: str
     order: int
