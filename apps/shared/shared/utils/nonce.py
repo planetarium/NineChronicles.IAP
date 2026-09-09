@@ -13,17 +13,24 @@ nonce 는 `receipt.nonce` 에 결합돼 있었다. `send_product_task` 는
 노드 `nextTxNonce` 만으로는 부족한 이유는 그대로다 — 스테이징된 tx 가 블록에 들어가기 전까지
 노드는 옛 nonce 를 돌려주므로, 아직 확정 안 된 DB 의 nonce 를 함께 봐야 한다.
 
-## 남은 경합
-`pick_nonce()` 를 호출하고 그 nonce 로 행을 커밋하기까지의 창은 여전히 존재한다. 그래서
-`lock_planet_nonce()`(PG 자문 잠금, 트랜잭션 스코프)로 감쌀 수 있게 했다. 무영수증 경로는
-이 잠금을 쓰고 **채번 직후 커밋**한다. 영수증 경로(`send_product`)는 잠금을 쓰지 않는다 —
-KMS 서명까지 한 트랜잭션에 묶여 있어 잠금 유지 시간이 길어지고, 실패 시 커밋 시점 의미가
-바뀌기 때문이다(라이브 결제 흐름이라 최소 변경 원칙). 즉 이 모듈은 **체계적 충돌**
-(두 카운터가 항상 같은 값을 발급)을 없애고, 기존에도 있던 동시성 창은 그대로 남는다.
+## 경합 — 잠금은 **두 경로가 모두** 잡아야 의미가 있다
+`pick_nonce()` 로 값을 고르고 그 행을 커밋하기까지가 위험 구간이다. 한쪽만 잠그면 상대는
+"커밋 전이라 안 보이는" 같은 값을 그대로 고른다 → 둘 중 하나가 영구 스테이징 실패한다.
+그래서 두 경로 모두 `lock_planet_nonce()` 를 잡는다:
+
+  · 무영수증 경로: 잠금 → DB max 재조회 → 조건부 UPDATE(nonce 선점) → **즉시 커밋**(잠금 해제)
+  · 영수증 경로(`send_product`): 잠금 → DB max 재조회 → nonce 지정 → tx 서명 → 커밋(잠금 해제)
+
+잠금은 트랜잭션 스코프라 커밋/롤백에서 자동 해제된다. 영수증 경로는 KMS 서명까지 들고 있어
+같은 행성의 채번이 서명 시간만큼 직렬화되지만(이전에도 send_product 동시 실행끼리 경합이
+있었다), 그 값이 IAP 처리량(초당 1건 미만)을 제약하지는 않는다. 커밋 순서는 바뀌지 않는다.
+
+노드 조회(nextTxNonce)는 **잠금 밖**에서 한다 — 네트워크 호출을 잠금 안에 두면 상대 경로가
+그 시간만큼 막힌다. 값이 조금 스테일해도 DB max 가 미확정 nonce 를 덮으므로 안전하다.
 """
 
 import zlib
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.receipt import Receipt
@@ -57,22 +64,6 @@ def max_db_nonce(sess, planet_id: PlanetKey) -> Optional[int]:
     )
     candidates = [x for x in (receipt_max, grant_max) if x is not None]
     return max(candidates) if candidates else None
-
-
-def max_db_nonce_by_planet(sess) -> Dict[bytes, int]:
-    """행성별 DB 최대 nonce 전체(receipt·grant_outbox 통합). `send_product` 의 배치 조회용."""
-    result: Dict[bytes, int] = {}
-    for model in (Receipt, GrantOutbox):
-        rows = sess.execute(
-            select(model.planet_id, func.max(model.nonce)).group_by(model.planet_id)
-        ).all()
-        for planet_id, nonce in rows:
-            if nonce is None:
-                continue
-            key = as_bytes(planet_id)
-            if nonce > result.get(key, -1):
-                result[key] = nonce
-    return result
 
 
 def pick_nonce(node_next_nonce: int, db_max_nonce: Optional[int]) -> int:

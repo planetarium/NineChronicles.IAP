@@ -256,6 +256,55 @@ class TestCreateGrant:
         assert memo["shop"]["order"] == "order-1"
         assert memo["shop"]["campaign"] == "x"
 
+    def test_supplied_memo_cannot_override_order_marker(self, client, sess):
+        """호출자가 다른 order 를 넣어도 externalRef 의 주문키가 이긴다(역추적 불변식)."""
+        product = make_product(sess)
+
+        client.post(
+            GRANT_URL,
+            json=payload(product, memo={"shop": {"order": "someone-elses-order"}}),
+        )
+
+        row = sess.scalar(select(GrantOutbox))
+        assert json.loads(row.memo)["shop"]["order"] == "order-1"
+
+    def test_concurrent_insert_falls_back_to_200(
+        self, client, sess, monkeypatch, worker
+    ):
+        """
+        UNIQUE(external_ref) 경합 — 같은 ref 가 동시에 들어와 commit 이 터지는 분기.
+
+        "기존 행 조회"가 None 을 돌려주도록 한 번만 속여, 실제 UNIQUE 위반을 만든다.
+        """
+        product = make_product(sess)
+        client.post(GRANT_URL, json=payload(product))
+        real_scalar = sess.scalar
+        calls = {"n": 0}
+
+        def blind_first_lookup(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:  # 멱등 조회만 속인다(그 다음 상품 조회는 정상)
+                return None
+            return real_scalar(*args, **kwargs)
+
+        monkeypatch.setattr(sess, "scalar", blind_first_lookup)
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 200
+        assert resp.json()["externalRef"] == "shop:order-1"
+        monkeypatch.undo()
+        assert len(sess.scalars(select(GrantOutbox)).all()) == 1
+        assert worker.call_count == 1  # 경합 패자는 큐에 다시 넣지 않는다
+
+    def test_grant_is_not_queued_behind_paid_purchases(self, client, sess, worker):
+        """무상 지급은 결제 지급 큐(product_queue)에 섞지 않는다."""
+        product = make_product(sess)
+
+        client.post(GRANT_URL, json=payload(product))
+
+        assert worker.call_args.kwargs["queue"] == "background_job_queue"
+
     def test_addresses_are_normalized(self, client, sess):
         product = make_product(sess)
 

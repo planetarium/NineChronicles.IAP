@@ -10,7 +10,7 @@ from shared.models.product import Product
 from shared.models.receipt import Receipt
 from shared.schemas.message import SendProductMessage
 from shared.utils.grant import build_claim_data, create_grant_items_tx, promo_multiplier
-from shared.utils.nonce import as_bytes, max_db_nonce_by_planet, pick_nonce
+from shared.utils.nonce import as_bytes, lock_planet_nonce, max_db_nonce, pick_nonce
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, selectinload, scoped_session, sessionmaker
 
@@ -219,10 +219,9 @@ def handle(message: SendProductMessage):
         # 지연 초기화를 지원하는 gql_dict 생성
         gql_dict = LazyGQLDict(config.converted_gql_url_map, config.headless_jwt_secret)
 
-        # 행성별 DB 최대 nonce. **receipt 만 보면 안 된다** — 무영수증 지급(grant_outbox, PLD-1564)이
-        #   같은 KMS 지갑으로 tx 를 내므로, 한쪽만 보면 같은 nonce 를 두 번 발급해 둘 중 하나가
-        #   영구 스테이징 실패한다. 통합 규칙은 shared.utils.nonce 한 곳에 있다.
-        db_nonce_dict = max_db_nonce_by_planet(sess)
+        # DB 최대 nonce 는 채번 직전에 **자문 잠금 안에서** 읽는다(아래 max_db_nonce).
+        #   핸들러 진입 시 한 번 읽어두면 그 사이 커밋된 다른 경로(무영수증 지급 grant_outbox,
+        #   PLD-1564 — 같은 KMS 지갑을 쓴다)의 nonce 를 놓쳐 같은 값을 두 번 발급한다.
         nonce_dict = {}
         target_list = []
 
@@ -276,11 +275,20 @@ def handle(message: SendProductMessage):
 
                 try:
                     planet_key = as_bytes(receipt.planet_id)
+                    # 노드 조회는 잠금 밖에서(네트워크 호출).
+                    node_nonce = nonce_dict.get(planet_key)
+                    if node_nonce is None:
+                        node_nonce = get_nonce_from_node()
+                    # 행성별 자문 잠금 — 이 트랜잭션의 commit(바로 아래 create_tx 다음)에서 풀린다.
+                    #   무영수증 지급(grant_outbox)이 **같은 지갑**으로 tx 를 내므로, 이쪽이
+                    #   잠그지 않으면 "둘 다 같은 값을 골라 하나가 영구 스테이징 실패" 하는 창이
+                    #   남는다(손해 보는 쪽이 결제면 유상 미지급). 잠금은 커밋 순서를 바꾸지 않는다.
+                    lock_planet_nonce(sess, receipt.planet_id)
                     receipt.nonce = pick_nonce(
-                        # current handling nonce (or nonce in blockchain)
-                        nonce_dict.get(planet_key, get_nonce_from_node()),
-                        # DB stored nonce (receipt + grant_outbox)
-                        db_nonce_dict.get(planet_key),
+                        node_nonce,
+                        # DB stored nonce (receipt + grant_outbox) — 잠금 안에서 읽어야
+                        #   방금 커밋된 다른 경로의 nonce 를 본다.
+                        max_db_nonce(sess, planet_key),
                     )
                 except (ValueError, Exception) as e:
                     # 노드에서 nonce를 가져오지 못함

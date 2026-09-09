@@ -23,8 +23,8 @@ from shared.models.base import Base
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import FungibleAssetProduct, FungibleItemProduct, Product
 from shared.utils.grant import build_claim_data, promo_multiplier
-from shared.utils.nonce import max_db_nonce, max_db_nonce_by_planet, pick_nonce
-from sqlalchemy import create_engine, text
+from shared.utils.nonce import max_db_nonce, pick_nonce
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -225,29 +225,67 @@ class TestProcessGrant:
         assert result == "already granted"
         assert stage.calls == []
 
-    def test_retry_increments_attempts_then_fails(self, sess):
+    def test_stage_failure_retries_without_terminating(self, sess):
+        """
+        nonce 를 잡은 뒤의 실패는 **종단시키지 않는다**. 종단시키면 (1) 채번한 nonce 가 결번으로
+        남아 지급 지갑 전체가 멈추고, (2) 스테이징 응답만 유실된 경우 "환급했는데 지급됨" 이 된다.
+        """
         product = make_product(sess)
         row = make_outbox(sess, product)
         account = FakeAccount()
         stage = stage_fail()
 
-        for expected in range(1, gt.MAX_ATTEMPTS):
+        for expected in range(1, gt.MAX_ATTEMPTS + 3):
             gt.process_grant(
                 sess, row, account=account, next_nonce_fn=nonce_fn(), stage_fn=stage
             )
             assert row.attempts == expected
-            assert row.status == GrantStatus.PENDING
+            assert row.status == GrantStatus.PENDING  # MAX 를 넘겨도 PENDING
             assert "stage failed" in row.last_error
 
-        # MAX 번째 실패에서 종단(FAILED) — 포탈이 이걸 보고 환급한다.
-        gt.process_grant(
-            sess, row, account=account, next_nonce_fn=nonce_fn(), stage_fn=stage
-        )
-        assert row.attempts == gt.MAX_ATTEMPTS
-        assert row.status == GrantStatus.FAILED
         # 서명은 처음 한 번뿐 — 재시도는 같은 tx 를 다시 넣기만 한다(같은 nonce·같은 tx id).
         assert account.signed == 1
         assert len(set(stage.calls)) == 1
+        # nonce 를 물고 있는 행은 MAX 를 넘겨도 계속 재시도 대상이어야 한다(결번 방지).
+        assert row.id in [r.id for r in sess.scalars(gt.pending_dispatch_query()).all()]
+        # 침전은 알림으로 사람에게 도달한다.
+        assert gt.stalled_count(sess) == 1
+
+    def test_pre_nonce_failure_terminates_after_max_attempts(self, sess):
+        """nonce 를 잡기 전 실패(노드 nonce 조회 불가)는 MAX 소진 시 종단 — 결번이 없으므로 안전."""
+        product = make_product(sess)
+        row = make_outbox(sess, product)
+
+        def boom(planet_id, address):
+            raise ValueError("node down")
+
+        for _ in range(gt.MAX_ATTEMPTS):
+            gt.process_grant(
+                sess,
+                row,
+                account=FakeAccount(),
+                next_nonce_fn=boom,
+                stage_fn=stage_ok(),
+            )
+
+        assert row.attempts == gt.MAX_ATTEMPTS
+        assert row.status == GrantStatus.FAILED
+        assert row.nonce is None
+        assert row.tx is None
+
+    def test_terminal_failed_row_is_not_redriven(self, sess):
+        """종단 FAILED 는 재구동하지 않는다 — 포탈이 이미 환급했을 수 있다."""
+        product = make_product(sess)
+        row = make_outbox(sess, product, status=GrantStatus.FAILED)
+        stage = stage_ok()
+
+        result = gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage
+        )
+
+        assert result == "already failed"
+        assert stage.calls == []
+        assert row.tx is None
 
     def test_product_without_components_fails_terminally(self, sess):
         product = make_product(sess, with_item=False)
@@ -296,6 +334,73 @@ class TestProcessGrant:
         assert row.status == GrantStatus.PENDING
         assert row.attempts == 1
         assert row.tx is None
+        assert row.nonce is None
+
+
+class TestConcurrentDispatch:
+    """
+    같은 행을 두 워커가 동시에 집어도 **온체인 tx 는 1건**이어야 한다.
+    (`iap.send_grant` 는 background 큐, beat 는 별 프로세스 — 실제로 겹칠 수 있다.)
+    """
+
+    def test_second_worker_discards_its_tx(self, sess, engine):
+        product = make_product(sess)
+        row = make_outbox(sess, product)
+        other_sess = Session(engine)
+        try:
+            other_row = other_sess.scalar(
+                select(GrantOutbox).where(GrantOutbox.id == row.id)
+            )
+            stage_a, stage_b = stage_ok("0xtx-A"), stage_ok("0xtx-B")
+
+            # A 가 먼저 서명·스테이징까지 끝낸다.
+            gt.process_grant(
+                sess,
+                row,
+                account=FakeAccount(),
+                next_nonce_fn=nonce_fn(7),
+                stage_fn=stage_a,
+            )
+            # B 는 A 커밋 전 스냅샷(tx None)을 들고 뒤늦게 진입한다.
+            result_b = gt.process_grant(
+                other_sess,
+                other_row,
+                account=FakeAccount(),
+                next_nonce_fn=nonce_fn(7),
+                stage_fn=stage_b,
+            )
+
+            assert result_b in ("nonce claimed by another worker", "already staged")
+            assert stage_b.calls == []  # B 의 tx 는 체인에 나가지 않는다
+            other_sess.refresh(other_row)
+            assert other_row.tx_id == "0xtx-A"
+        finally:
+            other_sess.close()
+
+    def test_tx_claim_loser_does_not_stage(self, sess, engine):
+        """nonce 는 이미 잡힌 상태에서 tx 서명만 겹친 경우 — 먼저 쓴 tx 만 스테이징된다."""
+        product = make_product(sess)
+        row = make_outbox(sess, product, nonce=7)
+        with Session(engine) as other:
+            other.execute(
+                text(
+                    "UPDATE grant_outbox SET tx = 'aabb', tx_status = 'CREATED'"
+                    " WHERE id = :id"
+                ),
+                {"id": row.id},
+            )
+            other.commit()
+        account = FakeAccount()
+        stage = stage_ok()
+
+        result = gt.process_grant(
+            sess, row, account=account, next_nonce_fn=nonce_fn(7), stage_fn=stage
+        )
+
+        assert result == "tx claimed by another worker"
+        assert account.signed == 1  # 서명은 했지만
+        assert stage.calls == []  # 체인에는 안 나간다
+        assert row.tx == "aabb"  # 먼저 쓴 tx 가 남는다
 
 
 class TestTrackGrant:
@@ -346,6 +451,39 @@ class TestTrackGrant:
         assert row.attempts == 1
         # 재스테이징 대상으로 다시 잡혀야 한다.
         assert row.id in [r.id for r in sess.scalars(gt.pending_dispatch_query()).all()]
+
+    def test_invalid_restage_reuses_same_tx(self, sess):
+        """멤풀 탈락 후 재스테이징은 **같은 tx**여야 한다(새 서명·새 nonce 금지)."""
+        row = self._staged_row(sess)
+        tx_before, nonce_before = row.tx, row.nonce
+        gt.track_grant(sess, row, status_fn=lambda r: (TxStatus.INVALID, "[]"))
+        account = FakeAccount()
+        stage = stage_ok(tx_id="0xtx-2")
+
+        gt.process_grant(
+            sess, row, account=account, next_nonce_fn=nonce_fn(999), stage_fn=stage
+        )
+
+        assert row.tx == tx_before
+        assert row.nonce == nonce_before
+        assert account.signed == 0  # 재서명하지 않는다
+        assert stage.calls == [tx_before]
+
+    def test_headless_staging_maps_to_staged(self, sess):
+        """헤드리스의 STAGING 은 우리 STAGED 로 매핑 — 정상 대기가 경고로 새지 않게."""
+        row = self._staged_row(sess)
+
+        def fake_status(r):
+            # fetch_tx_status 의 매핑 규칙만 확인(네트워크는 타지 않는다)
+            raw = "STAGING"
+            assert raw in gt._PENDING_CHAIN_STATUSES
+            return TxStatus.STAGED, "[]"
+
+        result = gt.track_grant(sess, row, status_fn=fake_status)
+
+        assert result == "STAGED"
+        assert row.status == GrantStatus.PENDING
+        assert row.attempts == 0
 
     def test_unknown_status_changes_nothing(self, sess):
         row = self._staged_row(sess)
@@ -404,7 +542,6 @@ class TestNonceSharing:
         sess.commit()
 
         assert max_db_nonce(sess, PlanetID.ODIN.value) == 41
-        assert max_db_nonce_by_planet(sess)[PlanetID.ODIN.value] == 41
         # 다른 행성은 섞이지 않는다.
         assert max_db_nonce(sess, PlanetID.HEIMDALL.value) is None
 
@@ -413,15 +550,32 @@ class TestNonceSharing:
         assert pick_nonce(50, 41) == 50  # 체인이 앞서면 노드 값
         assert pick_nonce(3, None) == 3  # DB 에 아무것도 없으면 노드 값 그대로
 
-    def test_assign_nonce_uses_db_max(self, sess):
+    def test_claim_nonce_uses_db_max(self, sess):
         product = make_product(sess)
         make_outbox(sess, product, external_ref="shop:old", nonce=100)
         row = make_outbox(sess, product, external_ref="shop:new")
 
-        nonce = gt.assign_nonce(sess, row, FakeAccount(), next_nonce_fn=nonce_fn(5))
+        assert gt.claim_nonce(sess, row, FakeAccount(), next_nonce_fn=nonce_fn(5))
 
-        assert nonce == 101
         assert row.nonce == 101
+
+    def test_claim_nonce_loses_to_concurrent_claim(self, sess, engine):
+        """다른 워커가 먼저 채번했으면 선점 실패 → 호출자는 물러난다(중복 tx 방지)."""
+        product = make_product(sess)
+        row = make_outbox(sess, product)
+
+        def steal(planet_id, address):
+            # 노드 조회 시점에 다른 세션이 먼저 nonce 를 박는다.
+            with Session(engine) as other:
+                other.execute(
+                    text("UPDATE grant_outbox SET nonce = 55 WHERE id = :id"),
+                    {"id": row.id},
+                )
+                other.commit()
+            return 7
+
+        assert gt.claim_nonce(sess, row, FakeAccount(), next_nonce_fn=steal) is False
+        assert row.nonce == 55  # 남의 값을 그대로 둔다
 
 
 class TestSharedGrantBuilder:

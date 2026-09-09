@@ -1559,7 +1559,9 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     merged: Dict[str, Any] = dict(memo) if memo else {}
     shop = merged.get("shop")
     if isinstance(shop, dict):
-        merged["shop"] = {**canonical, **shop}
+        # canonical 이 **뒤**여야 한다 — 호출자가 shop.order 를 다른 값으로 보내도 externalRef 의
+        #   주문키가 이긴다. 순서를 뒤집으면 "memo 만 보고 externalRef 복원" 불변식이 깨진다.
+        merged["shop"] = {**shop, **canonical}
     else:
         merged["shop"] = canonical
     serialized = json.dumps(merged, ensure_ascii=False)
@@ -1653,7 +1655,11 @@ def create_grant(
     )
     try:
         send_to_worker(
-            "iap.send_grant", SendGrantMessage(external_ref=row.external_ref).model_dump()
+            "iap.send_grant",
+            SendGrantMessage(external_ref=row.external_ref).model_dump(),
+            # 결제 지급 큐(product_queue)에 무상 지급을 섞지 않는다 — 이벤트로 몰릴 때
+            #   유상 결제 지급이 뒤로 밀리면 안 된다.
+            queue="background_job_queue",
         )
     except Exception as e:  # noqa: BLE001
         # 큐 발행 실패로 요청을 깨지 않는다 — 행은 이미 커밋됐고 beat(`iap.grant_track`)가
