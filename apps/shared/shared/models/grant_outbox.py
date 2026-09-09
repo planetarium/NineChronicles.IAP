@@ -32,8 +32,11 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
     주문 참조) **언제**(`created_at`/`granted_at`) **무엇을**(`product_id`,
     `avatar_addr`/`planet_id`, `tx_id`) 지급했는지가 남는다. `memo` 는 체인 tx 에 실제로 실린
     문자열 원본이라 온체인 값과 대조할 수 있다.
-    (호출자 신원은 admin JWT 에 subject 클레임이 없어 여기 남기지 않는다 — `external_ref`
-     네임스페이스가 현재의 유일한 출처 표시다. 후속 과제.)
+
+    호출자 신원은 admin JWT 에 subject 클레임이 없어 이 테이블에 별도 컬럼으로 두지 않는다.
+    대신 **`external_ref` 네임스페이스가 등록된 출처 식별자**다(PLD-1575: 허용 네임스페이스
+    목록을 설정으로 강제하고, 등록 밖 네임스페이스는 400 으로 끊는다 — app/grant_guard.py).
+    그래서 `shop:` 접두어는 관례가 아니라 계약이고, 행만 봐도 어느 출처가 요청했는지 남는다.
     """
 
     __tablename__ = "grant_outbox"
@@ -92,4 +95,7 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
     __table_args__ = (
         # 미완료(PENDING) 폴링용 — voucher_grant_outbox 의 ix_..._status 선례와 같다.
         Index("ix_grant_outbox_status", "status"),
+        # (PLD-1575) 머니 가드의 시간창 카운트(`created_at >= now - 1h/1d`)용. 이 카운트는
+        #   **요청 경로**에서 매번 돌기 때문에 풀스캔이면 지급 API 지연이 행 수에 비례한다.
+        Index("ix_grant_outbox_created_at", "created_at"),
     )

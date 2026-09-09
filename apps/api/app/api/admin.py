@@ -34,6 +34,7 @@ from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
 from shared.utils.address import format_addr
+from shared.utils.alert import send_slack_alert
 from sqlalchemy import Date, and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
@@ -41,6 +42,14 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.celery import send_to_worker
 from app.config import config
 from app.dependencies import session
+from app.grant_guard import (
+    GrantGuardViolation,
+    enforce_grant_guards,
+    limits_from_settings,
+    namespace_of,
+    should_alert,
+    validate_point_shop_grantable_eligible,
+)
 from app.utils import verify_token
 from app.utils.apple import get_tx_ids
 from app.utils.import_utils import (
@@ -1219,15 +1228,25 @@ def get_product_sales(
     sess=Depends(session),
 ):
     """
-    메인넷(오딘, 헤임달) 플래닛별 월간 토큰 지급량 집계
+    메인넷(오딘, 헤임달) 플래닛별 월간 **결제 기반** 토큰 판매량 집계
 
-    지정한 연/월 동안 VALID 상태의 영수증을 기준으로,
+    지정한 연/월 동안 VALID 상태의 **영수증(`receipt`)** 을 기준으로,
     grant_items tx와 동일한 ticker 포맷(FAV__{ticker}, Item_NT_{sheet_item_id})으로
-    플래닛별 토큰 총 지급량을 반환합니다.
+    플래닛별 판매 토큰량을 반환합니다.
     날짜 필터는 UTC 기준이며, DB의 created_at(KST)을 UTC로 변환하여 비교합니다.
 
     시즌패스 계열(google_sku에 "pass" 포함) 영수증은 실제 지급을 IAP가 아닌
     SeasonPass 서비스가 담당하므로 IAP 통계에서 제외됩니다.
+
+    ⚠️ **"온체인 총 발행량"이 아니다.** (PLD-1564) 영수증 없는 지급(`grant_outbox` —
+    포탈 포인트샵의 무상 지급)은 `receipt` 행을 만들지 않아 이 집계에 **포함되지 않는다**.
+    매출·정산 리포트로는 이게 맞다 — 무상 지급을 매출로 세면 정산이 오염된다(그래서 지급
+    아웃박스를 receipt 와 분리했다: shared/models/grant_outbox.py). 발행량 관점의 수치가
+    필요하면 `grant_outbox`(status=GRANTED) 를 따로 합산해야 한다.
+
+    TODO(PLD-1575): 발행량 집계가 필요해지면 **별 엔드포인트**로 만들 것. 이 응답에 무상
+    지급을 더하면 같은 필드가 매출과 발행량을 동시에 뜻하게 되고, 이 값을 매출로 읽는
+    기존 소비자(백오피스 리포트)가 조용히 틀린다.
     """
     utc_start = datetime(year, month, 1)
     utc_end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -1443,6 +1462,93 @@ def delete_product_voucher_grant(grant_id: int, sess=Depends(session)):
     return {"deleted": True, "id": grant_id}
 
 
+# ── (PLD-1575) 포인트샵 지급 화이트리스트 admin ────────────────────────────────
+#   `POST /admin/grant` 로 지급할 수 있는 상품 목록(= product.point_shop_grantable).
+#   상품 등록의 정상 경로는 CSV import(`point_shop_grantable` 컬럼)지만, 시트 한 바퀴 없이
+#   한 상품만 켜고/끄는 운영 수단이 필요하다 — voucher 매핑이 CSV + CRUD 를 함께 둔 것과 같다.
+#   ⚠️ 이 엔드포인트도 라우터 레벨 인증 그대로다(per-endpoint scope 는 후속).
+
+
+class PointShopProductItem(BaseModel):
+    product_id: int
+    name: str
+    product_type: Optional[str]
+    active: bool
+    point_shop_grantable: bool
+    updated_at: Optional[str]
+
+
+class UpsertPointShopGrantableRequest(BaseModel):
+    product_id: int
+    grantable: bool = True
+
+
+@router.get("/point-shop-products", response_model=List[PointShopProductItem])
+def list_point_shop_products(sess=Depends(session)):
+    """
+    현재 화이트리스트(= 무상 지급 가능 상품) 전체.
+
+    **켜진 것만** 돌려준다 — 전체 상품 목록은 `GET /admin/products` 가 있고, 여기서 알고 싶은
+    건 "지금 민팅 가능한 물건이 무엇인가"이기 때문이다(감사용 짧은 목록).
+    """
+    rows = sess.scalars(
+        select(Product)
+        .where(Product.point_shop_grantable.is_(True))
+        .order_by(desc(Product.id))
+    ).all()
+    return [
+        PointShopProductItem(
+            product_id=row.id,
+            name=row.name,
+            product_type=(
+                row.product_type.name if row.product_type is not None else None
+            ),
+            active=bool(row.active),
+            point_shop_grantable=bool(row.point_shop_grantable),
+            updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        )
+        for row in rows
+    ]
+
+
+@router.put("/point-shop-products")
+def upsert_point_shop_grantable(
+    request: UpsertPointShopGrantableRequest, sess=Depends(session)
+):
+    """
+    상품 1건의 화이트리스트 플래그 on/off.
+
+    - `grantable=true` 는 현금 상품(IAP)·시즌패스 SKU 에 걸 수 없다(400) — 무상 발행 대상이
+      아니다. 같은 검사가 CSV import 와 지급 시점에도 있다(플래그 스테일 방어).
+    - prod 에서 상한(`API_GRANT_MAX_*`)이 미주입이면 켜는 것 자체를 막는다 — 켜자마자
+      상한 없는 발행 창이 열리는 fail-open 을 만들지 않는다(voucher C3-lite 게이트와 같은 규칙).
+    - `grantable=false`(끄기)는 언제나 허용한다. 킬스위치를 게이트 뒤에 두면 안 된다.
+    """
+    product = sess.get(Product, request.product_id)
+    if not product:
+        raise HTTPException(
+            status_code=404, detail=f"product {request.product_id} not found"
+        )
+    if request.grantable:
+        validate_point_shop_grantable_eligible(
+            product.id, product.product_type, product.google_sku
+        )
+        missing = limits_from_settings(config).missing()
+        if missing and config.is_production:
+            raise HTTPException(
+                status_code=400,
+                detail=f"prod 에선 지급 상한 미주입 상태로 화이트리스트를 켤 수 없습니다: {missing}",
+            )
+    product.point_shop_grantable = request.grantable
+    sess.commit()
+    logger.info(
+        "point shop whitelist updated",
+        product_id=product.id,
+        grantable=request.grantable,
+    )
+    return {"product_id": product.id, "point_shop_grantable": request.grantable}
+
+
 # ── (PLD-1564) 영수증 없는 범용 지급 API ─────────────────────────────────────────
 #   포탈 포인트샵(무상 포인트 소모)이 온체인 아이템 지급을 요청하는 경로.
 #   계약 정본은 포탈(PLD-1563)과 공유하는 "포탈 ↔ IAP 지급 계약 v1". 필드명(camelCase)·상태값·
@@ -1573,6 +1679,37 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     return serialized
 
 
+def report_grant_violation(
+    violation: GrantGuardViolation, request: GrantRequestSchema
+) -> None:
+    """
+    (PLD-1575) 가드 위반 감사 로그 + Slack 알림.
+
+    로그는 **항상** 남기고(who/what/when 감사 근거) Slack 만 사유별로 스로틀한다 —
+    도배 방지가 목적이지 은폐가 아니다. 알림 실패는 무시한다(거절 판정은 이미 정해졌다).
+    """
+    namespace = namespace_of(request.external_ref)
+    logger.warning(
+        "grant rejected by guard",
+        reason=violation.reason,
+        status_code=violation.status_code,
+        detail=violation.detail,
+        namespace=namespace,
+        external_ref=request.external_ref,
+        product_id=request.product_id,
+        avatar_addr=request.avatar_address,
+        planet_id=request.planet_id,
+    )
+    if not should_alert(f"{violation.reason}:{namespace}"):
+        return
+    send_slack_alert(
+        config.iap_alert_webhook_url,
+        f":no_entry: [IAP grant guard] {violation.reason} ({config.stage})\n"
+        f"externalRef=`{request.external_ref}` productId={request.product_id}"
+        f" avatar=`{request.avatar_address}`\n{violation.detail}",
+    )
+
+
 @router.post("/grant", response_model=GrantSchema, status_code=201)
 def create_grant(
     request: GrantRequestSchema, response: Response, sess=Depends(session)
@@ -1585,7 +1722,11 @@ def create_grant(
     - **201**: 새 아웃박스 행 생성 + 워커 큐 발행
     - **200**: 같은 `externalRef` 재요청 — **새 tx 를 만들지 않고** 기존 행을 그대로 반환
       (그래서 409 를 쓰지 않는다. 포탈은 재시도해도 안전하다)
-    - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo)
+    - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo) 또는
+      **머니 가드 위반**(화이트리스트 밖 상품·발행량/빈도 상한 초과·미등록 네임스페이스).
+      가드 위반은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면 포탈이 환급을
+      트리거하는데, 지급이 시작되지도 않았기 때문이다(계약 v1.1).
+    - **503**: prod 인데 머니 가드 임계가 미주입(운영 실수 — 포탈은 재시도하면 된다)
     - **401/403**: 인증(라우터 레벨)
 
     `status` 는 이 시점에 항상 `PENDING` 이다 — 실제 온체인 확정은 워커가 추적하며,
@@ -1620,6 +1761,22 @@ def create_grant(
             detail=f"product {request.product_id} has no grantable components",
         )
 
+    # (PLD-1575) 머니 가드 — 화이트리스트·발행량·빈도·네임스페이스. **INSERT 전에** 끝난다
+    #   (위반 시 행이 없어야 포탈이 환급을 오판하지 않는다). 멱등 재요청은 위(200)에서 이미
+    #   빠져나갔으므로, 상한을 나중에 낮춰도 진행 중인 주문의 폴링이 깨지지 않는다.
+    #   시간창 카운트는 아래 commit 과 **같은 트랜잭션**이어야 유효하다(advisory lock 구간).
+    try:
+        namespace = enforce_grant_guards(
+            sess,
+            external_ref=request.external_ref,
+            product=product,
+            limits=limits_from_settings(config),
+            is_production=config.is_production,
+        )
+    except GrantGuardViolation as violation:
+        report_grant_violation(violation, request)
+        raise
+
     row = GrantOutbox(
         external_ref=request.external_ref,
         product_id=product.id,
@@ -1646,8 +1803,11 @@ def create_grant(
         return _grant_schema(existing)
     sess.refresh(row)
 
+    # 감사 로그(who/what/when). who = 등록된 external_ref 네임스페이스(admin JWT 에 subject
+    #   클레임이 없어 이게 유일한 출처 식별자다 — PLD-1575 근거는 grant_guard.py 참고).
     logger.info(
         "grant requested",
+        namespace=namespace,
         external_ref=row.external_ref,
         product_id=row.product_id,
         avatar_addr=row.avatar_addr,

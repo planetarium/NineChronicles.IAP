@@ -69,6 +69,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import main  # noqa: E402  — 실 FastAPI 앱(에러 핸들러·라우터 등록 포함)
+from app import grant_guard  # noqa: E402
 from app.api import admin  # noqa: E402
 from app.dependencies import session as session_dep  # noqa: E402
 from app.utils import verify_token  # noqa: E402
@@ -114,7 +115,37 @@ def worker(monkeypatch):
 
 
 @pytest.fixture
-def client(sess, worker):
+def alert(monkeypatch):
+    """
+    (PLD-1575) 가드 위반 Slack 알림 대역. 호출 횟수 = 채널에 뜬 알림 수.
+
+    프로세스 전역 스로틀 상태를 테스트마다 비운다 — 안 그러면 앞 테스트의 알림 때문에
+    뒤 테스트가 조용해진다(사유 키가 겹칠 때).
+    """
+    grant_guard._alert_sent_at.clear()
+    mock = MagicMock(return_value=True)
+    monkeypatch.setattr(admin, "send_slack_alert", mock)
+    return mock
+
+
+@pytest.fixture
+def limits(monkeypatch):
+    """
+    가드 임계값 주입 헬퍼. `limits(max_grants_per_hour=2, ...)` 로 설정만 바꾼다.
+
+    가드는 요청마다 `config` 를 읽으므로(`limits_from_settings`) 설정 객체를 monkeypatch 하면
+    된다 — 재시작이나 앱 재조립이 필요 없다. monkeypatch 가 테스트 끝에 원복한다.
+    """
+
+    def _set(**kwargs):
+        for key, value in kwargs.items():
+            monkeypatch.setattr(admin.config, key, value)
+
+    return _set
+
+
+@pytest.fixture
+def client(sess, worker, alert):
     main.app.dependency_overrides[session_dep] = lambda: sess
     main.app.dependency_overrides[verify_token] = lambda: None
     with TestClient(main.app) as test_client:
@@ -123,14 +154,28 @@ def client(sess, worker):
     main.app.dependency_overrides.clear()
 
 
-def make_product(sess, *, with_item=True, name="point-shop-item") -> Product:
+def make_product(
+    sess,
+    *,
+    with_item=True,
+    name="point-shop-item",
+    grantable=True,
+    product_type=ProductType.FREE,
+    google_sku=None,
+    item_amount=10,
+    fav_amount=None,
+) -> Product:
+    """
+    지급 대상 상품 1건. 기본값은 **가드를 통과하는** 포인트샵 상품
+    (`point_shop_grantable=True` · 비현금 유형) — PLD-1575 이후 이게 정상 요청의 전제다.
+    """
     product = Product(
         name=name,
         order=1,
-        google_sku=f"sku_{name}",
+        google_sku=google_sku if google_sku is not None else f"sku_{name}",
         apple_sku=f"sku_{name}",
         apple_sku_k=f"sku_{name}_k",
-        product_type=ProductType.FREE,
+        product_type=product_type,
         active=True,
         rarity=ProductRarity.NORMAL,
         size=ProductAssetUISize.ONE_BY_ONE,
@@ -138,6 +183,7 @@ def make_product(sess, *, with_item=True, name="point-shop-item") -> Product:
         l10n_key="L10N_P",
         mileage=0,
         discount=0,
+        point_shop_grantable=grantable,
     )
     sess.add(product)
     sess.commit()
@@ -148,7 +194,17 @@ def make_product(sess, *, with_item=True, name="point-shop-item") -> Product:
                 sheet_item_id=300010,
                 name="AP Potion",
                 fungible_item_id="Item_NT_500000",
-                amount=10,
+                amount=item_amount,
+            )
+        )
+        sess.commit()
+    if fav_amount is not None:
+        sess.add(
+            FungibleAssetProduct(
+                product_id=product.id,
+                ticker="FAV__CRYSTAL",
+                decimal_places=18,
+                amount=fav_amount,
             )
         )
         sess.commit()
@@ -465,3 +521,304 @@ class TestAuth:
             f"{GRANT_URL}/shop:x", headers={"Authorization": "Bearer bogus"}
         )
         assert resp.status_code == 401
+
+
+# ── (PLD-1575) 머니 가드 ───────────────────────────────────────────────────────
+#   지급 API 는 `GrantItems` force-grant(잔액 없이 발행)를 여는 엔드포인트다. 여기 테스트는
+#   "무엇을·얼마나·누가"의 세 축이 실제로 닫혀 있는지, 그리고 **거절이 계약을 깨지 않는지**
+#   (행 없음·FAILED 없음·멱등 재요청 불변)를 못박는다.
+
+WHITELIST_URL = "/api/admin/point-shop-products"
+
+
+def rows_of(sess):
+    return sess.scalars(select(GrantOutbox)).all()
+
+
+class TestProductWhitelist:
+    def test_non_whitelisted_product_is_400_without_row(
+        self, client, sess, worker, alert
+    ):
+        product = make_product(sess, grantable=False, name="not-listed")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "point_shop_grantable" in json.dumps(resp.json())
+        assert rows_of(sess) == []  # 아웃박스에 아무 행도 안 남는다(FAILED 포함)
+        assert worker.call_count == 0
+        assert alert.call_count == 1
+
+    def test_cash_product_is_400_even_if_flag_is_stale(self, client, sess, alert):
+        """플래그가 켜진 채 현금 상품(IAP)으로 바뀐 경우 — 지급 시점 재검증이 잡는다."""
+        product = make_product(
+            sess, grantable=True, product_type=ProductType.IAP, name="cash"
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "현금 상품" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+        assert alert.call_count == 1
+
+    def test_season_pass_sku_is_400(self, client, sess):
+        product = make_product(
+            sess, grantable=True, google_sku="g_pkg_couragepass01", name="cp"
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "시즌패스" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+
+
+class TestIssuanceCaps:
+    def test_fav_units_over_cap_is_400(self, client, sess, limits, alert):
+        limits(grant_max_fav_units_per_request=10)
+        product = make_product(sess, with_item=False, fav_amount=100, name="fav-big")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "FAV 발행량" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+        assert alert.call_count == 1
+
+    def test_fav_units_at_cap_passes(self, client, sess, limits):
+        limits(grant_max_fav_units_per_request=10)
+        product = make_product(sess, with_item=False, fav_amount=10, name="fav-ok")
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+    def test_item_units_over_cap_is_400(self, client, sess, limits):
+        limits(grant_max_item_units_per_request=5)
+        product = make_product(sess, item_amount=6, name="item-big")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "아이템 발행량" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+
+    def test_item_cap_does_not_leak_into_fav_cap(self, client, sess, limits):
+        """FAV 와 아이템은 따로 센다 — 물약 상한이 NCG 발행 상한이 되면 가드가 무의미하다."""
+        limits(grant_max_item_units_per_request=1000, grant_max_fav_units_per_request=1)
+        product = make_product(sess, item_amount=1000, fav_amount=2, name="mixed")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "FAV 발행량" in json.dumps(resp.json(), ensure_ascii=False)
+
+    def test_hourly_total_cap_stops_further_grants(self, client, sess, limits, alert):
+        limits(grant_max_grants_per_hour=2)
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:o-{i}")
+            ).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [201, 201, 400]
+        assert len(rows_of(sess)) == 2  # 초과분은 행을 만들지 않는다
+        assert alert.call_count == 1
+        assert "상한 초과" in json.dumps(alert.call_args[0][1], ensure_ascii=False)
+
+    def test_daily_total_cap_stops_further_grants(self, client, sess, limits):
+        limits(grant_max_grants_per_day=1)
+        product = make_product(sess)
+
+        first = client.post(GRANT_URL, json=payload(product, external_ref="shop:d-1"))
+        second = client.post(GRANT_URL, json=payload(product, external_ref="shop:d-2"))
+
+        assert (first.status_code, second.status_code) == (201, 400)
+        assert len(rows_of(sess)) == 1
+
+    def test_idempotent_repeat_is_not_rate_limited(self, client, sess, limits, worker):
+        """
+        상한을 넘긴 뒤에도 **같은 externalRef 재요청은 200** 이어야 한다.
+
+        계약: 재요청 = 200 + 현재 상태. 진행 중 주문이 뒤늦은 상한 변경으로 400 이 되면
+        포탈 폴링이 깨지고, 이미 온체인에 나간 지급을 실패로 오판한다.
+        """
+        limits(grant_max_grants_per_hour=1)
+        product = make_product(sess)
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+        repeat = client.post(GRANT_URL, json=payload(product))
+
+        assert repeat.status_code == 200
+        assert repeat.json()["status"] == "PENDING"
+        assert len(rows_of(sess)) == 1
+        assert worker.call_count == 1
+
+
+class TestNamespaceRegistry:
+    def test_unregistered_namespace_is_400(self, client, sess, alert, worker):
+        product = make_product(sess)
+
+        resp = client.post(GRANT_URL, json=payload(product, external_ref="promo:1"))
+
+        assert resp.status_code == 400
+        assert "네임스페이스" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+        assert worker.call_count == 0
+        assert alert.call_count == 1
+
+    def test_missing_namespace_is_400(self, client, sess):
+        product = make_product(sess)
+
+        resp = client.post(GRANT_URL, json=payload(product, external_ref="order-1"))
+
+        assert resp.status_code == 400
+        assert rows_of(sess) == []
+
+    def test_registered_extra_namespace_passes(self, client, sess, limits):
+        limits(grant_allowed_namespaces="shop, promo")
+        product = make_product(sess)
+
+        resp = client.post(GRANT_URL, json=payload(product, external_ref="promo:1"))
+
+        assert resp.status_code == 201
+
+    def test_kill_switch_blocks_every_namespace(self, client, sess, limits):
+        limits(grant_allowed_namespaces="-")
+        product = make_product(sess)
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert rows_of(sess) == []
+
+    def test_namespace_rate_limit_is_per_namespace(self, client, sess, limits):
+        limits(
+            grant_allowed_namespaces="shop,promo",
+            grant_max_grants_per_namespace_per_minute=1,
+        )
+        product = make_product(sess)
+
+        first = client.post(GRANT_URL, json=payload(product, external_ref="shop:a"))
+        second = client.post(GRANT_URL, json=payload(product, external_ref="shop:b"))
+        other = client.post(GRANT_URL, json=payload(product, external_ref="promo:a"))
+
+        # 같은 네임스페이스만 막힌다 — 한 호출자의 버스트가 다른 출처를 굶기지 않는다.
+        assert (first.status_code, second.status_code, other.status_code) == (
+            201,
+            400,
+            201,
+        )
+        assert len(rows_of(sess)) == 2
+
+
+class TestProductionFailClosed:
+    def test_prod_without_limits_is_503_and_alerts(self, client, sess, limits, alert):
+        """
+        prod 인데 상한 미주입 = 운영 실수 → 503(재시도 가능). 400 이면 포탈이 주문을 영구
+        실패로 처리(포인트 환급)하는데, 실제로는 아무 일도 안 일어났다.
+        """
+        limits(stage="production")
+        product = make_product(sess)
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 503
+        assert rows_of(sess) == []
+        assert alert.call_count == 1
+        assert "limits_unset" in json.dumps(alert.call_args[0][1], ensure_ascii=False)
+
+    def test_prod_with_limits_grants(self, client, sess, limits):
+        limits(
+            stage="production",
+            grant_max_fav_units_per_request=100,
+            grant_max_item_units_per_request=100,
+            grant_max_grants_per_hour=10,
+            grant_max_grants_per_day=100,
+            grant_max_grants_per_namespace_per_minute=5,
+        )
+        product = make_product(sess)
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+
+class TestViolationAlerting:
+    def test_repeat_violation_alerts_once(self, client, sess, alert):
+        """알림 스로틀 — 루프 도는 호출자가 Slack 을 도배하지 못한다(거절은 매번 한다)."""
+        product = make_product(sess, grantable=False, name="loop")
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:x-{i}")
+            ).status_code
+            for i in range(5)
+        ]
+
+        assert statuses == [400] * 5
+        assert alert.call_count == 1
+        assert rows_of(sess) == []
+
+
+class TestWhitelistAdmin:
+    def test_put_then_get_lists_only_grantable(self, client, sess):
+        listed = make_product(sess, grantable=False, name="to-list")
+        make_product(sess, grantable=False, name="stays-off")
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": listed.id, "grantable": True}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "product_id": listed.id,
+            "point_shop_grantable": True,
+        }
+        # 응답 키는 기존 admin 관례(snake_case) — camelCase 계약은 포탈이 읽는 grant 응답만이다.
+        items = client.get(WHITELIST_URL).json()
+        assert [i["product_id"] for i in items] == [listed.id]
+        assert items[0]["point_shop_grantable"] is True
+
+    def test_put_grantable_on_cash_product_is_400(self, client, sess):
+        product = make_product(
+            sess, grantable=False, product_type=ProductType.IAP, name="cash-put"
+        )
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": True}
+        )
+
+        assert resp.status_code == 400
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_turning_off_is_always_allowed_even_in_prod(self, client, sess, limits):
+        """킬스위치는 게이트 뒤에 두지 않는다 — prod 상한 미주입이어도 끄기는 통과."""
+        limits(stage="production")
+        product = make_product(sess, grantable=True, name="killswitch")
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": False}
+        )
+
+        assert resp.status_code == 200
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_prod_without_limits_cannot_turn_on(self, client, sess, limits):
+        limits(stage="production")
+        product = make_product(sess, grantable=False, name="prod-on")
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": True}
+        )
+
+        assert resp.status_code == 400
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_unknown_product_is_404(self, client, sess):
+        resp = client.put(WHITELIST_URL, json={"product_id": 999999, "grantable": True})
+
+        assert resp.status_code == 404

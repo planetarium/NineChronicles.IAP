@@ -127,6 +127,19 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         nullable=True,
         doc="Mileage price to buy this product. Only meaningful for `MILEAGE` type product.",
     )
+    point_shop_grantable = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        doc=(
+            "(PLD-1575) 영수증 없는 지급 API(POST /api/admin/grant, 포탈 포인트샵)로 지급할 수 있는"
+            " 상품인가. **기본 False = 화이트리스트 밖**이라 상품이 새로 생겨도 지급되지 않는다."
+            " 그 엔드포인트는 잔액 없이 발행되는 grant_items force-grant 라, 이 플래그가"
+            " '무엇을 발행할 수 있나'의 유일한 목록이다(app/grant_guard.py). 현금 상품(IAP)·"
+            " 시즌패스 SKU 에는 켤 수 없고, 켜는 경로는 상품 CSV import 와 백오피스 CRUD 둘 다."
+        ),
+    )
 
     # For Assets
     rarity = Column(

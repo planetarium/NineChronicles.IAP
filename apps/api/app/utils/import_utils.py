@@ -18,6 +18,10 @@ from shared.models.product_voucher_grant import ProductVoucherGrant
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.grant_guard import (
+    parse_point_shop_grantable,
+    validate_point_shop_grantable_eligible,
+)
 from app.voucher_validation import (
     parse_voucher_columns,
     validate_product_voucher_eligible,
@@ -25,6 +29,10 @@ from app.voucher_validation import (
 
 # (C1b) CSV의 voucher (type, count) 고정 쌍 슬롯 수. voucher_ticket_type_1..N / voucher_count_1..N.
 VOUCHER_SLOTS = 3
+
+# (PLD-1575) 포인트샵 지급 화이트리스트 컬럼. **선택 컬럼**이다 — 없는 시트도 그대로 임포트된다
+#   (파서는 app/grant_guard.py 의 3상태 parse_point_shop_grantable).
+POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
 
 
 def parse_boolean(value: str) -> bool:
@@ -98,6 +106,24 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
+
+    # (PLD-1575) 포인트샵 지급 화이트리스트. 값이 있을 때만 csv_data 에 넣는다 —
+    #   키가 없으면 compare_and_update_product 가 이 컬럼을 아예 건드리지 않고(유지),
+    #   신규 상품이면 모델 default(False)로 들어간다(화이트리스트 밖에서 시작 = fail-closed).
+    grantable = parse_point_shop_grantable(row.get(POINT_SHOP_GRANTABLE_COLUMN))
+    if grantable is not None:
+        if grantable:
+            # 켜는 경우에만 상품유형 검사(끄는 건 항상 허용 — 킬스위치를 막으면 안 된다).
+            #   이 행이 **쓰려는** product_type/sku 기준이다(같은 임포트에서 유형이 바뀔 수 있다).
+            try:
+                validate_point_shop_grantable_eligible(
+                    csv_data["id"], csv_data["product_type"], csv_data["google_sku"]
+                )
+            except HTTPException as e:
+                raise ValueError(f"product {csv_data['id']}: {e.detail}")
+        # prod 상한 미주입 게이트는 여기 두지 않는다 — 지급 시점이 fail-closed(503)라
+        #   플래그만 켜져도 발행 창이 열리지 않는다(voucher C3-lite 는 그 반대라 게이트가 필요했다).
+        csv_data[POINT_SHOP_GRANTABLE_COLUMN] = grantable
 
     # For internal environment, adjust open_timestamp if it's in the future
     current_time_utc = datetime.now(timezone.utc)

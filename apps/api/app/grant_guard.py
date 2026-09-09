@@ -1,0 +1,418 @@
+"""
+(PLD-1575) 지급 API 머니 가드 — 상품 화이트리스트 · 발행 상한 · 네임스페이스 등록제/레이트리밋.
+
+`POST /api/admin/grant`(PLD-1564)는 `GrantItems` **force-grant** 를 admin JWT 하나로 노출한다.
+지급 계정 잔액이 없어도 발행되므로 사실상 민터 권한이고, 온체인이라 회수가 불가능하다.
+토큰 유출이나 호출측(포탈) 버그 하나가 "임의 상품 × 임의 아바타 × 무제한" 이 되는 구조여서
+**무엇을(상품) · 얼마나(수량·빈도) · 누가(네임스페이스)** 세 축을 요청 시점에 닫는다.
+
+`voucher_validation.py`(PLD-1472 의 C1/C3-lite/C6 머니 가드)의 형제 모듈이고 같은 규칙을 따른다:
+
+  · **순수 모듈** — `app.config` 를 임포트하지 않는다(상한·허용목록을 인자로 받는다).
+    테스트가 env 없이 임계값을 주입할 수 있고, 거꾸로 `app.config` 가 이 모듈의 파서를
+    부팅 검증에 쓸 수 있다(순환 임포트 방지).
+  · 위반은 FastAPI 예외로 표면화 — 호출부(admin.py)가 그대로 전파한다.
+  · 얼로우리스트(deny-by-default) — 상품유형·네임스페이스가 추가돼도 기본이 차단이다.
+
+## 가드 위반은 400 이고 **아웃박스 행을 만들지 않는다**
+계약 v1.1: 아웃박스에 FAILED 행이 남으면 포탈이 **자동 환급**(SHOP_REFUND)을 트리거한다.
+가드 위반은 "지급이 시작되지도 않았다"는 뜻이라 환급 대상이 아니고, 포탈이 주문을 그대로
+실패 처리하면 된다. 그래서 모든 검사가 INSERT **전에** 끝나고, 이 모듈은 행을 만들지 않는다.
+같은 이유로 nonce 규약(채번 후 실패를 FAILED 로 종단하지 않는다)도 건드리지 않는다 —
+가드는 nonce 채번(워커) 훨씬 앞단이다.
+
+## 설정 미주입(prod)은 400 이 아니라 503
+상한이 안 박힌 prod 는 **운영 실수**지 호출자 잘못이 아니다. 400 을 주면 포탈이 주문을 영구
+실패로 처리(=포인트 환급)하는데, 실제로는 아무 일도 안 일어난 상태다. 503 이면 포탈이
+재시도하고, 행이 없으니 재시도가 안전하다(멱등키도 아직 안 쓰였다).
+"""
+import re
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Dict, List, Optional, Tuple, Union
+
+from fastapi import HTTPException
+from shared.enums import ProductType
+from shared.models.grant_outbox import GrantOutbox
+from shared.models.product import SEASON_PASS_SKU_TOKEN, Product
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
+
+# 네임스페이스(external_ref 의 `:` 앞부분) 허용 문자. `external_ref` 패턴의 부분집합이고
+#   `:` 를 뺀다(구분자). LIKE prefix 카운트에 그대로 쓰이므로 `%`/`_` 도 배제된다.
+NAMESPACE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$")
+
+# 허용목록 전체 비활성(킬스위치) 신호. CSV voucher 컬럼의 `-`(전체 제거) 관례와 같은 표기.
+#   빈 문자열을 킬스위치로 쓰지 않는 이유: 오타·미주입과 구분되지 않는다(그건 부팅 실패여야 한다).
+NAMESPACE_DENY_ALL = "-"
+
+# 같은 위반 사유가 반복될 때 Slack 알림·요청 지연을 만들지 않도록 하는 최소 간격(초).
+#   루프 도는 호출자가 초당 수십 건을 던져도 채널은 사유별 1분 1건만 본다.
+ALERT_THROTTLE_SECONDS = 60.0
+
+# 카운트→INSERT 구간을 직렬화하는 PG advisory lock 키(임의 상수, 이 가드 전용).
+GRANT_GUARD_LOCK_KEY = 15751564
+
+
+class GrantGuardViolation(HTTPException):
+    """
+    머니 가드 위반. `status_code` 는 400(호출자 잘못) 또는 503(설정 미주입).
+
+    `reason` 은 알림 스로틀 키 · 감사 로그 필드로 쓰는 안정적인 식별자다(사람이 읽는 문장은
+    `detail`). 계약상 응답 본문 형식은 기존 400 과 같으므로 포탈 클라이언트에 영향이 없다.
+    """
+
+    def __init__(self, status_code: int, reason: str, detail: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.reason = reason
+
+
+def parse_grant_namespaces(raw: Optional[str]) -> frozenset:
+    """
+    쉼표 구분 허용 네임스페이스 목록 → 집합. **fail-closed 파서**: 형식 위반은 ValueError.
+
+    `"shop"` · `"shop, promo"` 처럼 쓴다. `"-"` 단독은 전체 비활성(킬스위치).
+    빈 값/None 은 오류다 — 미주입·오타가 조용히 "전부 허용"이나 "전부 차단"이 되면 안 되고,
+    부팅 시점에 터지는 게 낫다(`app.config` 의 validator 가 이걸 호출한다).
+    """
+    if raw is None:
+        raise ValueError("grant_allowed_namespaces 미설정 — 최소 1개(또는 킬스위치 '-') 필요")
+    tokens = [token.strip() for token in str(raw).split(",")]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        raise ValueError("grant_allowed_namespaces 가 비어 있습니다 — 최소 1개(또는 '-') 필요")
+    if NAMESPACE_DENY_ALL in tokens:
+        if len(tokens) != 1:
+            # '-' 를 다른 값과 섞으면 의도가 모호하다(voucher CSV 의 '-' 규칙과 동일).
+            raise ValueError(
+                f"'{NAMESPACE_DENY_ALL}'(전체 비활성)은 단독으로만 쓸 수 있습니다: {tokens}"
+            )
+        return frozenset()
+    for token in tokens:
+        if not NAMESPACE_PATTERN.match(token):
+            raise ValueError(f"네임스페이스 '{token}' 형식 위반 — {NAMESPACE_PATTERN.pattern}")
+    return frozenset(tokens)
+
+
+# (PLD-1575) 상품 CSV 의 `point_shop_grantable` 컬럼 토큰. 화이트리스트를 **켜는 경로**의
+#   파서도 가드 모듈에 모아 둔다(같은 fail-closed 규칙이고, import_utils 는 이걸 재사용한다).
+GRANTABLE_TRUE_TOKENS = frozenset({"TRUE", "T", "Y", "YES", "1", "O"})
+GRANTABLE_FALSE_TOKENS = frozenset({"FALSE", "F", "N", "NO", "0", "X", "-"})
+
+
+def parse_point_shop_grantable(value: Optional[str]) -> Optional[bool]:
+    """
+    상품 CSV 의 `point_shop_grantable` 셀 → True/False/**None(=변경 없음)**.
+
+    **3상태여야 한다.** "TRUE 아니면 False" 로 읽으면 컬럼이 없는 기존 시트로 임포트할 때마다
+    전 상품의 화이트리스트가 조용히 꺼진다(= 포인트샵 전면 중단). 빈칸·컬럼 부재는 유지고,
+    명시적으로 쓴 값만 반영한다.
+
+    해석 불가 토큰은 ValueError — 머니 플래그라 "모르는 값은 False" 도 위험하다(오타로 꺼져도
+    장애고, 무엇보다 운영자가 켠 줄 알고 방치한다). 임포트를 세우는 쪽이 낫다.
+    """
+    if value is None:
+        return None
+    token = value.strip().upper()
+    if token == "":
+        return None
+    if token in GRANTABLE_TRUE_TOKENS:
+        return True
+    if token in GRANTABLE_FALSE_TOKENS:
+        return False
+    raise ValueError(
+        f"point_shop_grantable '{value}' 를 해석할 수 없습니다"
+        f" (허용: {sorted(GRANTABLE_TRUE_TOKENS)} / {sorted(GRANTABLE_FALSE_TOKENS)}"
+        " / 빈칸=유지)"
+    )
+
+
+def namespace_of(external_ref: str) -> Optional[str]:
+    """`shop:<orderId>` → `shop`. `:` 가 없으면 None(네임스페이스 없음 = 등록제 위반)."""
+    namespace, separator, _ = external_ref.partition(":")
+    return namespace if separator and namespace else None
+
+
+@dataclass(frozen=True)
+class GrantLimits:
+    """
+    가드 임계값 묶음. **하드코딩 금지** — 전부 설정에서 온다(`limits_from_settings`).
+
+    `None` = 미강제. 개발/인터널에서는 그게 편하지만 prod 에서는 fail-open 이므로
+    `missing()` 이 비어야만 지급을 허용한다(`enforce_grant_guards` 의 503 게이트).
+    """
+
+    allowed_namespaces: frozenset
+    max_fav_units_per_request: Optional[int] = None
+    max_item_units_per_request: Optional[int] = None
+    max_grants_per_hour: Optional[int] = None
+    max_grants_per_day: Optional[int] = None
+    max_grants_per_namespace_per_minute: Optional[int] = None
+
+    def missing(self) -> List[str]:
+        """prod 에서 반드시 주입돼야 하는데 비어 있는 항목 이름."""
+        return [
+            name
+            for name in (
+                "max_fav_units_per_request",
+                "max_item_units_per_request",
+                "max_grants_per_hour",
+                "max_grants_per_day",
+                "max_grants_per_namespace_per_minute",
+            )
+            if getattr(self, name) is None
+        ]
+
+
+def limits_from_settings(settings) -> GrantLimits:
+    """
+    `app.config.Settings` → `GrantLimits`. **덕 타이핑**(임포트하지 않는다 — 순환 방지·테스트 용이).
+
+    네임스페이스 파싱은 부팅 시점에 이미 검증됐다(config validator). 여기서 다시 파싱하는 건
+    문자열 하나 split 이라 비용이 없고, 런타임에 값이 바뀌는 경로가 생겨도 가드가 최신을 본다.
+    """
+    return GrantLimits(
+        allowed_namespaces=parse_grant_namespaces(settings.grant_allowed_namespaces),
+        max_fav_units_per_request=settings.grant_max_fav_units_per_request,
+        max_item_units_per_request=settings.grant_max_item_units_per_request,
+        max_grants_per_hour=settings.grant_max_grants_per_hour,
+        max_grants_per_day=settings.grant_max_grants_per_day,
+        max_grants_per_namespace_per_minute=(
+            settings.grant_max_grants_per_namespace_per_minute
+        ),
+    )
+
+
+def _type_name(product_type: Optional[Union[ProductType, str]]) -> str:
+    """ORM enum / 문자열 / None 을 같은 문자열로. voucher_validation 과 같은 방식."""
+    return (getattr(product_type, "name", None) or str(product_type)).strip().upper()
+
+
+def validate_point_shop_grantable_eligible(
+    product_id: int,
+    product_type: Optional[Union[ProductType, str]],
+    google_sku: Optional[str] = None,
+) -> None:
+    """
+    이 상품에 `point_shop_grantable` 을 **켤 수 있는가** — 현금 상품이면 400.
+
+    화이트리스트 플래그 자체가 1차 가드지만, 플래그를 켜는 경로(백오피스 CRUD · CSV import)와
+    지급 경로 **양쪽에서** 이 검사를 돌린다. 이유는 플래그가 스테일해질 수 있기 때문이다:
+    CSV import 는 기존 상품의 `product_type` 을 바꿀 수 있어서, 한 번 켠 플래그가 나중에
+    현금 상품에 붙어 있을 수 있다. 지급 시점 재검증이 그 창을 닫는다.
+
+    얼로우리스트가 아니라 **명시 차단 목록**인 이유: 포인트샵 상품이 어떤 유형으로 등록될지는
+    기획 소관(FREE 가 자연스럽지만 MILEAGE 도 가능)이고, 여기서 좁히면 운영이 막힌다.
+    반드시 막아야 하는 건 "현금이 오간 상품을 무상 발행하는 것"이다. 단 **미지 유형은 차단**한다
+    (ProductType 에 새 유형이 추가돼도 기본이 차단, None·오전달도 조용히 통과하지 않는다).
+    """
+    name = _type_name(product_type)
+    known = {member.name for member in ProductType}
+    if name not in known:
+        raise GrantGuardViolation(
+            400,
+            "product_type_unknown",
+            f"product {product_id} product_type={name} — 알 수 없는 상품유형(포인트샵 지급 불가)",
+        )
+    if name == ProductType.IAP.name:
+        raise GrantGuardViolation(
+            400,
+            "cash_product",
+            f"product {product_id} product_type={name} — 현금 상품은 무상 지급 대상이 아닙니다"
+            " (포인트샵 전용 상품만 허용)",
+        )
+    if google_sku and SEASON_PASS_SKU_TOKEN in google_sku:
+        # 시즌패스는 현금 패스고 지급 주체가 SeasonPass 서비스다 — IAP 가 발행할 물건이 아니다.
+        raise GrantGuardViolation(
+            400,
+            "season_pass_product",
+            f"product {product_id} sku={google_sku} — 시즌패스 상품은 포인트샵 지급 대상이 아닙니다",
+        )
+
+
+def grant_units(product: Product) -> Tuple[Decimal, int]:
+    """
+    이 상품 1건 지급이 발행하는 총량 (FAV 합, 아이템 개수 합).
+
+    FAV(NCG·CRYSTAL 등)와 아이템을 **따로** 센다. 하나로 합치면 상한이 큰 쪽에 맞춰지고
+    (예: 물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다) 가드가 무의미해진다.
+    """
+    fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
+    items = sum((int(row.amount) for row in product.fungible_item_list), 0)
+    return fav, items
+
+
+def _count_since(
+    sess: Session, since: datetime, namespace: Optional[str] = None
+) -> int:
+    """
+    `since` 이후 생성된 아웃박스 행 수(옵션: 네임스페이스 한정).
+
+    상태를 보지 않는다 — PENDING/GRANTED/FAILED 모두 "발행을 시도했다"는 사실이고, 상한의
+    목적은 발행 시도 자체를 묶는 것이다(FAILED 도 nonce·tx 를 소모했을 수 있다).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(GrantOutbox)
+        .where(GrantOutbox.created_at >= since)
+    )
+    if namespace is not None:
+        stmt = stmt.where(
+            GrantOutbox.external_ref.startswith(f"{namespace}:", autoescape=True)
+        )
+    return int(sess.scalar(stmt) or 0)
+
+
+def lock_grant_guard(sess: Session) -> None:
+    """
+    카운트→INSERT 구간을 직렬화한다(PG 전용, 트랜잭션 종료 시 자동 해제).
+
+    DB 카운트 기반 레이트리밋은 그냥 두면 TOCTOU 다 — 동시 요청 2건이 둘 다 "아직 여유 있음"을
+    보고 둘 다 INSERT 한다. advisory **xact** lock 이라 커밋/롤백에서 알아서 풀리고, 잠금 하나로
+    전 네임스페이스를 직렬화한다(락 순서 역전 = 데드락 여지를 없앤다. 포인트샵 주문량에서
+    직렬화 비용은 무의미하다).
+
+    ⚠️ 호출부 계약: 이 잠금 이후의 카운트와 INSERT/commit 이 **같은 트랜잭션**이어야 한다.
+    SQLite(테스트)에는 advisory lock 이 없어 no-op 이다 — 단일 스레드 테스트라 무해하다.
+    """
+    bind = sess.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    sess.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"), {"key": GRANT_GUARD_LOCK_KEY}
+    )
+
+
+def enforce_grant_guards(
+    sess: Session,
+    *,
+    external_ref: str,
+    product: Product,
+    limits: GrantLimits,
+    is_production: bool,
+    now: Optional[datetime] = None,
+) -> str:
+    """
+    지급 요청 1건에 머니 가드 전부를 적용하고 네임스페이스를 돌려준다. 위반은 `GrantGuardViolation`.
+
+    호출 순서 계약:
+      1. **멱등 조회가 먼저다.** 이미 있는 `external_ref` 재요청은 이 함수를 타지 않는다 —
+         이미 tx 가 나갔을 수 있는 주문을 뒤늦은 상한 변경으로 400 으로 만들면 포탈 폴링이
+         깨지고(계약: 재요청 = 200) 지급/환급 판정이 뒤집힌다.
+      2. 값이 싼 검사(설정·네임스페이스·상품·수량)를 먼저, DB 카운트를 마지막에.
+      3. 이 함수가 성공하면 **같은 트랜잭션에서** INSERT+commit 해야 한다(잠금 유효 구간).
+    """
+    now = now or datetime.now(timezone.utc)
+
+    # ── 0) 설정 fail-closed 게이트 ────────────────────────────────────────────
+    if is_production:
+        missing = limits.missing()
+        if missing:
+            raise GrantGuardViolation(
+                503,
+                "limits_unset",
+                f"grant 머니 가드 임계 미설정: {', '.join(missing)}"
+                " — prod 에서는 상한 주입 후에만 지급할 수 있습니다",
+            )
+
+    # ── 1) 호출자 식별: external_ref 네임스페이스 등록제 ─────────────────────
+    namespace = namespace_of(external_ref)
+    if namespace is None:
+        raise GrantGuardViolation(
+            400,
+            "namespace_missing",
+            f"externalRef '{external_ref}' 에 네임스페이스가 없습니다"
+            " — `<namespace>:<orderId>` 형식이어야 합니다",
+        )
+    if namespace not in limits.allowed_namespaces:
+        raise GrantGuardViolation(
+            400,
+            "namespace_not_allowed",
+            f"externalRef 네임스페이스 '{namespace}' 는 등록되지 않았습니다"
+            f" (허용: {sorted(limits.allowed_namespaces) or '없음(전체 비활성)'})",
+        )
+
+    # ── 2) 상품 화이트리스트 ──────────────────────────────────────────────────
+    if not bool(getattr(product, "point_shop_grantable", False)):
+        raise GrantGuardViolation(
+            400,
+            "product_not_whitelisted",
+            f"product {product.id} 는 포인트샵 지급 대상이 아닙니다"
+            " (point_shop_grantable=false — 상품 CSV 나 백오피스에서 켜야 합니다)",
+        )
+    # 플래그 스테일 방어(도커스트링 참고): 켠 뒤에 현금 상품으로 바뀐 경우를 지급 시점에 잡는다.
+    validate_point_shop_grantable_eligible(
+        product.id, product.product_type, product.google_sku
+    )
+
+    # ── 3) 요청 단위 발행량 상한 ──────────────────────────────────────────────
+    fav_units, item_units = grant_units(product)
+    if (
+        limits.max_fav_units_per_request is not None
+        and fav_units > limits.max_fav_units_per_request
+    ):
+        raise GrantGuardViolation(
+            400,
+            "fav_units_exceeded",
+            f"product {product.id} FAV 발행량 {fav_units} > 상한"
+            f" {limits.max_fav_units_per_request}",
+        )
+    if (
+        limits.max_item_units_per_request is not None
+        and item_units > limits.max_item_units_per_request
+    ):
+        raise GrantGuardViolation(
+            400,
+            "item_units_exceeded",
+            f"product {product.id} 아이템 발행량 {item_units} > 상한"
+            f" {limits.max_item_units_per_request}",
+        )
+
+    # ── 4) 시간창 총량 + 네임스페이스 레이트리밋 (경합 안전) ─────────────────
+    windows = (
+        (
+            "per_minute_exceeded",
+            limits.max_grants_per_namespace_per_minute,
+            timedelta(minutes=1),
+            namespace,
+        ),
+        ("per_hour_exceeded", limits.max_grants_per_hour, timedelta(hours=1), None),
+        ("per_day_exceeded", limits.max_grants_per_day, timedelta(days=1), None),
+    )
+    if any(cap is not None for _, cap, _, _ in windows):
+        lock_grant_guard(sess)
+    for reason, cap, window, scope in windows:
+        if cap is None:
+            continue
+        used = _count_since(sess, now - window, namespace=scope)
+        if used >= cap:
+            scope_label = f"네임스페이스 '{scope}'" if scope else "전체"
+            raise GrantGuardViolation(
+                400,
+                reason,
+                f"{scope_label} 지급 건수 상한 초과: 최근 {window} 동안 {used}건 ≥ 상한 {cap}"
+                " — 임계를 올리거나 잠시 후 다시 시도하세요",
+            )
+    return namespace
+
+
+_alert_sent_at: Dict[str, float] = {}
+
+
+def should_alert(key: str, now: Optional[float] = None) -> bool:
+    """
+    같은 키의 알림을 `ALERT_THROTTLE_SECONDS` 에 1회로 제한(프로세스 로컬, best-effort).
+
+    왜 필요한가: 위반 알림을 무조건 보내면 루프 도는 호출자가 Slack 을 도배하고, 더 나쁘게는
+    **요청 경로에서 webhook POST 를 반복**해 API 를 스스로 느리게 만든다. 정확한 분산 스로틀이
+    아니어도 목적(도배 방지)에는 충분하다 — API 는 단일 프로세스로 뜨고(workers=1),
+    감사 근거는 스로틀되지 않는 구조 로그가 남긴다.
+    """
+    now = time.monotonic() if now is None else now
+    last = _alert_sent_at.get(key)
+    if last is not None and now - last < ALERT_THROTTLE_SECONDS:
+        return False
+    _alert_sent_at[key] = now
+    return True
