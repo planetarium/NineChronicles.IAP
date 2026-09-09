@@ -745,8 +745,8 @@ def alert_key(reason: str, namespace: Optional[str], allowed: frozenset) -> str:
     스로틀 dict 무한 증식). 등록된 값만 남기고 나머지는 하나로 접는다.
 
     그래서 아바타 주소도 여기 들어가지 않는다 — 위반은 **행을 만들지 않고도** 발화할 수 있어서
-    (미등록 네임스페이스가 그렇다) 키 카디널리티에 상한이 없다. 반대로 **경고**는 커밋된 행을
-    세야 발화하므로 스코프 값을 키에 넣어도 유한하다(`GrantScope.key` · `scope_alert_key`).
+    (미등록 네임스페이스가 그렇다) 키 카디널리티에 상한이 없다. 경고 쪽 키는 축에 따라 접는
+    단위가 다르고 저장소도 분리돼 있다(`GrantScope.key`/`coarse_key` · `should_warn`).
     """
     label = namespace if namespace in allowed else UNREGISTERED_NAMESPACE_LABEL
     return f"{reason}:{label}"
