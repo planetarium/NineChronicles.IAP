@@ -1,14 +1,27 @@
+import json
 import os
 import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Security, UploadFile
+import structlog
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    Security,
+    UploadFile,
+)
 from fastapi.security import HTTPBearer
-from pydantic import BaseModel
-from shared.enums import PlanetID, ReceiptStatus, Store
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+from shared.enums import GrantStatus, PlanetID, ReceiptStatus, Store
+from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import (
     FungibleAssetProduct,
     FungibleItemProduct,
@@ -17,11 +30,15 @@ from shared.models.product import (
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
+from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
+from shared.utils.address import format_addr
 from sqlalchemy import Date, and_, desc, func, or_, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload, selectinload
 
+from app.celery import send_to_worker
 from app.config import config
 from app.dependencies import session
 from app.utils import verify_token
@@ -48,6 +65,8 @@ from app.voucher_validation import (
     validate_product_voucher_eligible,
     validate_voucher_mapping,
 )
+
+logger = structlog.get_logger(__name__)
 
 security = HTTPBearer()
 
@@ -1422,3 +1441,273 @@ def delete_product_voucher_grant(grant_id: int, sess=Depends(session)):
     sess.delete(row)
     sess.commit()
     return {"deleted": True, "id": grant_id}
+
+
+# ── (PLD-1564) 영수증 없는 범용 지급 API ─────────────────────────────────────────
+#   포탈 포인트샵(무상 포인트 소모)이 온체인 아이템 지급을 요청하는 경로.
+#   계약 정본은 포탈(PLD-1563)과 공유하는 "포탈 ↔ IAP 지급 계약 v1". 필드명(camelCase)·상태값·
+#   HTTP 코드를 임의로 바꾸면 포탈 클라이언트가 깨진다.
+#
+#   왜 `receipt` 가 아니라 `grant_outbox` 인가: 영수증 상태기계·환불 폴링·매출 집계가 모두
+#   "결제가 있었다"를 전제한다. 무상 지급을 섞으면 정산·CS 가 오염되므로 별도 아웃박스를 쓴다
+#   (shared/models/grant_outbox.py 의 docstring 참고).
+#
+#   인증은 라우터 레벨 그대로다(`verify_token` + Bearer) — 별도 스코프 없음. `grant_items` 는
+#   잔액 없이도 발행되는 force-grant 라, 이 토큰을 가진 주체는 사실상 민터 권한을 갖는다.
+#   그래서 아웃박스가 감사 로그를 겸한다(누가/언제/무엇을 — 모델 docstring 참고).
+
+# 멱등키. `shop:<orderId>` 를 상정하지만 네임스페이스는 고정하지 않는다(다른 무상 지급원도 쓸 수 있게).
+#   문자 집합을 제한하는 이유: 로그·URL 경로·memo JSON 에 그대로 실리는 값이라 공백/제어문자를 막는다.
+GRANT_EXTERNAL_REF_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9:_.\-]{0,127}$"
+GRANT_ADDRESS_PATTERN = r"^0x[0-9a-fA-F]{40}$"
+# memo 는 온체인 tx 에 그대로 실린다 — 무제한이면 tx 가 비대해지므로 직렬화 길이를 제한한다.
+GRANT_MEMO_MAX_LEN = 512
+
+
+class GrantStatusFilter(str, Enum):
+    """`GET /admin/grants` 의 status 필터. 값은 `GrantStatus` 이름과 같다."""
+
+    PENDING = "PENDING"
+    GRANTED = "GRANTED"
+    FAILED = "FAILED"
+
+
+class GrantRequestSchema(BaseModel):
+    """
+    지급 요청. JSON 은 camelCase, 파이썬 내부는 snake_case (alias_generator).
+
+    `agentAddress` 는 계약에 없는 **선택** 확장이다 — `grant_items` 는 아바타만 필요하지만,
+    CS 문의가 보통 agent 주소로 들어오기 때문에 받아두면 조회가 쉬워진다. 안 보내도 무방.
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    external_ref: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=GRANT_EXTERNAL_REF_PATTERN,
+        description="멱등키. 포탈 포인트샵은 `shop:<orderId>`. 재요청은 새 tx 를 만들지 않는다",
+    )
+    planet_id: str = Field(..., description="기존 PlanetID 표기(`0x000000000000` 등)")
+    product_id: int = Field(..., gt=0, description="IAP product.id — 구성품→티커 변환은 IAP 책임")
+    avatar_address: str = Field(..., pattern=GRANT_ADDRESS_PATTERN)
+    agent_address: Optional[str] = Field(None, pattern=GRANT_ADDRESS_PATTERN)
+    memo: Optional[Dict[str, Any]] = Field(
+        None, description='체인 memo. 미지정 시 서버가 {"shop":{"order":"<orderId>"}} 를 만든다'
+    )
+
+
+class GrantSchema(BaseModel):
+    """아웃박스 1행의 외부 표현. 상태값은 `GrantStatus`/`TxStatus` 의 **이름**(문자열)."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    external_ref: str
+    status: str
+    tx_id: Optional[str] = None
+    tx_status: Optional[str] = None
+    attempts: int = 0
+    last_error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    granted_at: Optional[datetime] = None
+
+
+class GrantListSchema(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    items: List[GrantSchema]
+    next_cursor: Optional[str] = None
+
+
+def _grant_schema(row: GrantOutbox) -> GrantSchema:
+    return GrantSchema(
+        external_ref=row.external_ref,
+        status=row.status.name,
+        tx_id=row.tx_id,
+        tx_status=row.tx_status.name if row.tx_status is not None else None,
+        attempts=row.attempts or 0,
+        last_error=row.last_error,
+        created_at=row.created_at,
+        granted_at=row.granted_at,
+    )
+
+
+def parse_grant_planet(planet_id: str) -> PlanetID:
+    """planetId 문자열 → PlanetID. 미등록 값은 400(체인 없는 행성으로 tx 를 만들 수 없다)."""
+    try:
+        return PlanetID(bytes(planet_id, "utf-8"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown planetId: {planet_id}")
+
+
+def order_id_of(external_ref: str) -> str:
+    """`shop:<orderId>` → `<orderId>`. 네임스페이스가 없으면 ref 전체를 주문키로 본다."""
+    _, _, order_id = external_ref.partition(":")
+    return order_id or external_ref
+
+
+def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
+    """
+    체인에 실을 memo(JSON 문자열).
+
+    불변식: **memo 만 보고 externalRef 를 복원할 수 있어야 한다.** `shop:<orderId>` 는
+    `{"shop": {"order": "<orderId>"}}` 와 같은 정보다. 호출자가 memo 를 줘도 이 표식은 보장한다
+    (없으면 채워 넣는다) — 안 그러면 체인에서 주문을 역추적할 수 없다.
+    """
+    canonical = {"order": order_id_of(external_ref)}
+    merged: Dict[str, Any] = dict(memo) if memo else {}
+    shop = merged.get("shop")
+    if isinstance(shop, dict):
+        merged["shop"] = {**canonical, **shop}
+    else:
+        merged["shop"] = canonical
+    serialized = json.dumps(merged, ensure_ascii=False)
+    if len(serialized) > GRANT_MEMO_MAX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"memo too long: {len(serialized)} > {GRANT_MEMO_MAX_LEN}",
+        )
+    return serialized
+
+
+@router.post("/grant", response_model=GrantSchema, status_code=201)
+def create_grant(
+    request: GrantRequestSchema, response: Response, sess=Depends(session)
+):
+    """
+    # 영수증 없는 지급 요청 (멱등)
+    ---
+    포탈 포인트샵 주문 1건을 온체인 `grant_items` 대기열(아웃박스)에 넣는다.
+
+    - **201**: 새 아웃박스 행 생성 + 워커 큐 발행
+    - **200**: 같은 `externalRef` 재요청 — **새 tx 를 만들지 않고** 기존 행을 그대로 반환
+      (그래서 409 를 쓰지 않는다. 포탈은 재시도해도 안전하다)
+    - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo)
+    - **401/403**: 인증(라우터 레벨)
+
+    `status` 는 이 시점에 항상 `PENDING` 이다 — 실제 온체인 확정은 워커가 추적하며,
+    포탈은 `GET /admin/grant/{externalRef}` 로 `GRANTED` 를 기다린다.
+    """
+    planet = parse_grant_planet(request.planet_id)
+
+    existing = sess.scalar(
+        select(GrantOutbox).where(GrantOutbox.external_ref == request.external_ref)
+    )
+    if existing is not None:
+        # 멱등 — 요청 본문이 달라도 **기존 행이 진실**이다(이미 tx 가 나갔을 수 있다).
+        response.status_code = 200
+        return _grant_schema(existing)
+
+    # 상품과 구성품 검증. active 여부는 보지 않는다 — 판매 가능성의 권위는 포탈이고,
+    #   비활성 상품이라도 이미 성립한 주문은 지급돼야 한다.
+    product = sess.scalar(
+        select(Product)
+        .options(selectinload(Product.fav_list))
+        .options(selectinload(Product.fungible_item_list))
+        .where(Product.id == request.product_id)
+    )
+    if product is None:
+        raise HTTPException(
+            status_code=400, detail=f"product {request.product_id} not found"
+        )
+    if not (product.fav_list or product.fungible_item_list):
+        # 구성품이 없으면 "성공했는데 아무것도 안 준" tx 가 된다 — 요청 단계에서 끊는다.
+        raise HTTPException(
+            status_code=400,
+            detail=f"product {request.product_id} has no grantable components",
+        )
+
+    row = GrantOutbox(
+        external_ref=request.external_ref,
+        product_id=product.id,
+        planet_id=planet.value,
+        avatar_addr=format_addr(request.avatar_address),
+        agent_addr=(
+            format_addr(request.agent_address) if request.agent_address else None
+        ),
+        memo=build_grant_memo(request.external_ref, request.memo),
+        status=GrantStatus.PENDING,
+    )
+    sess.add(row)
+    try:
+        sess.commit()
+    except IntegrityError:
+        # UNIQUE(external_ref) — 동시 요청이 먼저 넣었다. 멱등 규약대로 기존 행을 200 으로.
+        sess.rollback()
+        existing = sess.scalar(
+            select(GrantOutbox).where(GrantOutbox.external_ref == request.external_ref)
+        )
+        if existing is None:
+            raise
+        response.status_code = 200
+        return _grant_schema(existing)
+    sess.refresh(row)
+
+    logger.info(
+        "grant requested",
+        external_ref=row.external_ref,
+        product_id=row.product_id,
+        avatar_addr=row.avatar_addr,
+        planet_id=request.planet_id,
+    )
+    try:
+        send_to_worker(
+            "iap.send_grant", SendGrantMessage(external_ref=row.external_ref).model_dump()
+        )
+    except Exception as e:  # noqa: BLE001
+        # 큐 발행 실패로 요청을 깨지 않는다 — 행은 이미 커밋됐고 beat(`iap.grant_track`)가
+        #   미완료 PENDING 을 다시 집는다. 여기서 500 을 내면 포탈이 재요청하는데, 그건 200(멱등)이
+        #   돌아올 뿐이라 상황이 나아지지 않는다.
+        logger.warning(
+            "grant queue publish failed (beat will retry)",
+            external_ref=row.external_ref,
+            error=str(e),
+        )
+    return _grant_schema(row)
+
+
+@router.get("/grant/{external_ref:path}", response_model=GrantSchema)
+def get_grant(external_ref: str, sess=Depends(session)):
+    """
+    # 지급 상태 조회
+    ---
+    포탈이 폴링하는 엔드포인트. 없으면 404.
+    """
+    row = sess.scalar(
+        select(GrantOutbox).where(GrantOutbox.external_ref == external_ref)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"grant {external_ref} not found")
+    return _grant_schema(row)
+
+
+@router.get("/grants", response_model=GrantListSchema)
+def list_grants(
+    status: Annotated[
+        Optional[GrantStatusFilter], Query(description="상태 필터. 미지정 시 전체")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[
+        Optional[str], Query(description="이전 응답의 nextCursor(불투명 값)")
+    ] = None,
+    sess=Depends(session),
+):
+    """
+    # 지급 목록 (백오피스 실패 큐)
+    ---
+    최신순 keyset 페이지네이션. `nextCursor` 가 null 이면 마지막 페이지.
+    """
+    stmt = select(GrantOutbox)
+    if status is not None:
+        stmt = stmt.where(GrantOutbox.status == GrantStatus[status.value])
+    if cursor:
+        if not cursor.isdigit():
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {cursor}")
+        stmt = stmt.where(GrantOutbox.id < int(cursor))
+    rows = sess.scalars(stmt.order_by(desc(GrantOutbox.id)).limit(limit)).all()
+    return GrantListSchema(
+        items=[_grant_schema(row) for row in rows],
+        # 마지막 페이지 판별은 "요청한 만큼 다 찼는가" — 딱 맞아떨어지면 빈 다음 페이지가 한 번 나온다.
+        next_cursor=str(rows[-1].id) if len(rows) == limit else None,
+    )
