@@ -45,6 +45,7 @@ for _key, _value in {
     os.environ.setdefault(_key, _value)
 
 import json  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 
 import pytest  # noqa: E402
@@ -120,9 +121,10 @@ def alert(monkeypatch):
     (PLD-1575) 가드 위반 Slack 알림 대역. 호출 횟수 = 채널에 뜬 알림 수.
 
     프로세스 전역 스로틀 상태를 테스트마다 비운다 — 안 그러면 앞 테스트의 알림 때문에
-    뒤 테스트가 조용해진다(사유 키가 겹칠 때).
+    뒤 테스트가 조용해진다(사유 키가 겹칠 때). 위반용/경고용 저장소가 분리돼 있어 둘 다 비운다.
     """
     grant_guard._alert_sent_at.clear()
+    grant_guard._warn_sent_at.clear()
     mock = MagicMock(return_value=True)
     monkeypatch.setattr(admin, "send_slack_alert", mock)
     return mock
@@ -733,6 +735,410 @@ class TestIssuanceCaps:
         assert repeat.json()["status"] == "PENDING"
         assert len(rows_of(sess)) == 1
         assert worker.call_count == 1
+
+
+OTHER_AVATAR = "0x" + "ef" * 20
+
+
+class TestAvatarCaps:
+    """
+    (PLD-1575) **아바타 축** 시간창 상한 — 전역 상한은 총노출을, 이 축은 집중도를 묶는다.
+
+    이 경로는 "유저가 포인트를 냈는지"를 IAP 가 검증하지 못한다(원장은 포탈에 있고 IAP 는
+    잔액을 모른다). 즉 포탈을 신뢰하는 구조라, 포탈 버그 하나가 전역 시간창 전량을 **한
+    아바타에** 쏟아넣을 수 있었다. 그 집중을 막는 게 이 축이다.
+    """
+
+    def test_avatar_hour_cap_stops_further_grants(self, client, sess, limits, alert):
+        limits(grant_max_grants_per_avatar_per_hour=2)
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:av-{i}")
+            ).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [201, 201, 400]
+        assert len(rows_of(sess)) == 2  # 초과분은 행을 만들지 않는다(환급 오발 방지)
+        detail = json.dumps(alert.call_args[0][1], ensure_ascii=False)
+        assert "per_avatar_hour_exceeded" in detail
+        assert "2건 ≥ 상한 2" in detail  # 실제 카운트·상한·창이 문구에 있어야 한다
+
+    def test_avatar_day_cap_stops_further_grants(self, client, sess, limits, worker):
+        limits(grant_max_grants_per_avatar_per_day=1)
+        product = make_product(sess)
+
+        first = client.post(GRANT_URL, json=payload(product, external_ref="shop:ad-1"))
+        second = client.post(GRANT_URL, json=payload(product, external_ref="shop:ad-2"))
+
+        assert (first.status_code, second.status_code) == (201, 400)
+        assert "per_avatar_day_exceeded" in json.dumps(
+            second.json(), ensure_ascii=False
+        )
+        assert len(rows_of(sess)) == 1
+        assert worker.call_count == 1  # 거절된 요청은 워커로 가지 않는다
+
+    def test_one_capped_avatar_does_not_starve_others(self, client, sess, limits):
+        """한 아바타가 자기 상한을 채워도 **다른 아바타는 통과**한다(전역 상한 미달일 때)."""
+        limits(grant_max_grants_per_avatar_per_hour=1, grant_max_grants_per_hour=10)
+        product = make_product(sess)
+
+        mine = client.post(GRANT_URL, json=payload(product, external_ref="shop:m-1"))
+        mine_again = client.post(
+            GRANT_URL, json=payload(product, external_ref="shop:m-2")
+        )
+        other = client.post(
+            GRANT_URL,
+            json=payload(product, external_ref="shop:o-1", avatarAddress=OTHER_AVATAR),
+        )
+
+        assert (mine.status_code, mine_again.status_code, other.status_code) == (
+            201,
+            400,
+            201,
+        )
+        assert len(rows_of(sess)) == 2
+
+    def test_cap_is_case_insensitive_on_the_address(self, client, sess, limits):
+        """
+        같은 아바타를 **대소문자만 바꿔** 보내도 같은 축으로 센다.
+
+        요청 스키마가 `0x[0-9a-fA-F]{40}` 를 허용하므로(대문자 hex 가능) 정규화 없이 문자열
+        비교하면 대문자 한 번으로 아바타 상한을 우회한다 — 저장은 `format_addr`(소문자)라
+        카운트가 0 이 되고, 그건 **조용한 fail-open** 이다.
+        """
+        limits(grant_max_grants_per_avatar_per_hour=1)
+        product = make_product(sess)
+        assert (
+            client.post(
+                GRANT_URL, json=payload(product, external_ref="shop:case-1")
+            ).status_code
+            == 201
+        )
+
+        # `0x` 접두어는 스키마가 소문자로 고정하고, hex 본문만 대문자로 바꾼다.
+        upper = client.post(
+            GRANT_URL,
+            json=payload(
+                product,
+                external_ref="shop:case-2",
+                avatarAddress="0x" + AVATAR[2:].upper(),
+            ),
+        )
+
+        assert upper.status_code == 400
+        assert "per_avatar_hour_exceeded" in json.dumps(
+            upper.json(), ensure_ascii=False
+        )
+        assert len(rows_of(sess)) == 1
+
+    def test_global_cap_still_applies_independently(self, client, sess, limits):
+        """
+        아바타 축이 여유여도 전역 상한은 그대로 막는다. 사유 토큰도 전역 것이어야 한다 —
+        계약 v1.2 의 부류 판정(일시적/영구)이 토큰 문자열에 붙어 있어서, 여러 축이 동시에
+        초과일 때 포탈이 보던 토큰이 바뀌면 안 된다.
+        """
+        limits(grant_max_grants_per_hour=2, grant_max_grants_per_avatar_per_hour=100)
+        product = make_product(sess)
+
+        responses = [
+            client.post(GRANT_URL, json=payload(product, external_ref=f"shop:g-{i}"))
+            for i in range(3)
+        ]
+
+        assert [resp.status_code for resp in responses] == [201, 201, 400]
+        rejected = json.dumps(responses[-1].json(), ensure_ascii=False)
+        assert "per_hour_exceeded" in rejected
+        assert "per_avatar" not in rejected  # 전역 축이 먼저 표면화된다
+        assert len(rows_of(sess)) == 2
+
+    def test_avatar_axis_is_unset_by_default(self, client, sess, limits, alert):
+        """
+        새 설정 미주입 = **그 축 미적용**(503 아님). 다른 축은 그대로 동작한다.
+
+        미주입을 503(limits_unset)으로 만들면 차트에 값이 배선되기 전에 이미지가 뜨는 순간
+        포인트샵 전체가 멈춘다 — 그래서 이 축은 `missing()` 밖이다.
+        """
+        limits(grant_max_grants_per_hour=10)  # 아바타 축은 건드리지 않는다(=None)
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:u-{i}")
+            ).status_code
+            for i in range(5)
+        ]
+
+        assert statuses == [201] * 5  # 한 아바타로 5건 — 아바타 축이 없으니 통과
+        assert alert.call_count == 0
+
+    def test_avatar_pressure_warning_fires_before_rejection(
+        self, client, sess, limits, alert, worker
+    ):
+        """임박 경고도 새 축에서 나가야 한다 — 거절이 시작된 뒤에만 알리면 손쓸 시간이 없다."""
+        limits(grant_max_grants_per_avatar_per_hour=5)
+        product = make_product(sess)
+        seen = {}
+        alert.side_effect = lambda *a, **kw: seen.setdefault(
+            "at_alert", (len(rows_of(sess)), worker.call_count)
+        )
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:aw-{i}")
+            ).status_code
+            for i in range(5)
+        ]
+
+        assert statuses == [201] * 5  # 아직 거절 없음
+        assert alert.call_count == 1  # 80% 지점(5번째 요청, 이미 4건)에서 한 번
+        text = alert.call_args[0][1]
+        assert "per_avatar_hour_exceeded_warn" in text
+        assert "임박" in text
+        # 경고 webhook 은 **커밋·큐 발행 뒤**여야 한다. `on_warning` 은 advisory lock 안에서
+        #   호출되므로 거기서 바로 webhook(타임아웃 3초)을 때리면 전 지급 요청이 잠금 뒤에
+        #   줄을 서고, 큐 발행보다 앞에 두면 Slack 지연이 워커 착수를 늦춘다.
+        #   알림 시점에 (행 5건 커밋됨, 큐 5건 발행됨) 이어야 그 순서가 지켜진 것이다.
+        assert seen["at_alert"] == (5, 5)
+
+    def test_pressure_warnings_are_folded_across_avatars(
+        self, client, sess, limits, alert
+    ):
+        """
+        임박 경고의 스로틀 키는 **아바타를 접는다** — 어느 아바타인지는 문구·로그에 남는다.
+
+        정확 키를 쓰면 상한 근처의 아바타 수만큼 요청 경로에서 webhook POST 가 나가고(아바타
+        30 = POST 30건), 그 키들이 스로틀 저장소를 채워 위반 알림 스로틀까지 밀어낸다.
+        """
+        limits(grant_max_grants_per_avatar_per_hour=5)
+        product = make_product(sess)
+
+        for slot, avatar in enumerate((AVATAR, OTHER_AVATAR)):
+            for i in range(5):
+                resp = client.post(
+                    GRANT_URL,
+                    json=payload(
+                        product,
+                        external_ref=f"shop:fold-{slot}-{i}",
+                        avatarAddress=avatar,
+                    ),
+                )
+                assert resp.status_code == 201
+
+        # 두 아바타가 각자 80% 를 넘겼지만 채널은 1건만 본다(둘 다 문구는 남는다).
+        assert alert.call_count == 1
+        assert AVATAR in alert.call_args[0][1]
+
+    def test_axis_counts_across_planets(self, client, sess, limits):
+        """
+        같은 아바타 주소는 **행성을 가리지 않고** 합산한다(`GrantScope` 는 planet 을 안 본다).
+
+        발행 총량 관점에서 더 엄격한 방향이라 안전한 쪽 오차다 — 뒤집으려면 의도적 결정이
+        필요하므로 여기서 못박는다.
+        """
+        limits(grant_max_grants_per_avatar_per_hour=1)
+        product = make_product(sess)
+        assert (
+            client.post(
+                GRANT_URL, json=payload(product, external_ref="shop:p-1")
+            ).status_code
+            == 201
+        )
+
+        other_planet = client.post(
+            GRANT_URL,
+            json=payload(
+                product,
+                external_ref="shop:p-2",
+                planetId=PlanetID.HEIMDALL.value.decode(),
+            ),
+        )
+
+        assert other_planet.status_code == 400
+        assert len(rows_of(sess)) == 1
+
+    def test_failed_rows_still_consume_the_axis(self, client, sess, limits):
+        """
+        상태를 보지 않는다 — FAILED 행도 축을 소모한다(`_count_since` 의 의도된 설계).
+
+        FAILED 도 nonce·tx 를 썼을 수 있어서 "발행 시도"로 센다. 부작용은 체인 장애 뒤
+        재구매가 창이 지날 때까지 막힐 수 있다는 것이고, 그때 처방은 상한 상향이다.
+        """
+        limits(grant_max_grants_per_avatar_per_hour=1)
+        product = make_product(sess)
+        assert (
+            client.post(
+                GRANT_URL, json=payload(product, external_ref="shop:f-1")
+            ).status_code
+            == 201
+        )
+        row = sess.scalar(
+            select(GrantOutbox).where(GrantOutbox.external_ref == "shop:f-1")
+        )
+        row.status = GrantStatus.FAILED
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product, external_ref="shop:f-2"))
+
+        assert resp.status_code == 400
+        assert "per_avatar_hour_exceeded" in json.dumps(resp.json(), ensure_ascii=False)
+
+    def test_idempotent_repeat_is_not_avatar_rate_limited(
+        self, client, sess, limits, worker, alert
+    ):
+        """
+        새 축을 넣어도 **멱등 재요청은 가드를 타지 않는다**(계약 v1.2 불변식 3).
+
+        이미 접수된 주문이 뒤늦은 상한 변경/새 축에 걸려 400 이 되면 포탈 폴링이 깨지고,
+        이미 온체인에 나간 지급을 실패로 오판한다.
+        """
+        limits(
+            grant_max_grants_per_avatar_per_hour=1,
+            grant_duplicate_alert_window_seconds=60,
+        )
+        product = make_product(sess)
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+        repeat = client.post(GRANT_URL, json=payload(product))
+
+        assert repeat.status_code == 200  # 상한을 이미 채운 아바타라도 재요청은 200
+        assert repeat.json()["status"] == "PENDING"
+        assert len(rows_of(sess)) == 1
+        assert worker.call_count == 1
+        # 재요청은 가드를 타지 않으므로 중복 경고도 나가지 않는다(같은 주문이니 중복이 아니다).
+        assert alert.call_count == 0
+
+
+class TestDuplicateDetection:
+    """
+    (PLD-1575) 의미적 중복은 **경고**다 — 거절하지 않는다.
+
+    포탈이 같은 구매에 새 orderId 를 붙여 재요청하면 `external_ref` 가 달라 IAP 멱등키가
+    걸리지 않는다. 하지만 짧은 창의 같은 `(아바타, 상품)` 반복은 **정상 반복 구매와 구분되지
+    않는다**(1회 뽑기 연속 클릭·같은 팩 2개). 거절하면 정상 구매를 막으므로, 거절은 아바타 축
+    상한이 하고 여기서는 사람이 볼 근거만 만든다.
+    """
+
+    def test_repeat_within_window_passes_with_one_warning(
+        self, client, sess, limits, alert, worker
+    ):
+        limits(grant_duplicate_alert_window_seconds=60)
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:dup-{i}")
+            ).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [201] * 3  # **통과** — 거절은 아바타 축 상한이 한다
+        assert len(rows_of(sess)) == 3
+        assert worker.call_count == 3
+        assert alert.call_count == 1  # 2·3번째가 모두 중복이지만 스로틀로 1건
+        text = alert.call_args[0][1]
+        assert "duplicate_grant_warn" in text
+        assert "새 external_ref" in text  # 운영자가 무엇을 볼지 문구에 있어야 한다
+        assert "shop_order" in text
+
+    def test_warning_key_is_per_avatar_and_product(self, client, sess, limits, alert):
+        """
+        서로 다른 (아바타, 상품)의 중복이 서로를 삼키지 않는다 — 스로틀 키에 둘이 들어간다.
+
+        키를 사유만으로 접으면 먼저 발화한 한 건이 1분간 나머지 전부를 가린다.
+        """
+        limits(grant_duplicate_alert_window_seconds=60)
+        one = make_product(sess, name="dup-a")
+        two = make_product(sess, name="dup-b")
+
+        for ref, prod, avatar in (
+            ("shop:k-1", one, AVATAR),
+            ("shop:k-2", one, AVATAR),  # 경고 1 — (AVATAR, one)
+            ("shop:k-3", two, AVATAR),
+            ("shop:k-4", two, AVATAR),  # 경고 2 — (AVATAR, two)
+            ("shop:k-5", one, OTHER_AVATAR),
+            ("shop:k-6", one, OTHER_AVATAR),  # 경고 3 — (OTHER, one)
+        ):
+            resp = client.post(
+                GRANT_URL,
+                json=payload(prod, external_ref=ref, avatarAddress=avatar),
+            )
+            assert resp.status_code == 201
+
+        assert alert.call_count == 3
+
+    def test_repeat_outside_window_is_silent(self, client, sess, limits, alert):
+        limits(grant_duplicate_alert_window_seconds=60)
+        product = make_product(sess)
+        assert (
+            client.post(
+                GRANT_URL, json=payload(product, external_ref="shop:old-1")
+            ).status_code
+            == 201
+        )
+        # 첫 행을 창 밖으로 밀어낸다(60초 창 / 1시간 전).
+        first = sess.scalar(
+            select(GrantOutbox).where(GrantOutbox.external_ref == "shop:old-1")
+        )
+        first.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product, external_ref="shop:old-2"))
+
+        assert resp.status_code == 201
+        assert alert.call_count == 0  # 창 밖 반복은 중복 신호가 아니다
+
+    def test_detection_is_off_by_default(self, client, sess, alert):
+        """
+        기본값은 **끔**이다 — 정상 반복 구매에서도 발화하는 신호라, 기본으로 켜면 거절 알림과
+        같은 채널이 오탐으로 채워진다(알림 피로 → 진짜 거절을 놓친다).
+        """
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:off-{i}")
+            ).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [201] * 3
+        assert alert.call_count == 0
+
+    @pytest.mark.parametrize("window", [0, None])
+    def test_zero_or_none_window_is_a_kill_switch(
+        self, client, sess, limits, alert, window
+    ):
+        """env 로 끌 때 넣는 값(0)과 미주입(None)이 같게 동작해야 한다."""
+        limits(grant_duplicate_alert_window_seconds=window)
+        product = make_product(sess)
+
+        for i in range(2):
+            assert (
+                client.post(
+                    GRANT_URL, json=payload(product, external_ref=f"shop:z{window}-{i}")
+                ).status_code
+                == 201
+            )
+
+        assert alert.call_count == 0
+
+    def test_different_avatar_same_product_is_not_a_duplicate(
+        self, client, sess, limits, alert
+    ):
+        limits(grant_duplicate_alert_window_seconds=60)
+        product = make_product(sess)
+
+        first = client.post(GRANT_URL, json=payload(product, external_ref="shop:x-1"))
+        other = client.post(
+            GRANT_URL,
+            json=payload(product, external_ref="shop:x-2", avatarAddress=OTHER_AVATAR),
+        )
+
+        assert (first.status_code, other.status_code) == (201, 201)
+        assert alert.call_count == 0
 
 
 class TestNamespaceRegistry:

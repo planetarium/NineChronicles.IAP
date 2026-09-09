@@ -44,12 +44,14 @@ from app.config import config
 from app.dependencies import session
 from app.grant_guard import (
     GrantGuardViolation,
+    GrantWarning,
     alert_key,
     check_fav_tickers,
     enforce_grant_guards,
     limits_from_settings,
     namespace_of,
     should_alert,
+    should_warn,
     validate_point_shop_grantable_eligible,
 )
 from app.utils import verify_token
@@ -1721,22 +1723,30 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     return serialized
 
 
-def warn_grant_pressure(reason: str, message: str) -> None:
+def warn_grant_pressure(warning: GrantWarning) -> None:
     """
-    (PLD-1575) 시간창 상한 **임박** 경고 — 거절이 시작되기 전에 운영자에게 알린다.
+    (PLD-1575) 거절하지 않는 가드 경고 — 시간창 상한 **임박** · 의미적 **중복 의심**.
 
     위반 알림만 있으면 첫 초과 주문이 이미 400(포탈 기준 영구 실패)이다. 상한을 올릴 시간을
-    벌어주는 게 이 경고의 목적이고, 위반 알림과 같은 스로틀을 쓴다(사유 키가 `*_warn`).
+    벌어주는 게 임박 경고의 목적이다(사유가 `*_warn`).
 
-    호출 시점은 **commit 뒤**다(잠금 밖). 이건 정상 응답 경로라 알림이 실패해도 지급을 깨서는
-    안 되고, `send_slack_alert` 가 예외를 올리지 않는 것에 의존한다.
+    스로틀 **키는 가드가 만들어 준다**(`GrantWarning.throttle_key`) — 축마다 접는 단위가
+    다르기 때문이다(임박 경고는 아바타를 접고, 중복 경고는 사건이 (아바타, 상품) 단위라
+    접지 않는다 — `GrantScope.key` / `coarse_key`). 저장소도 위반 알림과 **분리돼 있다**
+    (`should_warn`): 카디널리티가 큰 경고 키가 위반 알림의 스로틀을 지우면 거절 알림 도배가
+    다시 열린다.
+
+    호출 시점은 **commit·큐 발행 뒤**다(잠금 밖). 이건 정상 응답 경로라 알림이 실패해도 지급을
+    깨서는 안 되고, `send_slack_alert` 가 예외를 올리지 않는 것에 의존한다. 큐 발행보다도 뒤인
+    이유: webhook 은 동기 호출(타임아웃 3초)이라 앞에 두면 Slack 지연이 워커 착수를 늦춘다.
     """
-    logger.warning("grant window pressure", reason=reason, detail=message)
-    if not should_alert(reason):
+    logger.warning("grant guard warning", reason=warning.reason, detail=warning.message)
+    if not should_warn(warning.throttle_key):
         return
     send_slack_alert(
         config.iap_alert_webhook_url,
-        f":warning: [IAP grant guard] {reason} ({config.stage})\n{message}",
+        f":warning: [IAP grant guard] {warning.reason} ({config.stage})\n"
+        f"{warning.message}",
     )
 
 
@@ -1789,14 +1799,18 @@ def create_grant(
     - **200**: 같은 `externalRef` 재요청 — **새 tx 를 만들지 않고** 기존 행을 그대로 반환
       (그래서 409 를 쓰지 않는다. 포탈은 재시도해도 안전하다)
     - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo) 또는
-      **머니 가드 위반**(화이트리스트 밖 상품·발행량/빈도 상한 초과·미등록 네임스페이스).
-      가드 위반은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면 포탈이 환급을
-      트리거하는데, 지급이 시작되지도 않았기 때문이다(계약 v1.1).
+      **머니 가드 위반**(화이트리스트 밖 상품·발행량/빈도 상한 초과·**아바타 축 상한 초과**·
+      미등록 네임스페이스). 가드 위반은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면
+      포탈이 환급을 트리거하는데, 지급이 시작되지도 않았기 때문이다(계약 v1.1).
     - **503**: prod 인데 머니 가드 임계가 미주입(운영 실수 — 포탈은 재시도하면 된다)
     - **401/403**: 인증(라우터 레벨)
 
     `status` 는 이 시점에 항상 `PENDING` 이다 — 실제 온체인 확정은 워커가 추적하며,
     포탈은 `GET /admin/grant/{externalRef}` 로 `GRANTED` 를 기다린다.
+
+    같은 `(아바타, 상품)` 이 짧은 창 안에 반복되면 **201 로 통과시키고 Slack 경고만** 남긴다
+    (`duplicate_grant_warn`) — 포탈이 같은 구매에 새 `externalRef` 를 붙여 재요청했을
+    가능성이지만 정상 반복 구매와 구분되지 않아 거절하지 않는다(grant_guard.py 참고).
     """
     planet = parse_grant_planet(request.planet_id)
 
@@ -1837,15 +1851,19 @@ def create_grant(
     #   시간창 카운트는 아래 commit 과 **같은 트랜잭션**이어야 유효하다(advisory lock 구간).
     #   임박 경고는 **모아 두고 commit 뒤에** 보낸다 — 가드는 잠금을 잡은 상태로 콜백을
     #   부르므로 거기서 webhook 을 때리면 위반 알림과 같은 문제(잠금 뒤 줄서기)가 생긴다.
-    pressure: List[tuple] = []
+    #   아래 INSERT 와 아바타 축 카운트가 **같은 문자열**을 봐야 한다(가드도 안에서 같은
+    #   `format_addr` 로 정규화한다 — 멱등이므로 여기서 미리 맞춰 두는 게 안전하다).
+    avatar_addr = format_addr(request.avatar_address)
+    pressure: List[GrantWarning] = []
     try:
         namespace = enforce_grant_guards(
             sess,
             external_ref=request.external_ref,
             product=product,
+            avatar_addr=avatar_addr,
             limits=limits_from_settings(config),
             is_production=config.is_production,
-            on_warning=lambda reason, message: pressure.append((reason, message)),
+            on_warning=pressure.append,
         )
     except GrantGuardViolation as violation:
         # 먼저 트랜잭션을 놓는다(= advisory lock 해제). 아직 아무것도 쓰지 않았으므로 rollback 은
@@ -1858,7 +1876,7 @@ def create_grant(
         external_ref=request.external_ref,
         product_id=product.id,
         planet_id=planet.value,
-        avatar_addr=format_addr(request.avatar_address),
+        avatar_addr=avatar_addr,
         agent_addr=(
             format_addr(request.agent_address) if request.agent_address else None
         ),
@@ -1890,8 +1908,6 @@ def create_grant(
         avatar_addr=row.avatar_addr,
         planet_id=request.planet_id,
     )
-    for reason, message in pressure:
-        warn_grant_pressure(reason, message)
     try:
         send_to_worker(
             "iap.send_grant",
@@ -1909,6 +1925,10 @@ def create_grant(
             external_ref=row.external_ref,
             error=str(e),
         )
+    # 경고 알림은 **큐 발행 뒤**에 보낸다 — webhook 은 동기 호출(타임아웃 3초)이라 앞에 두면
+    #   Slack 지연이 워커 착수까지 늦춘다. 이 시점엔 행도 커밋됐고 잠금도 없다.
+    for warning in pressure:
+        warn_grant_pressure(warning)
     return _grant_schema(row)
 
 

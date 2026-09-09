@@ -21,10 +21,27 @@
 같은 이유로 nonce 규약(채번 후 실패를 FAILED 로 종단하지 않는다)도 건드리지 않는다 —
 가드는 nonce 채번(워커) 훨씬 앞단이다.
 
+## 이 경로는 "유저가 포인트를 냈는지"를 검증하지 않는다 — **못 한다**
+포인트 원장은 포탈에 있고 IAP 는 잔액을 모른다. 마일리지(IAP 가 자기 잔액을 검증한다)와
+결정적으로 다른 점이고, 그래서 이 경로는 **포탈을 신뢰하는 구조**다. 신뢰가 깨지는 경로
+(포탈 버그·토큰 유출)에서 **가드 상한이 곧 blast radius** 이므로, 상한은 "넉넉하게 잡아 두는
+운영 편의 값"이 아니라 사고 시 최대 발행량 그 자체다.
+
+## 중복 방어는 4층이고 층마다 막는 게 다르다
+  ① `grant_outbox.external_ref` UNIQUE — 같은 ref 재요청 → tx 1건 (IAP)
+  ② 포탈 `(userId, requestId)` unique — 클라이언트 재전송 (포탈)
+  ③ 워커의 조건부 UPDATE 선점 — 동시 처리 이중 tx (IAP)
+  ④ **아바타 축 시간창 상한** — 한 아바타에 몰리는 발행량 (이 모듈, PLD-1575)
+
+①~③ 이 다 통과하는 구멍이 하나 남는다: **포탈이 같은 구매에 새 orderId 를 붙여 두 번**
+요청하면 `external_ref` 가 달라 멱등이 안 걸린다. IAP 는 "이미 산 건"인지 알 수단이 없다
+(주문의 권위가 포탈에 있다). 그래서 이 모듈은 두 갈래로 대응한다:
+  · **거절**은 아바타 축 상한이 한다(④) — 한 아바타가 시간창 전량을 태우지 못하게.
+  · **의미적 중복**(같은 `(avatar_addr, product_id)` 의 짧은 창 반복)은 **경고만** 한다.
+    정상 반복 구매(1회 뽑기 연속 클릭·룬스톤 팩 2개)와 구분되지 않아서, 거절하면 정상
+    구매를 막는다. 사람이 포탈 `shop_order` 와 대조할 근거만 만든다.
+
 ## 아직 없는 축 (후속)
-- **아바타/계정 단위 상한이 없다.** 시간창 캡 전량을 한 아바타에 몰아줄 수 있다. "누가 얼마나
-  받았나"의 권위는 포탈(포인트 원장)이라 1차로는 그쪽 책임이지만, force-grant 민터의 4번째
-  축으로 남는다(TODO).
 - **엔드포인트별 스코프가 없다.** admin JWT 하나로 화이트리스트 CRUD·상품 CSV import 도 열려
   있어서, 토큰이 유출되면 공격자가 스스로 화이트리스트를 켤 수 있다. 이 가드가 닫는 것은
   "무제한 발행"이고 "토큰 유출 시 임의 상품"은 스코프 분리(후속) 없이는 닫히지 않는다.
@@ -46,6 +63,7 @@ from fastapi import HTTPException
 from shared.enums import ProductType
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import SEASON_PASS_SKU_TOKEN, Product
+from shared.utils.address import format_addr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -65,10 +83,16 @@ ALERT_THROTTLE_SECONDS = 60.0
 ALERT_THROTTLE_MAX_KEYS = 256
 # 미등록 네임스페이스를 스로틀 키에서 접을 때 쓰는 고정 라벨(호출자 제어 문자열 배제).
 UNREGISTERED_NAMESPACE_LABEL = "<unregistered>"
+# 임박 경고 스로틀 키에서 아바타를 접을 때 쓰는 고정 라벨(`GrantScope.coarse_key` 참고).
+AVATAR_COLLAPSED_LABEL = "<any>"
 
 # 시간창 사용률이 이 비율을 넘으면 **거절 전에** 경고를 쏜다. 임계값(상한)이 아니라 알림
 #   휴리스틱이라 설정으로 빼지 않는다 — 이 값이 바뀌어도 발행 가능량은 변하지 않는다.
 WINDOW_WARN_RATIO = 0.8
+
+# 의미적 중복 경고의 임계 건수(**이번 요청 포함**). 2 = "같은 아바타·상품이 창 안에 두 번".
+#   중복의 최소 단위가 2 라 3 이상으로 올리면 평범한 이중 전송(정확히 2건)을 영구히 놓친다.
+DUPLICATE_ALERT_MIN_COUNT = 2
 
 # 카운트→INSERT 구간을 직렬화하는 PG advisory lock 키(임의 상수, 이 가드 전용).
 GRANT_GUARD_LOCK_KEY = 15751564
@@ -158,6 +182,93 @@ def namespace_of(external_ref: str) -> Optional[str]:
 
 
 @dataclass(frozen=True)
+class GrantScope:
+    """
+    시간창을 **무엇으로 세는가**. 지정한 필드가 AND 로 걸리고, 전부 None 이면 전역(전체 합)이다.
+
+    축이 늘어날 때마다 (a) 카운트 조건 (b) 사람이 읽는 라벨 (c) 알림 스로틀 키 세 곳을 따로
+    고치면 하나를 빼먹는다 — 특히 (c) 를 빼먹으면 서로 다른 축·아바타의 경고가 같은 키로
+    접혀 서로를 삼킨다. 그래서 셋을 한 타입에 묶는다.
+
+    ⚠️ `planet_id` 는 일부러 넣지 않았다. 같은 아바타 주소가 두 행성에 있으면 합쳐서 세는데,
+    그건 상한을 **더 엄격하게** 만드는 방향이라(발행 총량 관점) 안전한 쪽 오차다.
+    """
+
+    namespace: Optional[str] = None
+    avatar_addr: Optional[str] = None
+    product_id: Optional[int] = None
+
+    @property
+    def label(self) -> str:
+        """거절·경고 문구에 들어가는 사람이 읽는 축 이름."""
+        parts = []
+        if self.namespace is not None:
+            parts.append(f"네임스페이스 '{self.namespace}'")
+        if self.avatar_addr is not None:
+            parts.append(f"아바타 {self.avatar_addr}")
+        if self.product_id is not None:
+            parts.append(f"상품 {self.product_id}")
+        return " × ".join(parts) if parts else "전체"
+
+    def _key(self, avatar: Optional[str]) -> str:
+        parts = []
+        if self.namespace is not None:
+            parts.append(f"ns={self.namespace}")
+        if avatar is not None:
+            parts.append(f"avatar={avatar}")
+        if self.product_id is not None:
+            parts.append(f"product={self.product_id}")
+        return "|".join(parts) or "all"
+
+    @property
+    def key(self) -> str:
+        """
+        **사건 단위** 스로틀 키(`alert_key` 와 같은 `<reason>:<스코프>` 관례).
+
+        중복 경고처럼 사건 자체가 `(아바타, 상품)` 단위인 알림에 쓴다 — 접으면 한 건이 나머지
+        전부를 1분간 가린다. 아바타가 키에 들어가므로 **볼륨이 아바타 수에 비례**한다는 걸
+        알고 써야 한다(요청 경로에서 webhook POST 가 나간다). 축 전체를 대표하는 신호라면
+        `coarse_key` 를 쓴다.
+        """
+        return self._key(self.avatar_addr)
+
+    @property
+    def coarse_key(self) -> str:
+        """
+        **볼륨을 접는** 스로틀 키 — 아바타를 고정 라벨로 바꾼다(`alert_key` 와 같은 원칙).
+
+        임박 경고에 쓴다. 그 신호의 내용은 "이 축의 상한에 근접한 아바타가 있다"이고 **어느
+        아바타인지는 메시지와 구조 로그에 남는다**. 아바타를 키에 넣으면 상한 근처의 아바타
+        수만큼 요청 경로에서 webhook POST 가 나가고(아바타 30 = POST 30건, 스로틀이 하나도
+        접지 못한다) 그 키들이 스로틀 저장소를 밀어낸다 — 후자는 위반 알림 스로틀까지 지운다.
+        """
+        return self._key(None if self.avatar_addr is None else AVATAR_COLLAPSED_LABEL)
+
+
+GLOBAL_SCOPE = GrantScope()
+
+
+@dataclass(frozen=True)
+class GrantWarning:
+    """
+    거절하지 않는 경고 1건. `on_warning` 이 이걸 받는다.
+
+    `throttle_key` 를 메시지와 같이 들고 다니는 이유: 키를 호출부(admin.py)에서 만들면
+    축이 늘어날 때마다 거기서 `reason` 문자열을 다시 해석해야 하고(= 축을 아는 곳이 둘로
+    갈라진다), 아바타·상품 같은 스코프 값은 호출부에 없다.
+    """
+
+    reason: str  # 안정적 식별자(로그 필드·스로틀 키의 앞부분). 경고는 `_warn` 접미어.
+    message: str  # 사람이 읽는 설명
+    throttle_key: str  # `should_warn` 에 넣는 키
+
+
+def scope_warn_key(reason: str, scope_key: str) -> str:
+    """경고 스로틀 키 — `alert_key`(위반용)와 같은 `<reason>:<스코프>` 표기."""
+    return f"{reason}:{scope_key}"
+
+
+@dataclass(frozen=True)
 class GrantLimits:
     """
     가드 임계값 묶음. **하드코딩 금지** — 전부 설정에서 온다(`limits_from_settings`).
@@ -175,9 +286,30 @@ class GrantLimits:
     max_grants_per_hour: Optional[int] = None
     max_grants_per_day: Optional[int] = None
     max_grants_per_namespace_per_minute: Optional[int] = None
+    # 아바타 축(PLD-1575 후속) — 전역 상한은 **총노출**을 묶고 이건 **집중도**를 묶는다.
+    #   전역만 있으면 한 아바타가 시간창 전량을 태울 수 있고, 그게 포탈을 신뢰하는 이 경로의
+    #   실제 사고 모양(한 계정의 포인트 원장 오류/어뷰즈)이다.
+    max_grants_per_avatar_per_hour: Optional[int] = None
+    max_grants_per_avatar_per_day: Optional[int] = None
+    # 의미적 중복 **경고**의 관측 창(초). None/0 이하 = 끔. 거절하지 않는다(모듈 도커스트링).
+    duplicate_alert_window_seconds: Optional[int] = None
 
     def missing(self) -> List[str]:
-        """prod 에서 반드시 주입돼야 하는데 비어 있는 항목 이름."""
+        """
+        prod 에서 반드시 주입돼야 하는데 비어 있는 항목 이름.
+
+        ⚠️ 이 목록은 **배포 시점 fail-closed 트랩**이다 — 여기 이름을 하나 추가하면 그 env 가
+        차트에 배선되기 **전에** 새 이미지가 뜨는 순간 지급 API 전체가 503(포인트샵 정지)이 되고,
+        화이트리스트 켜는 경로(admin.py 의 upsert)도 같이 막힌다. 그래서 새 축을 여기 넣는 건
+        "차트에 값이 이미 있다"가 확인된 다음이다.
+
+        아바타 축·중복 경고 창을 아직 넣지 않은 이유:
+          · 총노출은 `max_grants_per_hour/day`(이미 필수)가 이미 묶는다. 아바타 축은 그 안의
+            **집중도**만 좁히므로, 미주입이 "무제한 발행"이 되지는 않는다.
+          · 중복 경고는 애초에 거절하지 않는 관측 기능이라 필수 대상이 아니다.
+        TODO(PLD-1575): 차트에 `API_GRANT_MAX_GRANTS_PER_AVATAR_PER_{HOUR,DAY}` 가 배선된
+        뒤에 두 이름을 이 목록에 올린다(그 시점엔 트랩이 아니라 안전망이 된다).
+        """
         return [
             name
             for name in (
@@ -208,6 +340,9 @@ def limits_from_settings(settings) -> GrantLimits:
         max_grants_per_namespace_per_minute=(
             settings.grant_max_grants_per_namespace_per_minute
         ),
+        max_grants_per_avatar_per_hour=settings.grant_max_grants_per_avatar_per_hour,
+        max_grants_per_avatar_per_day=settings.grant_max_grants_per_avatar_per_day,
+        duplicate_alert_window_seconds=settings.grant_duplicate_alert_window_seconds,
     )
 
 
@@ -324,23 +459,33 @@ def check_fav_tickers(product: Product, allowed: frozenset) -> None:
 
 
 def _count_since(
-    sess: Session, since: datetime, namespace: Optional[str] = None
+    sess: Session, since: datetime, scope: GrantScope = GLOBAL_SCOPE
 ) -> int:
     """
-    `since` 이후 생성된 아웃박스 행 수(옵션: 네임스페이스 한정).
+    `since` 이후 생성된 아웃박스 행 수 — `scope` 가 **무엇으로 세는가**를 정한다(기본 전역).
 
     상태를 보지 않는다 — PENDING/GRANTED/FAILED 모두 "발행을 시도했다"는 사실이고, 상한의
     목적은 발행 시도 자체를 묶는 것이다(FAILED 도 nonce·tx 를 소모했을 수 있다).
+
+    인덱스: 전역/네임스페이스 축은 `ix_grant_outbox_created_at`, 아바타·상품 축은
+    `ix_grant_outbox_avatar_addr_created_at` 을 탄다. 이 카운트는 요청 경로 **그리고 advisory
+    lock 안**에서 돌기 때문에 지연이 곧 직렬화된 처리량이다(느린 카운트 = 지급 처리량 저하).
     """
     stmt = (
         select(func.count())
         .select_from(GrantOutbox)
         .where(GrantOutbox.created_at >= since)
     )
-    if namespace is not None:
+    if scope.namespace is not None:
         stmt = stmt.where(
-            GrantOutbox.external_ref.startswith(f"{namespace}:", autoescape=True)
+            GrantOutbox.external_ref.startswith(f"{scope.namespace}:", autoescape=True)
         )
+    if scope.avatar_addr is not None:
+        # 저장 형식과 **같게 정규화된 주소**여야 한다 — 대소문자가 다르면 카운트가 0 이 되어
+        #   조용히 fail-open 이다. `enforce_grant_guards` 가 `format_addr` 로 정규화해서 넣는다.
+        stmt = stmt.where(GrantOutbox.avatar_addr == scope.avatar_addr)
+    if scope.product_id is not None:
+        stmt = stmt.where(GrantOutbox.product_id == scope.product_id)
     return int(sess.scalar(stmt) or 0)
 
 
@@ -383,10 +528,11 @@ def enforce_grant_guards(
     *,
     external_ref: str,
     product: Product,
+    avatar_addr: str,
     limits: GrantLimits,
     is_production: bool,
     now: Optional[datetime] = None,
-    on_warning: Optional[Callable[[str, str], None]] = None,
+    on_warning: Optional[Callable[["GrantWarning"], None]] = None,
 ) -> str:
     """
     지급 요청 1건에 머니 가드 전부를 적용하고 네임스페이스를 돌려준다. 위반은 `GrantGuardViolation`.
@@ -400,7 +546,11 @@ def enforce_grant_guards(
       4. 위반(예외)으로 빠졌으면 호출부가 **먼저 rollback** 해서 잠금·트랜잭션을 놓고 나서
          알림 같은 외부 I/O 를 해야 한다(안 그러면 Slack 지연이 전 지급 요청을 줄 세운다).
 
-    `on_warning(reason, message)` 는 **거절 전에** 부르는 소프트 임계 경고다(아래 참고).
+    `avatar_addr` 는 저장 형식(`format_addr` — 소문자 `0x…`)으로 **이 함수가 정규화한다**.
+    아바타 축 카운트가 `grant_outbox.avatar_addr` 와 문자열 비교라, 정규화를 호출부 규약으로만
+    두면 대소문자 하나로 카운트가 0 이 되어 조용히 fail-open 한다(`_count_since` 참고).
+
+    `on_warning(GrantWarning)` 는 **거절 전에** 부르는 소프트 임계 경고다(아래 참고).
     선택 인자로 둔 이유: 이 모듈은 알림 수단(webhook·config)을 몰라야 한다.
     ⚠️ 이 콜백은 **잠금을 잡은 상태**에서 호출된다 — 외부 I/O(webhook)를 여기서 하면 안 된다.
     호출부는 메시지를 모아 두고 commit **뒤에** 보낸다(admin.py).
@@ -470,81 +620,178 @@ def enforce_grant_guards(
             f" {limits.max_item_units_per_request}",
         )
 
-    # ── 4) 시간창 총량 + 네임스페이스 레이트리밋 (경합 안전) ─────────────────
+    # ── 4) 시간창 총량 + 네임스페이스/아바타 레이트리밋 (경합 안전) ──────────
+    #   축 순서 = 거절 사유의 우선순위다. 기존 축(분·시·일 전역)을 앞에 두는 이유: 여러 축이
+    #   동시에 초과일 때 포탈이 보던 사유 토큰이 바뀌지 않게 한다(계약 v1.2 의 부류 판정이
+    #   토큰 문자열에 붙어 있다). 아바타 축은 뒤에 붙여 **전역이 여유일 때만** 표면화한다.
+    #   주소는 **여기서** 저장 형식으로 정규화한다(호출부가 이미 그렇게 넘겨도 멱등이다).
+    #   호출부 규약으로만 두면 대소문자가 다른 주소 하나로 카운트가 0 이 되어 **조용히
+    #   fail-open** 한다 — 머니 가드에서 그건 허용 못 하는 실패 모양이다.
+    avatar_addr = format_addr(avatar_addr)
+    avatar_scope = GrantScope(avatar_addr=avatar_addr)
     windows = (
         (
             "per_minute_exceeded",
             limits.max_grants_per_namespace_per_minute,
             timedelta(minutes=1),
-            namespace,
+            GrantScope(namespace=namespace),
         ),
-        ("per_hour_exceeded", limits.max_grants_per_hour, timedelta(hours=1), None),
-        ("per_day_exceeded", limits.max_grants_per_day, timedelta(days=1), None),
+        (
+            "per_hour_exceeded",
+            limits.max_grants_per_hour,
+            timedelta(hours=1),
+            GLOBAL_SCOPE,
+        ),
+        (
+            "per_day_exceeded",
+            limits.max_grants_per_day,
+            timedelta(days=1),
+            GLOBAL_SCOPE,
+        ),
+        (
+            "per_avatar_hour_exceeded",
+            limits.max_grants_per_avatar_per_hour,
+            timedelta(hours=1),
+            avatar_scope,
+        ),
+        (
+            "per_avatar_day_exceeded",
+            limits.max_grants_per_avatar_per_day,
+            timedelta(days=1),
+            avatar_scope,
+        ),
     )
-    if not any(cap is not None for _, cap, _, _ in windows):
+    # 중복 경고 창: None/0 이하 = 끔(env 로 끄려면 0 을 넣는다 — 빈 문자열은 파싱 오류다).
+    #   경고를 받을 사람이 없으면(`on_warning is None`) 세지도 않는다 — 이 카운트는 잠금
+    #   안에서 도는 추가 쿼리라 결과를 버릴 거면 켤 이유가 없다.
+    duplicate_window: Optional[timedelta] = None
+    if on_warning is not None and (limits.duplicate_alert_window_seconds or 0) > 0:
+        duplicate_window = timedelta(seconds=limits.duplicate_alert_window_seconds)
+    if (
+        not any(cap is not None for _, cap, _, _ in windows)
+        and duplicate_window is None
+    ):
+        # 셀 것이 없으면 잠금도 잡지 않는다 — 이 잠금은 전 지급 요청을 직렬화한다.
         return namespace
     lock_grant_guard(sess)
     now = now or guard_now(sess)
     for reason, cap, window, scope in windows:
         if cap is None:
             continue
-        used = _count_since(sess, now - window, namespace=scope)
-        scope_label = f"네임스페이스 '{scope}'" if scope else "전체"
+        used = _count_since(sess, now - window, scope)
         if used >= cap:
             raise GrantGuardViolation(
                 400,
                 reason,
-                f"{scope_label} 지급 건수 상한 초과: 최근 {window} 동안 {used}건 ≥ 상한 {cap}"
+                f"{scope.label} 지급 건수 상한 초과: 최근 {window} 동안 {used}건 ≥ 상한 {cap}"
                 " — 임계를 올리거나 잠시 후 다시 시도하세요",
             )
         if on_warning is not None and used >= cap * WINDOW_WARN_RATIO:
             # 거절이 시작된 **뒤에만** 알리면 운영자가 손 쓸 기회가 없다(첫 초과 주문이 이미
             #   영구 실패다). 임박 경고가 상한 유지의 실질적 완화책이다.
+            #   ⚠️ 스로틀 키는 `coarse_key`(아바타 접힘)다 — 정확 키를 쓰면 상한 근처의 아바타
+            #   수만큼 요청 경로에서 webhook POST 가 나간다. 어느 아바타인지는 문구·로그에 있다.
+            warn_reason = f"{reason}_warn"
             on_warning(
-                f"{reason}_warn",
-                f"{scope_label} 지급 건수 상한 임박: 최근 {window} 동안 {used}건"
-                f" / 상한 {cap} — 초과분은 400 으로 거절된다",
+                GrantWarning(
+                    warn_reason,
+                    f"{scope.label} 지급 건수 상한 임박: 최근 {window} 동안 {used}건"
+                    f" / 상한 {cap} — 초과분은 400 으로 거절된다",
+                    scope_warn_key(warn_reason, scope.coarse_key),
+                )
+            )
+
+    # ── 5) 의미적 중복 감지 — **경고만, 요청은 통과** ────────────────────────
+    #   같은 `(avatar_addr, product_id)` 의 짧은 창 반복은 "포탈이 같은 구매를 두 번 보냈다"의
+    #   신호지만 **정상 반복 구매와 구분되지 않는다**(1회 뽑기 연속 클릭·같은 팩 2개 구매).
+    #   그래서 거절은 위의 아바타 축 상한이 하고, 여기서는 사람이 볼 근거만 만든다.
+    #   잠금 안에서 세는 이유는 축을 아는 코드를 한 곳에 모으고 위와 **같은 `now`** 를 쓰는
+    #   것뿐이다(경고 전용이라 정확성이 잠금을 요구하지는 않는다). 직렬 구간이 문제가 되면
+    #   커밋 뒤로 옮길 수 있고, 그때는 방금 넣은 행이 카운트에 포함돼 아래 `+1` 이 사라진다.
+    if duplicate_window is not None and on_warning is not None:
+        dup_scope = GrantScope(avatar_addr=avatar_addr, product_id=product.id)
+        # 카운트는 **이번 요청 직전까지**의 행이다(INSERT 는 아직 안 했다) → +1 이 총 건수.
+        repeats = _count_since(sess, now - duplicate_window, dup_scope) + 1
+        if repeats >= DUPLICATE_ALERT_MIN_COUNT:
+            dup_reason = "duplicate_grant_warn"
+            window_seconds = int(duplicate_window.total_seconds())
+            on_warning(
+                GrantWarning(
+                    dup_reason,
+                    f"{dup_scope.label} 지급 요청이 최근 {window_seconds}초 동안"
+                    f" {repeats}건 — 포탈이 같은 구매에 `새 external_ref 를 붙여 재요청`했을"
+                    " 가능성이 있습니다(external_ref 가 다르면 IAP 멱등키가 걸리지 않는다)."
+                    " 포탈 `shop_order` 에서 이 아바타·상품의 주문을 대조하세요."
+                    " 정상 반복 구매와 구분되지 않아 `거절하지 않았고 지급은 진행된다`"
+                    f" (externalRef=`{external_ref}`)",
+                    # 중복은 사건 자체가 (아바타, 상품) 단위라 **정확 키**를 쓴다 — 접으면
+                    #   먼저 뜬 한 건이 나머지 전부를 1분간 가린다.
+                    scope_warn_key(dup_reason, dup_scope.key),
+                )
             )
     return namespace
 
 
-_alert_sent_at: Dict[str, float] = {}
+_alert_sent_at: Dict[str, float] = {}  # 위반(거절) 알림
+_warn_sent_at: Dict[str, float] = {}  # 경고 알림 — 위반 스로틀을 밀어내지 않게 분리
 
 
 def alert_key(reason: str, namespace: Optional[str], allowed: frozenset) -> str:
     """
-    알림 스로틀 키. **호출자가 조종하는 값을 키에 넣지 않는다.**
+    **위반**(거절) 알림의 스로틀 키. **호출자가 조종하는 값을 키에 넣지 않는다.**
 
     미등록 네임스페이스를 그대로 키에 넣으면 `promo1:x`, `promo2:x`, … 로 ref 만 바꿔 던지는
     것으로 키가 매번 새로워져 스로틀이 무력화된다(= Slack 도배 + 요청마다 webhook POST,
     스로틀 dict 무한 증식). 등록된 값만 남기고 나머지는 하나로 접는다.
+
+    그래서 아바타 주소도 여기 들어가지 않는다 — 위반은 **행을 만들지 않고도** 발화할 수 있어서
+    (미등록 네임스페이스가 그렇다) 키 카디널리티에 상한이 없다. 반대로 **경고**는 커밋된 행을
+    세야 발화하므로 스코프 값을 키에 넣어도 유한하다(`GrantScope.key` · `scope_alert_key`).
     """
     label = namespace if namespace in allowed else UNREGISTERED_NAMESPACE_LABEL
     return f"{reason}:{label}"
 
 
-def should_alert(key: str, now: Optional[float] = None) -> bool:
+def _throttle(store: Dict[str, float], key: str, now: Optional[float]) -> bool:
     """
     같은 키의 알림을 `ALERT_THROTTLE_SECONDS` 에 1회로 제한(프로세스 로컬, best-effort).
 
-    왜 필요한가: 위반 알림을 무조건 보내면 루프 도는 호출자가 Slack 을 도배하고, 더 나쁘게는
+    왜 필요한가: 알림을 무조건 보내면 루프 도는 호출자가 Slack 을 도배하고, 더 나쁘게는
     **요청 경로에서 webhook POST 를 반복**해 API 를 스스로 느리게 만든다. 정확한 분산 스로틀이
     아니어도 목적(도배 방지)에는 충분하다 — API 는 단일 프로세스로 뜨고(workers=1),
     감사 근거는 스로틀되지 않는 구조 로그가 남긴다.
 
-    키는 `alert_key` 로 정규화돼 (사유 × 등록 네임스페이스+1) 만큼으로 유한하지만, 그래도
-    상한을 둔다 — 프로세스 수명이 긴 서비스에서 무한 증식하는 전역 dict 를 남기지 않는다.
+    저장소에 키 상한을 둔다 — 프로세스 수명이 긴 서비스에 무한 증식하는 전역 dict 를 남기지
+    않는다. 넘칠 때 오래된 키부터 버리고, 그래도 넘치면 전부 비운다(= 그 순간의 스로틀 상태를
+    잃는다). **그 부수효과 때문에 위반용/경고용 저장소를 나눈다** — 카디널리티가 큰 경고 키가
+    위반 알림의 스로틀을 지우면 거절 알림 도배가 다시 열린다.
     """
     now = time.monotonic() if now is None else now
-    if len(_alert_sent_at) >= ALERT_THROTTLE_MAX_KEYS:
-        for stale, at in list(_alert_sent_at.items()):
+    if len(store) >= ALERT_THROTTLE_MAX_KEYS:
+        for stale, at in list(store.items()):
             if now - at >= ALERT_THROTTLE_SECONDS:
-                _alert_sent_at.pop(stale, None)
-        if len(_alert_sent_at) >= ALERT_THROTTLE_MAX_KEYS:
+                store.pop(stale, None)
+        if len(store) >= ALERT_THROTTLE_MAX_KEYS:
             # 그래도 넘치면 버린다. 스로틀 상태를 잃는 최악의 결과는 "알림이 한 번 더 나감"이다.
-            _alert_sent_at.clear()
-    last = _alert_sent_at.get(key)
+            store.clear()
+    last = store.get(key)
     if last is not None and now - last < ALERT_THROTTLE_SECONDS:
         return False
-    _alert_sent_at[key] = now
+    store[key] = now
     return True
+
+
+def should_alert(key: str, now: Optional[float] = None) -> bool:
+    """**위반**(거절) 알림 스로틀. 키는 `alert_key` 로 정규화한다."""
+    return _throttle(_alert_sent_at, key, now)
+
+
+def should_warn(key: str, now: Optional[float] = None) -> bool:
+    """
+    **경고**(거절 아님) 알림 스로틀 — 위반 알림과 **다른 저장소**를 쓴다.
+
+    경고 키는 스코프(아바타·상품)를 포함할 수 있어 위반 키보다 카디널리티가 크다. 한 저장소를
+    공유하면 경고 키가 상한을 채워 `clear()` 를 유발하고, 그때 위반 알림의 스로틀 상태가 함께
+    지워진다(= 거절 알림이 다시 도배된다). 반대 방향의 오염도 마찬가지로 막힌다.
+    """
+    return _throttle(_warn_sent_at, key, now)

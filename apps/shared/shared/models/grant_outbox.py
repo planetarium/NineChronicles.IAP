@@ -98,4 +98,13 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
         # (PLD-1575) 머니 가드의 시간창 카운트(`created_at >= now - 1h/1d`)용. 이 카운트는
         #   **요청 경로**에서 매번 돌기 때문에 풀스캔이면 지급 API 지연이 행 수에 비례한다.
         Index("ix_grant_outbox_created_at", "created_at"),
+        # (PLD-1575) 아바타 축 상한 + 의미적 중복 감지용
+        #   (`avatar_addr = ? AND created_at >= ?`, 중복은 여기에 product_id 필터가 더 붙는다).
+        #   `ix_grant_outbox_created_at` 만 있으면 창 안 **모든** 행의 힙을 읽어 아바타를
+        #   걸러야 한다 — 이 카운트는 요청 경로 **그리고 advisory lock 안**에서 돌기 때문에
+        #   지연이 곧 직렬화된 지급 처리량이다. 선두 컬럼을 avatar_addr 로 두면 한 아바타의
+        #   행만 훑는다(아바타당 행 수는 아바타 축 상한이 직접 묶는다).
+        #   product_id 를 넣지 않은 이유: 아바타 축(product 무관)이 이 인덱스를 그대로 쓰고,
+        #   중복 감지는 "이 아바타의 창 안 행"이 이미 몇 건 수준이라 필터가 사실상 무료다.
+        Index("ix_grant_outbox_avatar_addr_created_at", "avatar_addr", "created_at"),
     )

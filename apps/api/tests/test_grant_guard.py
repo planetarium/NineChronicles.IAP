@@ -16,9 +16,12 @@ from shared.enums import ProductType
 from app.grant_guard import (
     ALERT_THROTTLE_MAX_KEYS,
     ALERT_THROTTLE_SECONDS,
+    AVATAR_COLLAPSED_LABEL,
+    GLOBAL_SCOPE,
     GRANT_GUARD_LOCK_KEY,
     UNREGISTERED_NAMESPACE_LABEL,
     GrantLimits,
+    GrantScope,
     _alert_sent_at,
     alert_key,
     guard_now,
@@ -27,6 +30,7 @@ from app.grant_guard import (
     parse_fav_tickers,
     parse_grant_namespaces,
     parse_point_shop_grantable,
+    scope_warn_key,
     should_alert,
     validate_point_shop_grantable_eligible,
 )
@@ -92,6 +96,29 @@ class TestGrantLimits:
             "max_grants_per_day",
             "max_grants_per_namespace_per_minute",
         ]
+
+    def test_avatar_axis_and_duplicate_window_are_not_prod_required(self):
+        """
+        새 축은 `missing()`(=prod 503 게이트)에 **들어가지 않는다.**
+
+        여기 이름을 추가하면 그 env 가 차트에 배선되기 전에 새 이미지가 뜨는 순간 지급 API
+        전체가 503(포인트샵 정지)이 되고 화이트리스트 켜는 경로까지 막힌다. 총노출은 이미
+        필수인 전역 시/일 상한이 묶으므로, 아바타 축은 그 안의 **집중도**만 좁힌다
+        (미주입이 "무제한 발행"이 되지는 않는다). 중복 창은 애초에 거절하지 않는 관측 기능이다.
+        """
+        limits = GrantLimits(
+            allowed_namespaces=frozenset({"shop"}),
+            max_fav_units_per_request=1,
+            max_item_units_per_request=1,
+            max_grants_per_hour=1,
+            max_grants_per_day=1,
+            max_grants_per_namespace_per_minute=1,
+        )
+
+        assert limits.max_grants_per_avatar_per_hour is None  # 미주입 = 그 축 미적용
+        assert limits.max_grants_per_avatar_per_day is None
+        assert limits.duplicate_alert_window_seconds is None
+        assert limits.missing() == []
 
     def test_zero_is_a_real_value_not_missing(self):
         """0 = "발행 금지"는 유효한 설정이다 — None(미주입)과 섞이면 킬스위치를 못 쓴다."""
@@ -211,6 +238,56 @@ class TestAlertKey:
         assert alert_key("r", namespace, self.ALLOWED) == (
             f"r:{UNREGISTERED_NAMESPACE_LABEL}"
         )
+
+
+class TestGrantScope:
+    """
+    시간창의 축 표현. 라벨(거절 문구)·키(알림 스로틀)가 축마다 달라야 한다 — 키가 같으면
+    서로 다른 아바타·상품의 경고가 한 키로 접혀 서로를 삼킨다.
+    """
+
+    AVATAR = "0x" + "ab" * 20
+
+    def test_global_scope_reads_as_everything(self):
+        assert GLOBAL_SCOPE.label == "전체"
+        assert GLOBAL_SCOPE.key == "all"
+
+    def test_namespace_scope(self):
+        scope = GrantScope(namespace="shop")
+
+        assert scope.label == "네임스페이스 'shop'"
+        assert scope.key == "ns=shop"
+
+    def test_avatar_scope(self):
+        scope = GrantScope(avatar_addr=self.AVATAR)
+
+        assert self.AVATAR in scope.label
+        assert scope.key == f"avatar={self.AVATAR}"
+
+    def test_avatar_product_scope_keys_differ_per_product(self):
+        """중복 경고 키 — 같은 아바타의 다른 상품이 서로를 스로틀하면 안 된다."""
+        one = GrantScope(avatar_addr=self.AVATAR, product_id=1)
+        two = GrantScope(avatar_addr=self.AVATAR, product_id=2)
+
+        assert one.key != two.key
+        assert "상품 1" in one.label
+
+    def test_scope_warn_key_follows_alert_key_convention(self):
+        key = scope_warn_key("duplicate_grant_warn", GrantScope(namespace="shop").key)
+
+        assert key == "duplicate_grant_warn:ns=shop"  # `<reason>:<스코프>`
+
+    def test_coarse_key_folds_the_avatar_but_keeps_the_axis(self):
+        """
+        임박 경고용 키 — 아바타만 접고 나머지 축은 남긴다. 접지 않으면 상한 근처의 아바타
+        수만큼 요청 경로에서 webhook POST 가 나가고 스로틀 저장소를 밀어낸다.
+        """
+        one = GrantScope(avatar_addr=self.AVATAR)
+        two = GrantScope(avatar_addr="0x" + "cd" * 20)
+
+        assert one.coarse_key == two.coarse_key == f"avatar={AVATAR_COLLAPSED_LABEL}"
+        assert one.key != two.key  # 정확 키는 여전히 아바타별
+        assert GLOBAL_SCOPE.coarse_key == "all"  # 아바타가 없는 축은 그대로
 
 
 class TestLockGrantGuard:
