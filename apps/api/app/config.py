@@ -84,6 +84,10 @@ class Settings(BaseSettings):
 
     # 허용 external_ref 네임스페이스(쉼표 구분). 호출자 식별 = 이 등록제. `-` 단독은 전체 비활성.
     grant_allowed_namespaces: str = "shop"
+    # 지급 허용 FAV 티커(쉼표 구분, 예: `FAV__CRYSTAL`). **빈 값 = FAV 지급 금지**(기본).
+    #   수량 상한은 티커를 구분하지 못한다(CRYSTAL 기준 상한이 곧 SOULSTONE 상한이 된다)
+    #   → 화폐 종류 자체를 얼로우리스트로 연다. 아이템만 지급하는 동안은 비워 두는 게 맞다.
+    grant_allowed_fav_tickers: str = ""
     # 1건 지급의 FAV(NCG·CRYSTAL 등) 총량 상한. 아이템과 따로 센다(단위가 다르다).
     grant_max_fav_units_per_request: Optional[int] = None
     # 1건 지급의 아이템 총 개수 상한.

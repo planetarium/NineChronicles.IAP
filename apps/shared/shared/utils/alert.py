@@ -10,13 +10,16 @@ Slack 운영 알림 — 워커의 `_alert`/`send_slack_alert` 와 **같은 페�
   · **url 을 인자로 받는다** — `shared` 는 앱별 config(`API_*`/`WORKER_*` prefix)를 모른다.
   · **절대 예외를 올리지 않는다** — 알림 실패가 지급/거절 판정을 바꿔선 안 된다.
   · 타임아웃은 짧게. 요청 경로(FastAPI 핸들러)에서 호출되므로 webhook 지연이 곧 API 지연이다.
+  · 로깅은 **표준 `logging`**. 워커 태스크들은 structlog 를 쓰지만 `shared` 의 의존성 선언
+    (`apps/shared/pyproject.toml`)에는 structlog 가 없다 — 여기서 임포트하면 shared 가
+    선언되지 않은 패키지에 의존하게 된다(설치 경로에 따라 깨진다).
 """
+import logging
 from typing import Optional
 
 import requests
-import structlog
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # 요청 경로에서 부르는 걸 전제로 한 짧은 타임아웃(워커의 10초보다 짧다).
 ALERT_TIMEOUT_SECONDS = 3
@@ -36,5 +39,5 @@ def send_slack_alert(url: Optional[str], text: str) -> bool:
         resp.raise_for_status()
         return True
     except Exception as e:  # noqa: BLE001 — 알림 실패로 호출부를 깨지 않는다
-        logger.warning("slack alert failed", error=str(e))
+        logger.warning("slack alert failed: %s", e)
         return False

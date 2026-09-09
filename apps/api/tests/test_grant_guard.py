@@ -6,15 +6,25 @@
 `app.grant_guard` 를 임포트하면 `app.config` 가 딸려오지 않는다는 것 자체가 이 모듈의 계약이다
 (config 가 거꾸로 이 파서를 부팅 검증에 쓰기 때문에 방향이 뒤집히면 순환 임포트가 된다).
 """
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi import HTTPException
 from shared.enums import ProductType
 
 from app.grant_guard import (
+    ALERT_THROTTLE_MAX_KEYS,
     ALERT_THROTTLE_SECONDS,
+    GRANT_GUARD_LOCK_KEY,
+    UNREGISTERED_NAMESPACE_LABEL,
     GrantLimits,
     _alert_sent_at,
+    alert_key,
+    guard_now,
+    lock_grant_guard,
     namespace_of,
+    parse_fav_tickers,
     parse_grant_namespaces,
     parse_point_shop_grantable,
     should_alert,
@@ -145,7 +155,7 @@ class TestCsvGrantableColumn:
     화이트리스트가 꺼진다(= 포인트샵 전면 중단). 그래서 계약을 여기서 못박는다.
     """
 
-    @pytest.mark.parametrize("raw", ["TRUE", "true", "T", "Y", "yes", "1", "O"])
+    @pytest.mark.parametrize("raw", ["TRUE", "true", "T", "Y", "yes", "1"])
     def test_true_tokens(self, raw):
         assert parse_point_shop_grantable(raw) is True
 
@@ -158,7 +168,112 @@ class TestCsvGrantableColumn:
         """컬럼 부재/빈칸 = 변경 없음. 여기가 2상태가 되면 포인트샵이 조용히 멈춘다."""
         assert parse_point_shop_grantable(raw) is None
 
-    @pytest.mark.parametrize("raw", ["ture", "on", "예", "2"])
+    # 문자 `O` 는 True 가 아니다 — 숫자 `0`(=False) 오타를 True 로 읽으면 "끄려다 켜는" 사고다.
+    @pytest.mark.parametrize("raw", ["ture", "on", "예", "2", "O"])
     def test_unknown_token_raises(self, raw):
         with pytest.raises(ValueError):
             parse_point_shop_grantable(raw)
+
+
+class TestParseFavTickers:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (None, set()),  # 미주입 = FAV 지급 금지
+            ("", set()),
+            ("FAV__CRYSTAL", {"FAV__CRYSTAL"}),
+            (
+                " FAV__CRYSTAL , FAV__RUNE_GOLDENLEAF ",
+                {"FAV__CRYSTAL", "FAV__RUNE_GOLDENLEAF"},
+            ),
+        ],
+    )
+    def test_parses(self, raw, expected):
+        """
+        네임스페이스 파서와 달리 빈 값이 오류가 아니다 — 여기서는 빈 값이 **가장 안전한 상태**
+        (FAV 지급 금지)이자 기본값이다. 화폐 발행은 "실수로 열려 있는" 상태가 없어야 한다.
+        """
+        assert parse_fav_tickers(raw) == frozenset(expected)
+
+
+class TestAlertKey:
+    ALLOWED = frozenset({"shop"})
+
+    def test_registered_namespace_is_kept(self):
+        assert alert_key("r", "shop", self.ALLOWED) == "r:shop"
+
+    @pytest.mark.parametrize("namespace", ["promo1", "promo2", None, "x" * 120])
+    def test_unregistered_namespaces_collapse_to_one_key(self, namespace):
+        """
+        미등록 값은 하나로 접는다. 안 접으면 호출자가 ref 만 바꿔 던져 스로틀을 무력화하고
+        (요청마다 webhook POST) 스로틀 dict 도 무한 증식한다.
+        """
+        assert alert_key("r", namespace, self.ALLOWED) == (
+            f"r:{UNREGISTERED_NAMESPACE_LABEL}"
+        )
+
+
+class TestLockGrantGuard:
+    """
+    SQLite 테스트에서는 no-op 이라 PG 분기 SQL 이 한 번도 실행되지 않는다 → 여기서 발행 SQL 을
+    직접 확인한다(오타 하나로 경합 방어가 조용히 사라지는 걸 막는다).
+    """
+
+    def _fake_session(self, dialect_name):
+        sess = MagicMock()
+        sess.get_bind.return_value.dialect.name = dialect_name
+        return sess
+
+    def test_postgres_takes_xact_advisory_lock(self):
+        sess = self._fake_session("postgresql")
+
+        lock_grant_guard(sess)
+
+        assert sess.execute.call_count == 1
+        sql, params = sess.execute.call_args[0]
+        assert "pg_advisory_xact_lock" in str(sql)  # xact = 커밋/롤백에서 자동 해제
+        assert params == {"key": GRANT_GUARD_LOCK_KEY}
+
+    def test_other_dialects_are_noop(self):
+        sess = self._fake_session("sqlite")
+
+        lock_grant_guard(sess)
+
+        assert sess.execute.call_count == 0
+
+
+class TestAlertThrottleBound:
+    def setup_method(self):
+        _alert_sent_at.clear()
+
+    def test_state_is_bounded(self):
+        """프로세스 수명이 긴 서비스에 무한 증식하는 전역 dict 를 남기지 않는다."""
+        for i in range(ALERT_THROTTLE_MAX_KEYS * 2):
+            should_alert(f"k{i}", now=float(i) * ALERT_THROTTLE_SECONDS)
+
+        assert len(_alert_sent_at) <= ALERT_THROTTLE_MAX_KEYS
+
+
+class TestGuardNow:
+    """
+    시간창 기준시각의 출처. 앱↔DB 시계 스큐로 창이 밀리면(앱이 앞서면 카운트 0) fail-open 이라
+    PG 에서는 행의 `created_at` 과 **같은 시계**(DB)를 써야 한다. SQLite 분기와 함께 못박는다.
+    """
+
+    def test_postgres_uses_db_clock(self):
+        sess = MagicMock()
+        sess.get_bind.return_value.dialect.name = "postgresql"
+        stamped = datetime(2026, 9, 9, tzinfo=timezone.utc)
+        sess.scalar.return_value = stamped
+
+        assert guard_now(sess) is stamped
+        assert sess.scalar.call_count == 1
+
+    def test_sqlite_uses_app_clock(self):
+        sess = MagicMock()
+        sess.get_bind.return_value.dialect.name = "sqlite"
+
+        now = guard_now(sess)
+
+        assert sess.scalar.call_count == 0  # 문자열을 돌려주므로 DB 시계를 못 쓴다
+        assert now.tzinfo is timezone.utc

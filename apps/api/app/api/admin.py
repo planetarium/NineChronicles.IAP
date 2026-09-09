@@ -44,6 +44,7 @@ from app.config import config
 from app.dependencies import session
 from app.grant_guard import (
     GrantGuardViolation,
+    alert_key,
     enforce_grant_guards,
     limits_from_settings,
     namespace_of,
@@ -1537,15 +1538,30 @@ def upsert_point_shop_grantable(
         if missing and config.is_production:
             raise HTTPException(
                 status_code=400,
-                detail=f"prod 에선 지급 상한 미주입 상태로 화이트리스트를 켤 수 없습니다: {missing}",
+                detail=(
+                    f"prod 에선 지급 상한 미주입 상태로 화이트리스트를 켤 수 없습니다: {missing}."
+                    " (상품 CSV import 경로엔 이 게이트가 없다 — 그쪽으로 켜도 지급 시점에"
+                    " 503 으로 막히므로 발행은 안 열리지만, 상한을 먼저 주입하는 게 정상 순서다)"
+                ),
             )
+    was_grantable = bool(product.point_shop_grantable)
     product.point_shop_grantable = request.grantable
     sess.commit()
     logger.info(
         "point shop whitelist updated",
         product_id=product.id,
+        product_name=product.name,
         grantable=request.grantable,
     )
+    if request.grantable and not was_grantable:
+        # **켜는 것**은 민터 권한의 대상 목록이 넓어지는 사건이다. 엔드포인트별 스코프가 없어
+        #   (admin JWT 하나로 열린다) 이 변경을 사람이 보는 채널에도 남긴다. 끄기는 알리지 않는다
+        #   — 안전한 방향이고, 사고 대응 중 킬스위치가 알림을 기다릴 이유가 없다.
+        send_slack_alert(
+            config.iap_alert_webhook_url,
+            f":unlock: [IAP grant whitelist] product {product.id} ({product.name})"
+            f" 지급 허용으로 전환 ({config.stage})",
+        )
     return {"product_id": product.id, "point_shop_grantable": request.grantable}
 
 
@@ -1687,6 +1703,10 @@ def report_grant_violation(
 
     로그는 **항상** 남기고(who/what/when 감사 근거) Slack 만 사유별로 스로틀한다 —
     도배 방지가 목적이지 은폐가 아니다. 알림 실패는 무시한다(거절 판정은 이미 정해졌다).
+
+    ⚠️ 호출부는 이 함수 **전에 rollback** 해야 한다. 시간창 위반은 advisory lock 을 잡은 채로
+    던져지므로, 여기서 webhook POST(수 초 타임아웃)를 하는 동안 잠금을 들고 있으면 하필
+    호출자가 몰아치는 순간에 모든 지급 요청이 그 뒤에 줄을 선다.
     """
     namespace = namespace_of(request.external_ref)
     logger.warning(
@@ -1700,7 +1720,8 @@ def report_grant_violation(
         avatar_addr=request.avatar_address,
         planet_id=request.planet_id,
     )
-    if not should_alert(f"{violation.reason}:{namespace}"):
+    allowed = limits_from_settings(config).allowed_namespaces
+    if not should_alert(alert_key(violation.reason, namespace, allowed)):
         return
     send_slack_alert(
         config.iap_alert_webhook_url,
@@ -1761,6 +1782,10 @@ def create_grant(
             detail=f"product {request.product_id} has no grantable components",
         )
 
+    # memo 길이 검증(400)은 가드 **앞**에서 끝낸다 — 가드가 advisory lock 을 잡은 뒤에 형식
+    #   오류로 빠지면 잠금을 요청 종료까지 들고 있게 된다. 형식 검증은 형식 검증끼리 모은다.
+    memo = build_grant_memo(request.external_ref, request.memo)
+
     # (PLD-1575) 머니 가드 — 화이트리스트·발행량·빈도·네임스페이스. **INSERT 전에** 끝난다
     #   (위반 시 행이 없어야 포탈이 환급을 오판하지 않는다). 멱등 재요청은 위(200)에서 이미
     #   빠져나갔으므로, 상한을 나중에 낮춰도 진행 중인 주문의 폴링이 깨지지 않는다.
@@ -1774,6 +1799,9 @@ def create_grant(
             is_production=config.is_production,
         )
     except GrantGuardViolation as violation:
+        # 먼저 트랜잭션을 놓는다(= advisory lock 해제). 아직 아무것도 쓰지 않았으므로 rollback 은
+        #   무손실이고, 알림 webhook 이 느려도 다른 지급 요청을 막지 않는다.
+        sess.rollback()
         report_grant_violation(violation, request)
         raise
 
@@ -1785,7 +1813,7 @@ def create_grant(
         agent_addr=(
             format_addr(request.agent_address) if request.agent_address else None
         ),
-        memo=build_grant_memo(request.external_ref, request.memo),
+        memo=memo,
         status=GrantStatus.PENDING,
     )
     sess.add(row)

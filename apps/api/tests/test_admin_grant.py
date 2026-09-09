@@ -574,9 +574,43 @@ class TestProductWhitelist:
         assert rows_of(sess) == []
 
 
+CRYSTAL = "FAV__CRYSTAL"
+
+
+class TestFavTickerAllowlist:
+    """
+    화폐(FAV) 는 티커 자체를 얼로우리스트로 막는다 — 수량 상한은 티커를 구분하지 못한다.
+
+    `fungible-assets/import` 로 화이트리스트에 올라간 상품의 구성품을 CRYSTAL → NCG 로
+    갈아치우면 수량 상한은 그대로 통과한다. 그 경로를 닫는 게 이 가드다.
+    """
+
+    def test_fav_is_denied_by_default(self, client, sess, alert):
+        product = make_product(sess, with_item=False, fav_amount=1, name="fav-default")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "fav_ticker_not_allowed" in json.dumps(resp.json())
+        assert rows_of(sess) == []
+        assert alert.call_count == 1
+
+    def test_allowed_ticker_passes(self, client, sess, limits):
+        limits(grant_allowed_fav_tickers=CRYSTAL)
+        product = make_product(sess, with_item=False, fav_amount=1, name="fav-allowed")
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+    def test_item_only_product_is_unaffected(self, client, sess):
+        """기본값(빈 목록)이 아이템 지급을 막지 않는다 — 포인트샵의 정상 케이스."""
+        product = make_product(sess, name="item-only")
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+
 class TestIssuanceCaps:
     def test_fav_units_over_cap_is_400(self, client, sess, limits, alert):
-        limits(grant_max_fav_units_per_request=10)
+        limits(grant_max_fav_units_per_request=10, grant_allowed_fav_tickers=CRYSTAL)
         product = make_product(sess, with_item=False, fav_amount=100, name="fav-big")
 
         resp = client.post(GRANT_URL, json=payload(product))
@@ -587,7 +621,7 @@ class TestIssuanceCaps:
         assert alert.call_count == 1
 
     def test_fav_units_at_cap_passes(self, client, sess, limits):
-        limits(grant_max_fav_units_per_request=10)
+        limits(grant_max_fav_units_per_request=10, grant_allowed_fav_tickers=CRYSTAL)
         product = make_product(sess, with_item=False, fav_amount=10, name="fav-ok")
 
         assert client.post(GRANT_URL, json=payload(product)).status_code == 201
@@ -604,7 +638,11 @@ class TestIssuanceCaps:
 
     def test_item_cap_does_not_leak_into_fav_cap(self, client, sess, limits):
         """FAV 와 아이템은 따로 센다 — 물약 상한이 NCG 발행 상한이 되면 가드가 무의미하다."""
-        limits(grant_max_item_units_per_request=1000, grant_max_fav_units_per_request=1)
+        limits(
+            grant_max_item_units_per_request=1000,
+            grant_max_fav_units_per_request=1,
+            grant_allowed_fav_tickers=CRYSTAL,
+        )
         product = make_product(sess, item_amount=1000, fav_amount=2, name="mixed")
 
         resp = client.post(GRANT_URL, json=payload(product))
@@ -745,6 +783,43 @@ class TestProductionFailClosed:
 
 
 class TestViolationAlerting:
+    def test_unregistered_namespace_flood_alerts_once(self, client, sess, alert):
+        """
+        미등록 네임스페이스를 매번 바꿔 던져도 알림은 1건이어야 한다.
+
+        스로틀 키에 **호출자가 조종하는 값**(검증 전 네임스페이스)이 들어가면, ref 만 바꾸는
+        것으로 스로틀이 무력화돼 요청마다 webhook POST 가 나간다(Slack 도배 + 요청 경로 지연).
+        """
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"promo{i}:x")
+            ).status_code
+            for i in range(5)
+        ]
+
+        assert statuses == [400] * 5
+        assert alert.call_count == 1
+        assert rows_of(sess) == []
+
+    def test_alert_happens_after_transaction_is_released(self, client, sess, alert):
+        """
+        알림(webhook POST)은 **트랜잭션·advisory lock 을 놓은 뒤**여야 한다.
+
+        시간창 위반은 잠금을 잡은 채로 던져진다 — 그 상태로 Slack 을 기다리면 하필 호출자가
+        몰아치는 순간에 모든 지급 요청이 잠금 뒤에 줄을 선다.
+        """
+        seen = {}
+        alert.side_effect = lambda *a, **kw: seen.setdefault(
+            "in_transaction", sess.in_transaction()
+        )
+        product = make_product(sess, grantable=False, name="tx-check")
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 400
+        assert alert.call_count == 1
+        assert seen["in_transaction"] is False
+
     def test_repeat_violation_alerts_once(self, client, sess, alert):
         """알림 스로틀 — 루프 도는 호출자가 Slack 을 도배하지 못한다(거절은 매번 한다)."""
         product = make_product(sess, grantable=False, name="loop")
@@ -762,7 +837,7 @@ class TestViolationAlerting:
 
 
 class TestWhitelistAdmin:
-    def test_put_then_get_lists_only_grantable(self, client, sess):
+    def test_put_then_get_lists_only_grantable(self, client, sess, alert):
         listed = make_product(sess, grantable=False, name="to-list")
         make_product(sess, grantable=False, name="stays-off")
 
@@ -775,6 +850,9 @@ class TestWhitelistAdmin:
             "product_id": listed.id,
             "point_shop_grantable": True,
         }
+        # 민터 대상 목록이 넓어지는 사건이라 사람이 보는 채널에도 남는다.
+        assert alert.call_count == 1
+        assert "grant whitelist" in alert.call_args[0][1]
         # 응답 키는 기존 admin 관례(snake_case) — camelCase 계약은 포탈이 읽는 grant 응답만이다.
         items = client.get(WHITELIST_URL).json()
         assert [i["product_id"] for i in items] == [listed.id]
@@ -793,7 +871,9 @@ class TestWhitelistAdmin:
         sess.refresh(product)
         assert product.point_shop_grantable is False
 
-    def test_turning_off_is_always_allowed_even_in_prod(self, client, sess, limits):
+    def test_turning_off_is_always_allowed_even_in_prod(
+        self, client, sess, limits, alert
+    ):
         """킬스위치는 게이트 뒤에 두지 않는다 — prod 상한 미주입이어도 끄기는 통과."""
         limits(stage="production")
         product = make_product(sess, grantable=True, name="killswitch")
@@ -805,6 +885,7 @@ class TestWhitelistAdmin:
         assert resp.status_code == 200
         sess.refresh(product)
         assert product.point_shop_grantable is False
+        assert alert.call_count == 0  # 끄기는 안전한 방향이라 알리지 않는다
 
     def test_prod_without_limits_cannot_turn_on(self, client, sess, limits):
         limits(stage="production")

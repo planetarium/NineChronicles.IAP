@@ -21,6 +21,15 @@
 같은 이유로 nonce 규약(채번 후 실패를 FAILED 로 종단하지 않는다)도 건드리지 않는다 —
 가드는 nonce 채번(워커) 훨씬 앞단이다.
 
+## 아직 없는 축 (후속)
+- **아바타/계정 단위 상한이 없다.** 시간창 캡 전량을 한 아바타에 몰아줄 수 있다. "누가 얼마나
+  받았나"의 권위는 포탈(포인트 원장)이라 1차로는 그쪽 책임이지만, force-grant 민터의 4번째
+  축으로 남는다(TODO).
+- **엔드포인트별 스코프가 없다.** admin JWT 하나로 화이트리스트 CRUD·상품 CSV import 도 열려
+  있어서, 토큰이 유출되면 공격자가 스스로 화이트리스트를 켤 수 있다. 이 가드가 닫는 것은
+  "무제한 발행"이고 "토큰 유출 시 임의 상품"은 스코프 분리(후속) 없이는 닫히지 않는다.
+  그래서 화이트리스트를 켜는 순간에도 Slack 알림을 남긴다(admin.py).
+
 ## 설정 미주입(prod)은 400 이 아니라 503
 상한이 안 박힌 prod 는 **운영 실수**지 호출자 잘못이 아니다. 400 을 주면 포탈이 주문을 영구
 실패로 처리(=포인트 환급)하는데, 실제로는 아무 일도 안 일어난 상태다. 503 이면 포탈이
@@ -41,7 +50,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 # 네임스페이스(external_ref 의 `:` 앞부분) 허용 문자. `external_ref` 패턴의 부분집합이고
-#   `:` 를 뺀다(구분자). LIKE prefix 카운트에 그대로 쓰이므로 `%`/`_` 도 배제된다.
+#   `:` 를 뺀다(구분자). `%` 는 문자집합에서 빠져 있고, 허용되는 `_` 는 LIKE 와일드카드지만
+#   prefix 카운트에서 `autoescape=True` 로 이스케이프한다(`_count_since` 참고).
 NAMESPACE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$")
 
 # 허용목록 전체 비활성(킬스위치) 신호. CSV voucher 컬럼의 `-`(전체 제거) 관례와 같은 표기.
@@ -51,6 +61,10 @@ NAMESPACE_DENY_ALL = "-"
 # 같은 위반 사유가 반복될 때 Slack 알림·요청 지연을 만들지 않도록 하는 최소 간격(초).
 #   루프 도는 호출자가 초당 수십 건을 던져도 채널은 사유별 1분 1건만 본다.
 ALERT_THROTTLE_SECONDS = 60.0
+# 스로틀 상태(프로세스 전역 dict)의 상한. 키는 정규화돼 유한하지만 무한 증식 여지를 없앤다.
+ALERT_THROTTLE_MAX_KEYS = 256
+# 미등록 네임스페이스를 스로틀 키에서 접을 때 쓰는 고정 라벨(호출자 제어 문자열 배제).
+UNREGISTERED_NAMESPACE_LABEL = "<unregistered>"
 
 # 카운트→INSERT 구간을 직렬화하는 PG advisory lock 키(임의 상수, 이 가드 전용).
 GRANT_GUARD_LOCK_KEY = 15751564
@@ -61,11 +75,13 @@ class GrantGuardViolation(HTTPException):
     머니 가드 위반. `status_code` 는 400(호출자 잘못) 또는 503(설정 미주입).
 
     `reason` 은 알림 스로틀 키 · 감사 로그 필드로 쓰는 안정적인 식별자다(사람이 읽는 문장은
-    `detail`). 계약상 응답 본문 형식은 기존 400 과 같으므로 포탈 클라이언트에 영향이 없다.
+    `detail`). 응답 본문은 기존 400 과 같은 `{"detail": ...}` 이라 포탈 클라이언트에 영향이 없고,
+    **detail 앞에 `[reason]` 을 붙인다** — 포탈이 "일시 초과(재시도 가치 있음)"와 "잘못된 요청"을
+    문장 대신 토큰으로 구분할 수 있어야 한다(계약 v1.2 에서 상태코드를 나눌 때까지의 다리).
     """
 
     def __init__(self, status_code: int, reason: str, detail: str):
-        super().__init__(status_code=status_code, detail=detail)
+        super().__init__(status_code=status_code, detail=f"[{reason}] {detail}")
         self.reason = reason
 
 
@@ -98,7 +114,9 @@ def parse_grant_namespaces(raw: Optional[str]) -> frozenset:
 
 # (PLD-1575) 상품 CSV 의 `point_shop_grantable` 컬럼 토큰. 화이트리스트를 **켜는 경로**의
 #   파서도 가드 모듈에 모아 둔다(같은 fail-closed 규칙이고, import_utils 는 이걸 재사용한다).
-GRANTABLE_TRUE_TOKENS = frozenset({"TRUE", "T", "Y", "YES", "1", "O"})
+# ⚠️ 문자 `O` 는 넣지 않는다 — 숫자 `0`(=False) 오타가 True 로 읽히는 방향이라
+#   "끄려다 켜는" 사고가 된다. 머니 플래그에서 그 비대칭은 허용 못 한다.
+GRANTABLE_TRUE_TOKENS = frozenset({"TRUE", "T", "Y", "YES", "1"})
 GRANTABLE_FALSE_TOKENS = frozenset({"FALSE", "F", "N", "NO", "0", "X", "-"})
 
 
@@ -145,6 +163,9 @@ class GrantLimits:
     """
 
     allowed_namespaces: frozenset
+    # 지급 허용 FAV 티커. 빈 집합 = FAV 지급 금지(기본값이자 가장 안전한 상태)라
+    #   `missing()` 에 넣지 않는다 — 미주입이 곧 fail-closed 다.
+    allowed_fav_tickers: frozenset = frozenset()
     max_fav_units_per_request: Optional[int] = None
     max_item_units_per_request: Optional[int] = None
     max_grants_per_hour: Optional[int] = None
@@ -175,6 +196,7 @@ def limits_from_settings(settings) -> GrantLimits:
     """
     return GrantLimits(
         allowed_namespaces=parse_grant_namespaces(settings.grant_allowed_namespaces),
+        allowed_fav_tickers=parse_fav_tickers(settings.grant_allowed_fav_tickers),
         max_fav_units_per_request=settings.grant_max_fav_units_per_request,
         max_item_units_per_request=settings.grant_max_item_units_per_request,
         max_grants_per_hour=settings.grant_max_grants_per_hour,
@@ -238,10 +260,46 @@ def grant_units(product: Product) -> Tuple[Decimal, int]:
 
     FAV(NCG·CRYSTAL 등)와 아이템을 **따로** 센다. 하나로 합치면 상한이 큰 쪽에 맞춰지고
     (예: 물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다) 가드가 무의미해진다.
+
+    ⚠️ FAV 합은 **티커를 구분하지 않는다** — CRYSTAL 기준으로 잡은 수량 상한이 SOULSTONE
+    발행 한도가 된다(개당 가치가 자릿수로 다르다). 그래서 수량 상한만으로는 부족하고,
+    티커 자체를 얼로우리스트로 막는다(`check_fav_tickers`). 수량 상한은 그 위의 2차 방어다.
     """
     fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
     items = sum((int(row.amount) for row in product.fungible_item_list), 0)
     return fav, items
+
+
+def parse_fav_tickers(raw: Optional[str]) -> frozenset:
+    """
+    쉼표 구분 지급 허용 FAV 티커 목록 → 집합. **빈 값/None = 빈 집합 = FAV 지급 전면 금지.**
+
+    네임스페이스 파서와 달리 빈 값이 오류가 아닌 이유: 여기서는 빈 값이 **가장 안전한 상태**고
+    (기본값이기도 하다) 포인트샵 상품은 원칙적으로 아이템이다. FAV 를 지급하려면 티커를
+    명시적으로 열어야 한다 — 화폐 발행은 "실수로 열려 있는" 상태가 없어야 한다.
+    """
+    if not raw:
+        return frozenset()
+    return frozenset(token.strip() for token in str(raw).split(",") if token.strip())
+
+
+def check_fav_tickers(product: Product, allowed: frozenset) -> None:
+    """
+    이 상품의 FAV 구성품 티커가 전부 허용목록 안인지. 아니면 400.
+
+    수량 상한보다 이게 먼저 필요한 가드다: `product.fav_list` 는 상품 CSV(`fungible-assets/import`)
+    로 갈아치울 수 있어서, 화이트리스트에 이미 올라간 상품의 구성품을 CRYSTAL → NCG 로 바꾸면
+    수량 상한은 그대로 통과한다. 티커 얼로우리스트가 그 경로를 닫는다.
+    """
+    tickers = {row.ticker for row in product.fav_list}
+    denied = sorted(tickers - allowed)
+    if denied:
+        raise GrantGuardViolation(
+            400,
+            "fav_ticker_not_allowed",
+            f"product {product.id} FAV 티커 {denied} 는 지급 허용목록 밖입니다"
+            f" (허용: {sorted(allowed) or '없음(FAV 지급 금지)'})",
+        )
 
 
 def _count_since(
@@ -263,6 +321,20 @@ def _count_since(
             GrantOutbox.external_ref.startswith(f"{namespace}:", autoescape=True)
         )
     return int(sess.scalar(stmt) or 0)
+
+
+def guard_now(sess: Session) -> datetime:
+    """
+    시간창의 기준시각. PG 에서는 **DB 시계**를 쓴다.
+
+    행의 `created_at` 은 DB `now()` 로 찍히는데(TimeStampMixin) 창의 경계를 앱 시계로 잡으면
+    앱↔DB 스큐가 그대로 창을 밀어버린다. 앱이 앞서면 `since` 가 미래가 되어 카운트가 0 —
+    **fail-open** 이다. 같은 시계에서 양쪽을 재면 스큐가 상쇄된다.
+    SQLite(테스트)의 `now()` 는 문자열을 돌려주므로 앱 시계를 쓴다(단일 프로세스라 스큐 없음).
+    """
+    if sess.get_bind().dialect.name != "postgresql":
+        return datetime.now(timezone.utc)
+    return sess.scalar(select(func.now()))
 
 
 def lock_grant_guard(sess: Session) -> None:
@@ -303,9 +375,9 @@ def enforce_grant_guards(
          깨지고(계약: 재요청 = 200) 지급/환급 판정이 뒤집힌다.
       2. 값이 싼 검사(설정·네임스페이스·상품·수량)를 먼저, DB 카운트를 마지막에.
       3. 이 함수가 성공하면 **같은 트랜잭션에서** INSERT+commit 해야 한다(잠금 유효 구간).
+      4. 위반(예외)으로 빠졌으면 호출부가 **먼저 rollback** 해서 잠금·트랜잭션을 놓고 나서
+         알림 같은 외부 I/O 를 해야 한다(안 그러면 Slack 지연이 전 지급 요청을 줄 세운다).
     """
-    now = now or datetime.now(timezone.utc)
-
     # ── 0) 설정 fail-closed 게이트 ────────────────────────────────────────────
     if is_production:
         missing = limits.missing()
@@ -347,7 +419,8 @@ def enforce_grant_guards(
         product.id, product.product_type, product.google_sku
     )
 
-    # ── 3) 요청 단위 발행량 상한 ──────────────────────────────────────────────
+    # ── 3) 구성품 티커 얼로우리스트 + 요청 단위 발행량 상한 ──────────────────
+    check_fav_tickers(product, limits.allowed_fav_tickers)
     fav_units, item_units = grant_units(product)
     if (
         limits.max_fav_units_per_request is not None
@@ -381,8 +454,10 @@ def enforce_grant_guards(
         ("per_hour_exceeded", limits.max_grants_per_hour, timedelta(hours=1), None),
         ("per_day_exceeded", limits.max_grants_per_day, timedelta(days=1), None),
     )
-    if any(cap is not None for _, cap, _, _ in windows):
-        lock_grant_guard(sess)
+    if not any(cap is not None for _, cap, _, _ in windows):
+        return namespace
+    lock_grant_guard(sess)
+    now = now or guard_now(sess)
     for reason, cap, window, scope in windows:
         if cap is None:
             continue
@@ -401,6 +476,18 @@ def enforce_grant_guards(
 _alert_sent_at: Dict[str, float] = {}
 
 
+def alert_key(reason: str, namespace: Optional[str], allowed: frozenset) -> str:
+    """
+    알림 스로틀 키. **호출자가 조종하는 값을 키에 넣지 않는다.**
+
+    미등록 네임스페이스를 그대로 키에 넣으면 `promo1:x`, `promo2:x`, … 로 ref 만 바꿔 던지는
+    것으로 키가 매번 새로워져 스로틀이 무력화된다(= Slack 도배 + 요청마다 webhook POST,
+    스로틀 dict 무한 증식). 등록된 값만 남기고 나머지는 하나로 접는다.
+    """
+    label = namespace if namespace in allowed else UNREGISTERED_NAMESPACE_LABEL
+    return f"{reason}:{label}"
+
+
 def should_alert(key: str, now: Optional[float] = None) -> bool:
     """
     같은 키의 알림을 `ALERT_THROTTLE_SECONDS` 에 1회로 제한(프로세스 로컬, best-effort).
@@ -409,8 +496,18 @@ def should_alert(key: str, now: Optional[float] = None) -> bool:
     **요청 경로에서 webhook POST 를 반복**해 API 를 스스로 느리게 만든다. 정확한 분산 스로틀이
     아니어도 목적(도배 방지)에는 충분하다 — API 는 단일 프로세스로 뜨고(workers=1),
     감사 근거는 스로틀되지 않는 구조 로그가 남긴다.
+
+    키는 `alert_key` 로 정규화돼 (사유 × 등록 네임스페이스+1) 만큼으로 유한하지만, 그래도
+    상한을 둔다 — 프로세스 수명이 긴 서비스에서 무한 증식하는 전역 dict 를 남기지 않는다.
     """
     now = time.monotonic() if now is None else now
+    if len(_alert_sent_at) >= ALERT_THROTTLE_MAX_KEYS:
+        for stale, at in list(_alert_sent_at.items()):
+            if now - at >= ALERT_THROTTLE_SECONDS:
+                _alert_sent_at.pop(stale, None)
+        if len(_alert_sent_at) >= ALERT_THROTTLE_MAX_KEYS:
+            # 그래도 넘치면 버린다. 스로틀 상태를 잃는 최악의 결과는 "알림이 한 번 더 나감"이다.
+            _alert_sent_at.clear()
     last = _alert_sent_at.get(key)
     if last is not None and now - last < ALERT_THROTTLE_SECONDS:
         return False
