@@ -54,6 +54,13 @@ beat_schedule = {
         "schedule": crontab(minute="*/5"),
         "options": {"queue": "background_job_queue"},
     },
+    # (PLD-1564) 영수증 없는 지급: 미완료 아웃박스 재시도 + 스테이징 tx 확정 추적.
+    #   tracker(iap.track_tx)는 receipt 만 보므로 아웃박스는 이 태스크가 추적한다.
+    "grant-track-every-minutes": {
+        "task": "iap.grant_track",
+        "schedule": crontab(minute="*/1"),
+        "options": {"queue": "background_job_queue"},
+    },
 }
 
 app.conf.update(
