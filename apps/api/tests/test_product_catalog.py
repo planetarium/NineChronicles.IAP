@@ -174,7 +174,11 @@ def make_product(
             )
         )
         sess.commit()
-        sess.refresh(product)
+        # ⚠️ 여기서 `sess.refresh(product)` 를 부르면 안 된다. sess 픽스처의
+        #    expire_on_commit=False 를 **이 객체에 대해서만** 되돌려서, SQLite 재로드 때
+        #    tzinfo 가 날아간다 → open_timestamp 를 함께 쓰는 테스트가 헬퍼가 아니라
+        #    product.py 의 비교식에서 "can't compare offset-naive and offset-aware" 로 터진다.
+        #    구성품은 엔드포인트가 joinedload 로 다시 긁어오므로 refresh 가 필요하지도 않다.
     return product
 
 
