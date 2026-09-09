@@ -1,4 +1,3 @@
-import datetime
 import json
 import logging
 from typing import Any, Dict, Optional, Tuple
@@ -7,14 +6,12 @@ import structlog
 from shared._crypto import Account
 from shared._graphql import GQL
 from shared.enums import PackageName, PlanetID, TxStatus
-from shared.lib9c.actions.grant_items import GrantItems
-from shared.lib9c.models.address import Address
-from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 from shared.models.product import Product
 from shared.models.receipt import Receipt
 from shared.schemas.message import SendProductMessage
-from shared.utils.transaction import append_signature_to_unsigned_tx, create_unsigned_tx
-from sqlalchemy import create_engine, func, select
+from shared.utils.grant import build_claim_data, create_grant_items_tx, promo_multiplier
+from shared.utils.nonce import as_bytes, max_db_nonce_by_planet, pick_nonce
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, joinedload, selectinload, scoped_session, sessionmaker
 
 from app.celery_app import app
@@ -105,7 +102,6 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
         raise ValueError(error_msg)
 
     package_name = PackageName(receipt.package_name)
-    avatar_address = Address(receipt.avatar_addr)
     memo = json.dumps(
         {
             "iap": {
@@ -125,53 +121,20 @@ def create_tx(sess: Session, account: Account, receipt: Receipt) -> bytes:
         }
     )
 
-    claim_data = []
-
     planet_id = PlanetID(receipt.planet_id)
-    multiplier = 2 if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1
-
-    # Process fungible items
-    logger.debug(f"Processing {len(product.fungible_item_list)} fungible items")
-    for item in product.fungible_item_list:
-        claim_data.append(
-            FungibleAssetValue.from_raw_data(
-                ticker=item.fungible_item_id, decimal_places=0, amount=item.amount * multiplier
-            )
-        )
-
-    # Process fungible assets (fav_list)
-    logger.debug(f"Processing {len(product.fav_list)} fungible assets")
-    for fav in product.fav_list:
-        claim_data.append(
-            FungibleAssetValue.from_raw_data(
-                ticker=fav.ticker,
-                decimal_places=fav.decimal_places,
-                amount=fav.amount * multiplier,
-            )
-        )
-
+    # 구성품→티커 변환·액션·서명은 shared.utils.grant 한 곳에 있다. 무영수증 지급
+    #   (grant_outbox, PLD-1564)도 같은 함수를 쓴다 — 여기서 복제하면 두 경로가 다른 tx 를 만든다.
+    claim_data = build_claim_data(product, multiplier=promo_multiplier(planet_id))
     logger.debug(f"Total claim_data items: {len(claim_data)}")
 
-    action = GrantItems(
-        claim_data=[
-            {"avatarAddress": avatar_address, "fungibleAssetValues": claim_data}
-        ],
+    return create_grant_items_tx(
+        account=account,
+        planet_id=planet_id,
+        avatar_addr=receipt.avatar_addr,
+        claim_data=claim_data,
+        nonce=receipt.nonce,
         memo=memo,
     )
-
-    unsigned_tx = create_unsigned_tx(
-        planet_id=PlanetID(receipt.planet_id),
-        public_key=account.pubkey.hex(),
-        address=account.address,
-        nonce=receipt.nonce,
-        plain_value=action.plain_value,
-        timestamp=datetime.datetime.now(tz=datetime.timezone.utc)
-        + datetime.timedelta(days=7),
-    )
-
-    signature = account.sign_tx(unsigned_tx)
-    signed_tx = append_signature_to_unsigned_tx(unsigned_tx, signature)
-    return signed_tx
 
 
 def stage_tx(receipt: Receipt) -> Tuple[bool, str, Optional[str]]:
@@ -256,15 +219,10 @@ def handle(message: SendProductMessage):
         # 지연 초기화를 지원하는 gql_dict 생성
         gql_dict = LazyGQLDict(config.converted_gql_url_map, config.headless_jwt_secret)
 
-        db_nonce_dict = {
-            x.planet_id: x.nonce
-            for x in sess.execute(
-                select(
-                    Receipt.planet_id.label("planet_id"),
-                    func.max(Receipt.nonce).label("nonce"),
-                ).group_by(Receipt.planet_id)
-            ).all()
-        }
+        # 행성별 DB 최대 nonce. **receipt 만 보면 안 된다** — 무영수증 지급(grant_outbox, PLD-1564)이
+        #   같은 KMS 지갑으로 tx 를 내므로, 한쪽만 보면 같은 nonce 를 두 번 발급해 둘 중 하나가
+        #   영구 스테이징 실패한다. 통합 규칙은 shared.utils.nonce 한 곳에 있다.
+        db_nonce_dict = max_db_nonce_by_planet(sess)
         nonce_dict = {}
         target_list = []
 
@@ -317,12 +275,12 @@ def handle(message: SendProductMessage):
                     return nonce
 
                 try:
-                    receipt.nonce = max(  # max nonce of
-                        nonce_dict.get(  # current handling nonce (or nonce in blockchain)
-                            receipt.planet_id,
-                            get_nonce_from_node(),  # 노드에서 가져온 nonce
-                        ),
-                        db_nonce_dict.get(receipt.planet_id, 0) + 1,  # DB stored nonce
+                    planet_key = as_bytes(receipt.planet_id)
+                    receipt.nonce = pick_nonce(
+                        # current handling nonce (or nonce in blockchain)
+                        nonce_dict.get(planet_key, get_nonce_from_node()),
+                        # DB stored nonce (receipt + grant_outbox)
+                        db_nonce_dict.get(planet_key),
                     )
                 except (ValueError, Exception) as e:
                     # 노드에서 nonce를 가져오지 못함
@@ -341,7 +299,7 @@ def handle(message: SendProductMessage):
                     return results
 
             receipt.tx = create_tx(sess, account, receipt).hex()
-            nonce_dict[receipt.planet_id] = receipt.nonce + 1
+            nonce_dict[as_bytes(receipt.planet_id)] = receipt.nonce + 1
             target_list.append((receipt, message.uuid))
             logger.info(f"{receipt.uuid}: Tx created with nonce: {receipt.nonce}")
             sess.add(receipt)
