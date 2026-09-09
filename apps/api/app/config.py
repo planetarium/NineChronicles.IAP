@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     #   ⚠️ 기본을 켜 두지 않는 이유: 정상 반복 구매에서도 발화하는 신호라 기본값으로 켜면
     #   거절 알림과 같은 채널이 오탐으로 채워진다(알림 피로 → 진짜 거절을 놓친다). "포탈
     #   이중 요청이 의심될 때 켜는 진단 스위치"로 쓴다.
+    #   ⚠️ **켜면 (아바타, 상품) 쌍 수만큼 요청 경로에서 webhook POST 가 나간다** — 사건 단위가
+    #   그 쌍이라 스로틀을 접을 수 없다(측정: 300쌍 = POST 300건). 그런데 이 스위치를 켜는
+    #   시점이 바로 그 쌍이 폭증한 상황이다 → **짧게 켜고 끈다.** 상시 ON 으로 두지 말 것.
     grant_duplicate_alert_window_seconds: Optional[int] = None
     # 가드 위반 알림. 워커의 WORKER_IAP_ALERT_WEBHOOK_URL 과 **같은 값**(같은 Slack 채널)을 넣는다.
     iap_alert_webhook_url: Optional[str] = None

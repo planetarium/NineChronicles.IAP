@@ -881,6 +881,10 @@ class TestAvatarCaps:
         limits(grant_max_grants_per_avatar_per_hour=5)
         product = make_product(sess)
         seen = {}
+        # 순서를 고정하는 쪽은 **worker.call_count** 다. `len(rows_of(sess))` 는 단독으로는
+        #   약하다 — `sess.add(row)` 직후 SELECT 가 autoflush 를 일으켜 **커밋 전에도** 5를
+        #   돌려주므로 "커밋 전 알림" 회귀를 못 잡는다. worker 픽스처를 떼면 이 테스트가
+        #   조용히 무력해진다는 뜻이다.
         alert.side_effect = lambda *a, **kw: seen.setdefault(
             "at_alert", (len(rows_of(sess)), worker.call_count)
         )
