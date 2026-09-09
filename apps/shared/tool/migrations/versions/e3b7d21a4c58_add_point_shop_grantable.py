@@ -45,9 +45,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 잠금 대기로 product 읽기를 세우지 않는다 — 못 잡으면 이 트랜잭션만 실패하고(리비전 미적용)
-    #   장기 쿼리가 끝난 뒤 다시 돌리면 된다. `SET LOCAL` 이라 같은 커넥션의 다음 리비전엔
-    #   영향이 없다(alembic 은 리비전을 트랜잭션으로 감싼다).
+    # 잠금 대기로 product 읽기를 세우지 않는다 — 못 잡으면 실패하고(리비전 미적용) 장기 쿼리가
+    #   끝난 뒤 다시 돌리면 된다.
+    #   ⚠️ 이 저장소의 env.py 는 `upgrade head` **전체**를 한 트랜잭션으로 감싼다
+    #   (`context.begin_transaction()`, transaction_per_migration 아님). 그래서 `SET LOCAL` 이
+    #   여기서 끝나지 않고 뒤따르는 리비전까지 따라간다 → DDL 직후 DEFAULT 로 되돌린다.
     op.execute("SET LOCAL lock_timeout = '3s'")
     op.add_column(
         "product",
@@ -61,6 +63,8 @@ def upgrade() -> None:
     op.create_index(
         "ix_grant_outbox_created_at", "grant_outbox", ["created_at"], unique=False
     )
+    # 이 리비전 밖으로 새지 않게 원복(위 주석 참고).
+    op.execute("SET LOCAL lock_timeout = DEFAULT")
 
 
 def downgrade() -> None:

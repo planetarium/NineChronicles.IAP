@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
 from shared.enums import ProductType
@@ -65,6 +65,10 @@ ALERT_THROTTLE_SECONDS = 60.0
 ALERT_THROTTLE_MAX_KEYS = 256
 # 미등록 네임스페이스를 스로틀 키에서 접을 때 쓰는 고정 라벨(호출자 제어 문자열 배제).
 UNREGISTERED_NAMESPACE_LABEL = "<unregistered>"
+
+# 시간창 사용률이 이 비율을 넘으면 **거절 전에** 경고를 쏜다. 임계값(상한)이 아니라 알림
+#   휴리스틱이라 설정으로 빼지 않는다 — 이 값이 바뀌어도 발행 가능량은 변하지 않는다.
+WINDOW_WARN_RATIO = 0.8
 
 # 카운트→INSERT 구간을 직렬화하는 PG advisory lock 키(임의 상수, 이 가드 전용).
 GRANT_GUARD_LOCK_KEY = 15751564
@@ -285,20 +289,37 @@ def parse_fav_tickers(raw: Optional[str]) -> frozenset:
 
 def check_fav_tickers(product: Product, allowed: frozenset) -> None:
     """
-    이 상품의 FAV 구성품 티커가 전부 허용목록 안인지. 아니면 400.
+    이 상품의 FAV 구성품 티커가 전부 허용목록 안인지.
 
     수량 상한보다 이게 먼저 필요한 가드다: `product.fav_list` 는 상품 CSV(`fungible-assets/import`)
     로 갈아치울 수 있어서, 화이트리스트에 이미 올라간 상품의 구성품을 CRYSTAL → NCG 로 바꾸면
     수량 상한은 그대로 통과한다. 티커 얼로우리스트가 그 경로를 닫는다.
+
+    상태코드를 두 갈래로 나눈다 — 이 모듈의 "미주입은 400 이 아니라 503" 규칙과 같은 이유다:
+      · 허용목록이 **비어 있는데** FAV 상품이 왔다 → **503**. 배선을 잊은 운영 실수일 수 있고,
+        400 이면 포탈이 그 주문을 영구 실패(=포인트 환급)로 확정한다. 503 이면 재시도한다.
+        (정말 "FAV 는 안 준다"는 정책이면 그 상품을 화이트리스트에 켜지 않으면 된다 —
+         그때는 이 지점까지 오지 않는다.)
+      · 허용목록이 있는데 이 상품 티커가 밖이다 → **400**. 상품 구성 오류라 재시도해도 같다.
     """
     tickers = {row.ticker for row in product.fav_list}
+    if not tickers:
+        return
+    if not allowed:
+        raise GrantGuardViolation(
+            503,
+            "fav_tickers_unset",
+            f"product {product.id} 는 FAV({sorted(tickers)})를 지급하는데"
+            " 허용 티커 목록(grant_allowed_fav_tickers)이 비어 있습니다"
+            " — 티커를 열거나 이 상품을 화이트리스트에서 내려야 합니다",
+        )
     denied = sorted(tickers - allowed)
     if denied:
         raise GrantGuardViolation(
             400,
             "fav_ticker_not_allowed",
             f"product {product.id} FAV 티커 {denied} 는 지급 허용목록 밖입니다"
-            f" (허용: {sorted(allowed) or '없음(FAV 지급 금지)'})",
+            f" (허용: {sorted(allowed)})",
         )
 
 
@@ -365,6 +386,7 @@ def enforce_grant_guards(
     limits: GrantLimits,
     is_production: bool,
     now: Optional[datetime] = None,
+    on_warning: Optional[Callable[[str, str], None]] = None,
 ) -> str:
     """
     지급 요청 1건에 머니 가드 전부를 적용하고 네임스페이스를 돌려준다. 위반은 `GrantGuardViolation`.
@@ -377,6 +399,11 @@ def enforce_grant_guards(
       3. 이 함수가 성공하면 **같은 트랜잭션에서** INSERT+commit 해야 한다(잠금 유효 구간).
       4. 위반(예외)으로 빠졌으면 호출부가 **먼저 rollback** 해서 잠금·트랜잭션을 놓고 나서
          알림 같은 외부 I/O 를 해야 한다(안 그러면 Slack 지연이 전 지급 요청을 줄 세운다).
+
+    `on_warning(reason, message)` 는 **거절 전에** 부르는 소프트 임계 경고다(아래 참고).
+    선택 인자로 둔 이유: 이 모듈은 알림 수단(webhook·config)을 몰라야 한다.
+    ⚠️ 이 콜백은 **잠금을 잡은 상태**에서 호출된다 — 외부 I/O(webhook)를 여기서 하면 안 된다.
+    호출부는 메시지를 모아 두고 commit **뒤에** 보낸다(admin.py).
     """
     # ── 0) 설정 fail-closed 게이트 ────────────────────────────────────────────
     if is_production:
@@ -462,13 +489,21 @@ def enforce_grant_guards(
         if cap is None:
             continue
         used = _count_since(sess, now - window, namespace=scope)
+        scope_label = f"네임스페이스 '{scope}'" if scope else "전체"
         if used >= cap:
-            scope_label = f"네임스페이스 '{scope}'" if scope else "전체"
             raise GrantGuardViolation(
                 400,
                 reason,
                 f"{scope_label} 지급 건수 상한 초과: 최근 {window} 동안 {used}건 ≥ 상한 {cap}"
                 " — 임계를 올리거나 잠시 후 다시 시도하세요",
+            )
+        if on_warning is not None and used >= cap * WINDOW_WARN_RATIO:
+            # 거절이 시작된 **뒤에만** 알리면 운영자가 손 쓸 기회가 없다(첫 초과 주문이 이미
+            #   영구 실패다). 임박 경고가 상한 유지의 실질적 완화책이다.
+            on_warning(
+                f"{reason}_warn",
+                f"{scope_label} 지급 건수 상한 임박: 최근 {window} 동안 {used}건"
+                f" / 상한 {cap} — 초과분은 400 으로 거절된다",
             )
     return namespace
 

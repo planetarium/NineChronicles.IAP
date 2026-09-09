@@ -585,15 +585,33 @@ class TestFavTickerAllowlist:
     갈아치우면 수량 상한은 그대로 통과한다. 그 경로를 닫는 게 이 가드다.
     """
 
-    def test_fav_is_denied_by_default(self, client, sess, alert):
+    def test_unset_allowlist_is_503_not_400(self, client, sess, alert):
+        """
+        허용목록이 **비어 있는데** FAV 상품이 오면 503 이다(400 아님).
+
+        빈 목록은 "배선을 잊었다"와 구분되지 않는다. 400 을 주면 포탈이 그 주문을 영구 실패로
+        확정해 포인트를 환급하는데, 상한 미주입(`limits_unset`)을 503 으로 만든 근거와 같은
+        상황이다. 진짜로 FAV 를 안 주는 정책이면 그 상품을 화이트리스트에 켜지 않으면 된다.
+        """
         product = make_product(sess, with_item=False, fav_amount=1, name="fav-default")
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 503
+        assert "fav_tickers_unset" in json.dumps(resp.json())
+        assert rows_of(sess) == []
+        assert alert.call_count == 1
+
+    def test_ticker_outside_a_configured_allowlist_is_400(self, client, sess, limits):
+        """목록이 있는데 이 상품 티커가 밖 = 상품 구성 오류(재시도해도 같다) → 400."""
+        limits(grant_allowed_fav_tickers="FAV__NCG")
+        product = make_product(sess, with_item=False, fav_amount=1, name="fav-other")
 
         resp = client.post(GRANT_URL, json=payload(product))
 
         assert resp.status_code == 400
         assert "fav_ticker_not_allowed" in json.dumps(resp.json())
         assert rows_of(sess) == []
-        assert alert.call_count == 1
 
     def test_allowed_ticker_passes(self, client, sess, limits):
         limits(grant_allowed_fav_tickers=CRYSTAL)
@@ -675,6 +693,28 @@ class TestIssuanceCaps:
 
         assert (first.status_code, second.status_code) == (201, 400)
         assert len(rows_of(sess)) == 1
+
+    def test_pressure_warning_fires_before_rejection(self, client, sess, limits, alert):
+        """
+        거절 **전에** 임박 경고가 나가야 한다 — 위반 알림만 있으면 첫 초과 주문이 이미
+        영구 실패다. 운영자가 상한을 올릴 시간을 버는 게 이 경고의 목적.
+        """
+        limits(grant_max_grants_per_hour=5)
+        product = make_product(sess)
+
+        statuses = [
+            client.post(
+                GRANT_URL, json=payload(product, external_ref=f"shop:w-{i}")
+            ).status_code
+            for i in range(5)
+        ]
+
+        assert statuses == [201] * 5  # 아직 거절 없음
+        assert len(rows_of(sess)) == 5
+        assert alert.call_count == 1  # 80% 지점(5번째 요청, 이미 4건)에서 한 번
+        text = alert.call_args[0][1]
+        assert "per_hour_exceeded_warn" in text
+        assert "임박" in text
 
     def test_idempotent_repeat_is_not_rate_limited(self, client, sess, limits, worker):
         """
@@ -903,3 +943,35 @@ class TestWhitelistAdmin:
         resp = client.put(WHITELIST_URL, json={"product_id": 999999, "grantable": True})
 
         assert resp.status_code == 404
+
+    def test_fav_product_cannot_be_enabled_while_tickers_unset(self, client, sess):
+        """
+        FAV 티커를 **켜는 시점에** 검증한다 — 지급 시점만 보면 운영자는 200 을 받고 켠 줄 알지만
+        실주문이 들어오는 순간 전부 막힌다(그때는 이미 주문이 쌓인 뒤다).
+        """
+        product = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-enable"
+        )
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": True}
+        )
+
+        assert resp.status_code == 503
+        assert "fav_tickers_unset" in json.dumps(resp.json())
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_fav_product_can_be_enabled_once_ticker_is_allowed(
+        self, client, sess, limits
+    ):
+        limits(grant_allowed_fav_tickers=CRYSTAL)
+        product = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-enable-ok"
+        )
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": True}
+        )
+
+        assert resp.status_code == 200

@@ -45,6 +45,7 @@ from app.dependencies import session
 from app.grant_guard import (
     GrantGuardViolation,
     alert_key,
+    check_fav_tickers,
     enforce_grant_guards,
     limits_from_settings,
     namespace_of,
@@ -1534,6 +1535,9 @@ def upsert_point_shop_grantable(
         validate_point_shop_grantable_eligible(
             product.id, product.product_type, product.google_sku
         )
+        # FAV 티커도 **켜는 시점에** 본다. 지급 시점만 보면 운영자는 200 을 받고 켠 줄 알지만
+        #   실주문이 들어오는 순간 전부 막힌다 — 그때는 이미 주문이 쌓인 뒤다.
+        check_fav_tickers(product, limits_from_settings(config).allowed_fav_tickers)
         missing = limits_from_settings(config).missing()
         if missing and config.is_production:
             raise HTTPException(
@@ -1695,6 +1699,25 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     return serialized
 
 
+def warn_grant_pressure(reason: str, message: str) -> None:
+    """
+    (PLD-1575) 시간창 상한 **임박** 경고 — 거절이 시작되기 전에 운영자에게 알린다.
+
+    위반 알림만 있으면 첫 초과 주문이 이미 400(포탈 기준 영구 실패)이다. 상한을 올릴 시간을
+    벌어주는 게 이 경고의 목적이고, 위반 알림과 같은 스로틀을 쓴다(사유 키가 `*_warn`).
+
+    호출 시점은 **commit 뒤**다(잠금 밖). 이건 정상 응답 경로라 알림이 실패해도 지급을 깨서는
+    안 되고, `send_slack_alert` 가 예외를 올리지 않는 것에 의존한다.
+    """
+    logger.warning("grant window pressure", reason=reason, detail=message)
+    if not should_alert(reason):
+        return
+    send_slack_alert(
+        config.iap_alert_webhook_url,
+        f":warning: [IAP grant guard] {reason} ({config.stage})\n{message}",
+    )
+
+
 def report_grant_violation(
     violation: GrantGuardViolation, request: GrantRequestSchema
 ) -> None:
@@ -1790,6 +1813,9 @@ def create_grant(
     #   (위반 시 행이 없어야 포탈이 환급을 오판하지 않는다). 멱등 재요청은 위(200)에서 이미
     #   빠져나갔으므로, 상한을 나중에 낮춰도 진행 중인 주문의 폴링이 깨지지 않는다.
     #   시간창 카운트는 아래 commit 과 **같은 트랜잭션**이어야 유효하다(advisory lock 구간).
+    #   임박 경고는 **모아 두고 commit 뒤에** 보낸다 — 가드는 잠금을 잡은 상태로 콜백을
+    #   부르므로 거기서 webhook 을 때리면 위반 알림과 같은 문제(잠금 뒤 줄서기)가 생긴다.
+    pressure: List[tuple] = []
     try:
         namespace = enforce_grant_guards(
             sess,
@@ -1797,6 +1823,7 @@ def create_grant(
             product=product,
             limits=limits_from_settings(config),
             is_production=config.is_production,
+            on_warning=lambda reason, message: pressure.append((reason, message)),
         )
     except GrantGuardViolation as violation:
         # 먼저 트랜잭션을 놓는다(= advisory lock 해제). 아직 아무것도 쓰지 않았으므로 rollback 은
@@ -1841,6 +1868,8 @@ def create_grant(
         avatar_addr=row.avatar_addr,
         planet_id=request.planet_id,
     )
+    for reason, message in pressure:
+        warn_grant_pressure(reason, message)
     try:
         send_to_worker(
             "iap.send_grant",

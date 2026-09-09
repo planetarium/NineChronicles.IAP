@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     grant_max_grants_per_hour: Optional[int] = None
     grant_max_grants_per_day: Optional[int] = None
     # 네임스페이스별 레이트리밋 — 분당 지급 건수 상한(버스트 차단).
+    #   ⚠️ 시간당/일당 상한이 총노출을 이미 묶으므로 이 값은 **넉넉하게**(실측 버스트의 3~5배)
+    #   잡는다. 초과는 400 = 포탈 기준 영구 실패이므로, 촘촘한 분당 상한은 총량을 더 줄이지
+    #   못하면서 정상 버스트를 주문 실패로 바꾸는 오탐만 만든다.
     grant_max_grants_per_namespace_per_minute: Optional[int] = None
     # 가드 위반 알림. 워커의 WORKER_IAP_ALERT_WEBHOOK_URL 과 **같은 값**(같은 Slack 채널)을 넣는다.
     iap_alert_webhook_url: Optional[str] = None
