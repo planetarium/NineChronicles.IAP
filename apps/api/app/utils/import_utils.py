@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.grant_guard import (
+    check_fav_tickers,
     parse_point_shop_grantable,
     validate_point_shop_grantable_eligible,
 )
@@ -251,6 +252,53 @@ def _apply_voucher_row(
             )
 
 
+def _check_grantable_fav_row(
+    db: Session, csv_data: dict, allowed_fav_tickers: frozenset
+) -> None:
+    """
+    (PLD-1575) 이 행이 화이트리스트를 **켜려 할 때** FAV 티커 얼로우리스트를 선검증한다.
+
+    왜 켜는 시점에 보나: 지급 시점(`enforce_grant_guards`)만 보면 임포트는 200 으로 끝나고
+    운영자는 켠 줄 알지만, 실주문이 들어오는 순간 전부 거절된다(그때는 이미 주문이 쌓인 뒤다).
+    백오피스 CRUD(`PUT /admin/point-shop-products`)도 같은 이유로 같은 검사를 한다.
+
+    셀이 TRUE 면 **현재 DB 값과 무관하게** 검사한다(전이 False→True 만 보지 않는다) — 같은 행의
+    `validate_point_shop_grantable_eligible` 과 같은 규칙이고, 시트가 진실 소스라 TRUE 는 "지금
+    켜져 있어야 한다"는 선언이기 때문이다. ⚠️ 운영상 결과: 시트에 TRUE 가 박힌 FAV 상품이 하나라도
+    있으면 그 뒤 **모든** 상품 CSV 임포트(가격·오픈시각 변경 포함)가 허용 티커 설정에 묶인다.
+    그래서 `API_GRANT_ALLOWED_FAV_TICKERS` 주입이 화이트리스트를 켜기 전 배포 순서에 들어간다.
+
+    `process_csv_row`(순수 행 파서) 가 아니라 여기 있는 이유: FAV 구성품은 상품 CSV 행에 없다
+    (`fungible_asset_product` = `fungible-assets/import` 소관) → 세션 없이는 볼 수 없다.
+    세션이 필요한 행 단위 검증은 `_apply_voucher_row` 와 같은 자리에 둔다.
+
+    ⚠️ `GrantGuardViolation`(HTTPException)을 **ValueError 로 감싸지 않는다.** 이 파일의 다른 행
+    검증은 `raise ValueError(f"product {id}: {e.detail}")` 관례를 쓰지만, 그러면 엔드포인트의
+    catch-all 이 전부 400 으로 눌러 버린다 — 허용목록 **미주입은 503**(호출자 잘못이 아니라
+    운영 실수)이라는 지급 시점 규약(계약 v1.2)이 켜는 경로에서도 같아야 한다. `check_fav_tickers`
+    의 detail 에 이미 product id 가 들어 있어 컨텍스트도 잃지 않는다. 예외가 위로 나가면
+    `import_products_from_csv` 가 rollback 하므로 임포트는 통째로 거부된다(voucher 행과 같은 원자성).
+    """
+    if not csv_data.get(POINT_SHOP_GRANTABLE_COLUMN):
+        # 빈칸(=유지)·False(=끄기)는 검사하지 않는다 — 킬스위치를 게이트 뒤에 두면 안 된다.
+        return
+    product_id = csv_data.get("id")
+    if product_id is None:
+        # id 빈칸(신규 autoincrement) — 구성품이 있을 수 없다.
+        return
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        # 신규 상품(명시 id) — 아직 구성품이 없다(FK 때문에 FAV 행이 먼저 있을 수도 없다).
+        #   FAV 는 뒤이은 fungible-assets 임포트로 붙고, 실주문은 지급 시점 가드가 막는다.
+        # TODO(PLD-1575 후속): `import_fungible_assets_from_csv` 에 대칭 게이트가 없다 —
+        #   **이미 켜진** 상품에 NCG 를 붙이거나 CRYSTAL→NCG 로 갈아치우는 경로가 그대로 열려
+        #   있다(`check_fav_tickers` 도커스트링이 지목한 바로 그 경로). 손대려면 그 엔드포인트
+        #   (`POST /admin/products/fungible-assets/import`)에 `except HTTPException: raise` 가
+        #   없어 503 이 400 문자열로 붕괴하는 것부터 같이 고쳐야 한다.
+        return
+    check_fav_tickers(product, allowed_fav_tickers)
+
+
 def import_products_from_csv(
     db: Session,
     csv_path: str,
@@ -258,6 +306,7 @@ def import_products_from_csv(
     interactive: bool = True,
     voucher_tables: Optional[dict] = None,
     voucher_cap: Optional[int] = None,
+    allowed_fav_tickers: frozenset = frozenset(),
 ) -> tuple[int, int]:
     """
     CSV 파일에서 상품 데이터를 가져와 데이터베이스에 임포트합니다.
@@ -267,6 +316,10 @@ def import_products_from_csv(
         csv_path: CSV 파일 경로
         environment: 'internal' 또는 'mainnet'
         interactive: 사용자 입력을 받을지 여부
+        allowed_fav_tickers: (PLD-1575) 지급 허용 FAV 티커. `point_shop_grantable` 을 켜는 행에만
+            쓴다. **미전달 = 빈 집합 = FAV 구성품이 있는 상품은 켤 수 없다**(fail-closed —
+            `grant_guard.parse_fav_tickers` 와 같은 의미). 값의 출처는 설정이고 호출부가 넣는다
+            (voucher_cap 과 같은 규칙 — 이 모듈은 `app.config` 를 임포트하지 않는다).
 
     Returns:
         tuple[int, int]: (처리된 상품 수, 업데이트된 상품 수)
@@ -284,6 +337,9 @@ def import_products_from_csv(
             for row in reader:
                 processed_count += 1
                 csv_data = process_csv_row(row, is_internal)
+                # (PLD-1575) 화이트리스트를 **켜는** 행이면 FAV 티커를 선검증한다 — 켜는 순간
+                #   거절(미주입 503 / 목록 밖 400)이라야 운영자가 그 자리에서 안다.
+                _check_grantable_fav_row(db, csv_data, allowed_fav_tickers)
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
                 # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).

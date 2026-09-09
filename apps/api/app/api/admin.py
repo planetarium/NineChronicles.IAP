@@ -342,6 +342,10 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
                 interactive=False,
                 voucher_tables=voucher_tables,
                 voucher_cap=voucher_cap,
+                # (PLD-1575) `point_shop_grantable` 을 켜는 행의 FAV 티커 선검증에 쓴다.
+                #   가드가 **지급 시점에 보는 값과 같아야** 한다 — 임포트는 200 인데 실주문이
+                #   전부 거절되는 상태를 만들지 않는다(미주입 503 / 목록 밖 400).
+                allowed_fav_tickers=limits_from_settings(config).allowed_fav_tickers,
             )
 
             return {
@@ -353,8 +357,18 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             # 임시 파일 삭제
             os.unlink(temp_path)
 
+    except GrantGuardViolation as e:
+        # (PLD-1575) 백오피스 임포트 화면은 응답 **본문을 읽지 않는다**(IAPRepository 의
+        #   EnsureSuccessStatusCode) → 운영자에게는 "503" 만 보이고 `[fav_tickers_unset] …` 이
+        #   사라진다. 유일한 진단 문자열이므로 서버 로그에는 반드시 남긴다.
+        logger.error(
+            "product csv import rejected by grant guard",
+            reason=e.reason,
+            detail=e.detail,
+        )
+        raise
     except HTTPException:
-        raise  # fetch(502/409/503)·prod게이트(400) 등 명시 상태코드 보존
+        raise  # fetch(502/409/503)·prod게이트(400)·grant 가드(503/400) 등 명시 상태코드 보존
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1522,8 +1536,13 @@ def upsert_point_shop_grantable(
 
     - `grantable=true` 는 현금 상품(IAP)·시즌패스 SKU 에 걸 수 없다(400) — 무상 발행 대상이
       아니다. 같은 검사가 CSV import 와 지급 시점에도 있다(플래그 스테일 방어).
+    - FAV 구성품이 있으면 허용 티커 목록 안이어야 한다. 상태코드는 **지급 시점과 같다** —
+      목록 미주입 503(`fav_tickers_unset`, 운영 실수) / 목록 밖 400(`fav_ticker_not_allowed`).
     - prod 에서 상한(`API_GRANT_MAX_*`)이 미주입이면 켜는 것 자체를 막는다 — 켜자마자
       상한 없는 발행 창이 열리는 fail-open 을 만들지 않는다(voucher C3-lite 게이트와 같은 규칙).
+      ⚠️ 이 게이트는 **400** 인데 바로 위 FAV 티커 미주입은 503 이다. 둘 다 "설정 미주입"이지만
+      후자는 지급 시점 함수(`check_fav_tickers`)를 그대로 재사용한 결과다 — 두 경로가 같은
+      사유에 같은 코드를 주는 편이 낫다고 봤다(여기서 400 으로 바꾸면 계약 v1.2 와 갈라진다).
     - `grantable=false`(끄기)는 언제나 허용한다. 킬스위치를 게이트 뒤에 두면 안 된다.
     """
     product = sess.get(Product, request.product_id)

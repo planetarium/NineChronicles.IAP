@@ -962,6 +962,34 @@ class TestWhitelistAdmin:
         sess.refresh(product)
         assert product.point_shop_grantable is False
 
+    def test_fav_product_with_ticker_outside_allowlist_is_400(
+        self, client, sess, limits
+    ):
+        """
+        목록이 **있는데** 이 상품 티커가 밖 = 상품 구성 오류 → 400(재시도해도 같다).
+
+        미주입(503)과 갈라지는 이 두 갈래는 지급 시점(`check_fav_tickers`)의 규약이고, 켜는
+        경로도 같은 함수를 재사용해 같은 코드를 준다 — 운영자가 "설정을 잊었다"와 "상품이
+        잘못됐다"를 상태코드로 구분할 수 있어야 한다.
+        """
+        limits(grant_allowed_fav_tickers="FAV__NCG")
+        product = make_product(
+            sess,
+            grantable=False,
+            with_item=False,
+            fav_amount=1,
+            name="fav-enable-other",
+        )
+
+        resp = client.put(
+            WHITELIST_URL, json={"product_id": product.id, "grantable": True}
+        )
+
+        assert resp.status_code == 400
+        assert "fav_ticker_not_allowed" in json.dumps(resp.json())
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
     def test_fav_product_can_be_enabled_once_ticker_is_allowed(
         self, client, sess, limits
     ):
@@ -975,3 +1003,223 @@ class TestWhitelistAdmin:
         )
 
         assert resp.status_code == 200
+
+
+PRODUCTS_IMPORT_URL = "/api/admin/products/import"
+
+# 상품 CSV 헤더. `process_csv_row` 가 `row["…"]` 로 **직접** 읽는 컬럼은 하나라도 빠지면
+#   KeyError 라 전부 넣는다. `point_shop_grantable` 만 `row.get` 이라(선택 컬럼) 값 없이도 된다.
+CSV_HEADER = (
+    "id,name,google_sku,apple_sku,apple_sku_k,daily_limit,weekly_limit,account_limit,"
+    "order,active,open_timestamp,close_timestamp,discount,rarity,size,popup_path_key,"
+    "required_level,product_type,mileage,mileage_price,point_shop_grantable"
+)
+
+
+def _csv_cells(product_id, name, google_sku, apple_sku, apple_sku_k, grantable) -> str:
+    """상품 CSV 1행. 나머지 컬럼은 이 테스트가 신경 쓰지 않는 최소 유효값이다."""
+    return ",".join(
+        [
+            product_id,
+            name,
+            google_sku,
+            apple_sku,
+            apple_sku_k,
+            "",  # daily_limit
+            "",  # weekly_limit
+            "",  # account_limit
+            "1",  # order
+            "TRUE",  # active
+            "",  # open_timestamp
+            "",  # close_timestamp
+            "0",  # discount (NOT NULL — 빈칸이면 None 이 되어 제약 위반)
+            "NORMAL",  # rarity
+            "ONE_BY_ONE",  # size
+            "",  # popup_path_key
+            "",  # required_level
+            "FREE",  # product_type
+            "0",  # mileage
+            "",  # mileage_price
+            grantable,  # point_shop_grantable
+        ]
+    )
+
+
+def csv_row(product, *, grantable="", name=None) -> str:
+    """기존 상품 1건을 그대로 다시 쓰는 행. `grantable` 빈칸 = 유지(3상태 파서)."""
+    return _csv_cells(
+        str(product.id),
+        name if name is not None else product.name,
+        product.google_sku,
+        product.apple_sku,
+        product.apple_sku_k,
+        grantable,
+    )
+
+
+def new_csv_row(*, product_id="", name="csv-new", grantable="TRUE") -> str:
+    """DB 에 아직 없는 상품을 만드는 행. `product_id` 빈칸 = autoincrement."""
+    sku = f"sku_{name}"
+    return _csv_cells(product_id, name, sku, sku, f"{sku}_k", grantable)
+
+
+class TestWhitelistCsvImport:
+    """
+    상품 CSV(`POST /admin/products/import`) 도 화이트리스트를 **켜는 경로**다.
+
+    백오피스 CRUD 와 같은 FAV 티커 게이트가 걸려야 하고(안 걸면 임포트는 200 인데 실주문이
+    전부 거절된다), 상태코드도 지급 시점과 같아야 한다(미주입 503 / 목록 밖 400).
+    거절은 **임포트 전체를 롤백**한다 — voucher 행 검증과 같은 원자성이다.
+    """
+
+    def _import(self, client, *rows):
+        return client.post(
+            PRODUCTS_IMPORT_URL,
+            json={
+                "environment": "internal",
+                "csv_content": "\n".join((CSV_HEADER,) + rows) + "\n",
+            },
+        )
+
+    def test_fav_product_cannot_be_enabled_while_tickers_unset(self, client, sess):
+        product = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-csv-unset"
+        )
+
+        resp = self._import(client, csv_row(product, grantable="TRUE"))
+
+        assert resp.status_code == 503
+        assert "fav_tickers_unset" in json.dumps(resp.json())
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_ticker_outside_allowlist_is_400(self, client, sess, limits):
+        limits(grant_allowed_fav_tickers="FAV__NCG")
+        product = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-csv-other"
+        )
+
+        resp = self._import(client, csv_row(product, grantable="TRUE"))
+
+        assert resp.status_code == 400
+        assert "fav_ticker_not_allowed" in json.dumps(resp.json())
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_allowed_ticker_turns_flag_on(self, client, sess, limits):
+        limits(grant_allowed_fav_tickers=CRYSTAL)
+        product = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-csv-ok"
+        )
+
+        resp = self._import(client, csv_row(product, grantable="TRUE"))
+
+        assert resp.status_code == 200
+        sess.refresh(product)
+        assert product.point_shop_grantable is True
+
+    def test_item_only_product_is_unaffected(self, client, sess):
+        """기본값(빈 목록)이 아이템 상품 임포트를 막지 않는다 — 포인트샵의 정상 케이스."""
+        product = make_product(sess, grantable=False, name="item-csv")
+
+        resp = self._import(client, csv_row(product, grantable="TRUE"))
+
+        assert resp.status_code == 200
+        sess.refresh(product)
+        assert product.point_shop_grantable is True
+
+    def test_turning_off_is_never_gated(self, client, sess):
+        """끄는 행은 검사하지 않는다 — 킬스위치를 게이트 뒤에 두면 되돌릴 수단이 없어진다."""
+        product = make_product(
+            sess, grantable=True, with_item=False, fav_amount=1, name="fav-csv-off"
+        )
+
+        resp = self._import(client, csv_row(product, grantable="FALSE"))
+
+        assert resp.status_code == 200
+        sess.refresh(product)
+        assert product.point_shop_grantable is False
+
+    def test_blank_cell_keeps_flag_without_revalidating(self, client, sess):
+        """
+        빈칸은 **유지**라 켜는 행이 아니다 → 재검증하지 않는다.
+
+        빈칸까지 검사하면 컬럼 없는 기존 시트의 정기 임포트가 이미 켜진 FAV 상품 때문에
+        통째로 막힌다(그 상품의 실주문은 어차피 지급 시점 가드가 막는다).
+        """
+        product = make_product(
+            sess, grantable=True, with_item=False, fav_amount=1, name="fav-csv-blank"
+        )
+
+        resp = self._import(client, csv_row(product))
+
+        assert resp.status_code == 200
+        sess.refresh(product)
+        assert product.point_shop_grantable is True
+
+    def test_rejected_row_rolls_back_whole_import(self, client, sess):
+        """
+        한 행이 거절되면 **앞 행의 변경까지** 롤백된다(부분 적용 금지).
+
+        CSV 는 시트 한 장이 하나의 의도라 절반만 반영되면 운영자가 무엇이 적용됐는지 알 수
+        없다 — voucher 행 검증(`_apply_voucher_row`)이 세운 관례를 그대로 지킨다.
+        """
+        ok = make_product(sess, grantable=False, name="csv-first-row")
+        bad = make_product(
+            sess, grantable=False, with_item=False, fav_amount=1, name="fav-csv-last"
+        )
+
+        resp = self._import(
+            client,
+            csv_row(ok, grantable="TRUE", name="csv-renamed"),
+            csv_row(bad, grantable="TRUE"),
+        )
+
+        assert resp.status_code == 503
+        sess.refresh(ok)
+        assert ok.name == "csv-first-row"  # 이름 변경도 되돌아갔다
+        assert ok.point_shop_grantable is False
+        sess.refresh(bad)
+        assert bad.point_shop_grantable is False
+
+    def test_reimport_of_an_already_on_row_is_revalidated(self, client, sess):
+        """
+        이미 켜진 상품도 셀이 TRUE 면 **매번** 재검증한다 — 전이(False→True)만 보지 않는다.
+
+        같은 행의 `product_type` 검사(`validate_point_shop_grantable_eligible`)와 같은 규칙이다:
+        시트가 진실 소스라 TRUE 는 "지금 켜져 있어야 한다"는 선언이고, 얼로우리스트가 좁아졌다면
+        그 선언이 더는 유효하지 않다.
+        ⚠️ 운영상 결과를 알고 받는다 — 시트에 TRUE 가 박힌 FAV 상품이 하나라도 있으면 그 뒤
+        **모든** 상품 CSV 임포트(가격·오픈시각 변경 포함)가 허용 티커 설정에 묶인다. 그래서
+        `API_GRANT_ALLOWED_FAV_TICKERS` 주입이 화이트리스트를 켜기 전 배포 순서에 들어간다.
+        """
+        product = make_product(
+            sess, grantable=True, with_item=False, fav_amount=1, name="fav-csv-again"
+        )
+
+        resp = self._import(client, csv_row(product, grantable="TRUE"))
+
+        assert resp.status_code == 503
+        assert "fav_tickers_unset" in json.dumps(resp.json())
+        sess.refresh(product)
+        assert product.point_shop_grantable is True  # 원래 켜져 있었고 롤백됐다
+
+    def test_new_product_rows_are_not_gated(self, client, sess):
+        """
+        DB 에 없던 상품을 켜진 상태로 만드는 행은 검사할 구성품이 없다 → 통과.
+
+        FAV 는 뒤이은 `fungible-assets/import` 로 붙고(그 경로엔 이 게이트가 없다 — TODO),
+        실주문은 지급 시점 가드가 막는다. id 빈칸(autoincrement)·명시 id 둘 다 같다.
+        """
+        resp = self._import(
+            client,
+            new_csv_row(name="csv-blank-id"),
+            new_csv_row(product_id="98765", name="csv-explicit-id"),
+        )
+
+        assert resp.status_code == 200
+        created = sess.scalars(
+            select(Product).where(Product.name.in_(["csv-blank-id", "csv-explicit-id"]))
+        ).all()
+        assert len(created) == 2
+        assert all(p.point_shop_grantable is True for p in created)
