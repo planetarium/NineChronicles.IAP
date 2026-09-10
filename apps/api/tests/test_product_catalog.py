@@ -124,6 +124,7 @@ def make_product(
     name: str,
     *,
     point_shop_grantable: bool = False,
+    point_price: int | None = None,
     product_type=None,
     active: bool = True,
     open_timestamp=None,
@@ -143,6 +144,7 @@ def make_product(
         product_type=product_type,
         active=active,
         point_shop_grantable=point_shop_grantable,
+        point_price=point_price,
         rarity=ProductRarity.NORMAL,
         size=ProductAssetUISize.ONE_BY_ONE,
         path=f"{name}.png",
@@ -555,3 +557,33 @@ class TestAdminProductList:
         assert item["mileage"] == product.mileage
         assert item["rarity"] == ProductRarity.NORMAL.value
         assert item["active"] is True
+
+
+class TestPointPrice:
+    """
+    (PLD-1561) `point_price` — 포인트샵 판매가가 응답에 실린다.
+
+    포탈이 `shop_sku.price_points` 로 따로 들고 있던 값을 여기로 옮겼다. 포탈은 이 응답으로
+    차감액을 정하므로 **필드가 빠지면 포탈이 가격을 알 수 없어 샵이 통째로 멈춘다** —
+    그런데 없다고 500 이 나지도 않고 조용히 `undefined` 가 되므로, 응답 계약을 테스트로 못박는다.
+    """
+
+    def test_point_price_is_exposed_in_point_catalog(self, client, sess, purchase_history):
+        priced = make_product(sess, "priced", point_shop_grantable=True, point_price=250)
+        add_category(sess, "c1", [priced])
+        assert fetch_products(client, catalog="point")["priced"]["point_price"] == 250
+
+    def test_price_is_optional__grantable_without_price_is_valid(
+        self, client, sess, purchase_history
+    ):
+        # 화이트리스트에 있으면서 값이 없는 상태는 정상이다 — 뽑기 풀 전용이거나
+        # 운영 수동 지급용 상품이 그렇다. 포탈은 값 없는 항목을 목록에서 건너뛴다.
+        only = make_product(sess, "grant-only", point_shop_grantable=True)
+        add_category(sess, "c1", [only])
+        assert fetch_products(client, catalog="point")["grant-only"]["point_price"] is None
+
+    def test_cash_products_carry_null_point_price(self, client, sess, purchase_history):
+        # 현금 상품에도 필드는 존재하고 값은 None 이다(스키마가 하나이므로).
+        cash = make_product(sess, "cash1")
+        add_category(sess, "c1", [cash])
+        assert fetch_products(client, catalog="cash")["cash1"]["point_price"] is None

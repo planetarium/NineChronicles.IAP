@@ -127,6 +127,21 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         nullable=True,
         doc="Mileage price to buy this product. Only meaningful for `MILEAGE` type product.",
     )
+    point_price = Column(
+        Integer,
+        nullable=True,
+        doc=(
+            "(PLD-1561) 포탈 포인트샵 판매가(표시 포인트, 양의 정수). `mileage_price` 와 같은 축이다"
+            " — 비현금 화폐로 이 상품을 살 때의 값. NULL = 포인트로 팔지 않는다."
+            " 원래는 포탈이 `shop_sku.price_points` 로 따로 들고 있었는데, 그건 IAP 가 이미 가진"
+            " 축(가격·기간·한도)을 다시 만든 테이블이었다. 상품 정의는 IAP 소유라는 원칙에 맞춰"
+            " 여기로 옮겼다 — 그 덕에 상품 등록·수정이 기존 CSV import·백오피스 CRUD 로 된다"
+            " (포탈에는 SKU 등록 경로가 아예 없었다)."
+            " ⚠️ 포인트 차감·환급은 여전히 **포탈**이 한다(포인트 원장은 포탈 소유). IAP 는 값만 안다."
+            " ⚠️ 뽑기(PLD-1562)의 풀·확률도 상품 정의라 IAP 에 둔다 — 상금표는 **지급하는 쪽**에"
+            "    둔다는 원칙이다(복권 상금은 NCG 라 포탈이 지급하므로 표가 포탈에 있다)."
+        ),
+    )
     point_shop_grantable = Column(
         Boolean,
         nullable=False,

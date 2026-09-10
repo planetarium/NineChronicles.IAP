@@ -34,6 +34,8 @@ VOUCHER_SLOTS = 3
 # (PLD-1575) 포인트샵 지급 화이트리스트 컬럼. **선택 컬럼**이다 — 없는 시트도 그대로 임포트된다
 #   (파서는 app/grant_guard.py 의 3상태 parse_point_shop_grantable).
 POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
+# (PLD-1561) 포인트 판매가 컬럼. 헤더 없음=유지 / 빈칸=해제(NULL) / 값=양의 정수.
+POINT_PRICE_COLUMN = "point_price"
 
 
 def parse_boolean(value: str) -> bool:
@@ -107,6 +109,24 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
+
+    # (PLD-1561) 포인트샵 판매가. **선택 컬럼**이다 — 헤더가 없으면 csv_data 에 넣지 않아
+    #   compare_and_update_product 가 이 컬럼을 아예 건드리지 않는다(기존 값 유지).
+    #   빈 칸은 "포인트로 팔지 않음"(NULL)로 **명시적 해제**다 — 값을 지우는 유일한 방법이라
+    #   유지와 구분되어야 하므로, 헤더 유무로 갈린다.
+    if POINT_PRICE_COLUMN in row:
+        raw = (row.get(POINT_PRICE_COLUMN) or "").strip()
+        if raw == "":
+            csv_data[POINT_PRICE_COLUMN] = None
+        else:
+            price = parse_int(raw)
+            # 0·음수는 "공짜 주문 + 원장 0행"(감사 불가) 또는 마이너스 차감이 된다.
+            if price is None or price <= 0:
+                raise ValueError(
+                    f"product {csv_data['id']}: {POINT_PRICE_COLUMN} 는 양의 정수여야 한다"
+                    f" (got {raw!r}). 팔지 않으려면 빈 칸으로 둘 것."
+                )
+            csv_data[POINT_PRICE_COLUMN] = price
 
     # (PLD-1575) 포인트샵 지급 화이트리스트. 값이 있을 때만 csv_data 에 넣는다 —
     #   키가 없으면 compare_and_update_product 가 이 컬럼을 아예 건드리지 않고(유지),

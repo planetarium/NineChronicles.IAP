@@ -1496,6 +1496,10 @@ class PointShopProductItem(BaseModel):
     product_type: Optional[str]
     active: bool
     point_shop_grantable: bool
+    #: (PLD-1561) 포인트 판매가(표시 포인트). None = 포인트로 팔지 않음(지급만 가능).
+    #:   화이트리스트에 있으면서 값이 없는 상태는 정상이다 — 뽑기 풀에만 들어가거나
+    #:   운영 수동 지급용인 상품이 그렇다.
+    point_price: Optional[int]
     updated_at: Optional[str]
 
 
@@ -1526,6 +1530,7 @@ def list_point_shop_products(sess=Depends(session)):
             ),
             active=bool(row.active),
             point_shop_grantable=bool(row.point_shop_grantable),
+            point_price=row.point_price,
             updated_at=row.updated_at.isoformat() if row.updated_at else None,
         )
         for row in rows
