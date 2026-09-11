@@ -519,7 +519,14 @@ def import_gacha_entries_endpoint(
     """
     # (PLD-1562) 뽑기 풀 임포트
     ---
-    컬럼: `product_id, name, weight, sheet_item_id, fungible_item_id, amount`
+    컬럼: `product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places`
+      · `kind` = `ITEM` | `FAV` (생략 시 ITEM). 룬스톤·소울스톤·크리스탈은 **FAV** 다
+      · `ticker` = `Item_NT_400000` / `FAV__RUNESTONE_HP` (옛 컬럼명 `fungible_item_id` 도 읽는다)
+      · `sheet_item_id` = 아이템 아이콘용. **FAV 는 비워 둘 것**
+      · `decimal_places` = FAV 자릿수(생략 시 0). 아이템은 항상 0
+
+    ⚠️ FAV 칸을 넣으려면 `grant_allowed_fav_tickers` 에 그 티커가 열려 있어야 한다.
+       닫혀 있으면 그 칸에 당첨된 주문이 **503** 으로 멈춘다(화폐 발행은 명시적으로만 연다).
 
     `fungible-items/import` 와 같은 모양(상품당 여러 행)이다. **upsert 이고 REPLACE 가
     아니다** — 부분 CSV 로 나머지 칸이 조용히 사라지면 확률이 통째로 바뀌는 사고가 된다.
@@ -539,8 +546,12 @@ def import_gacha_entries_endpoint(
             temp_path = temp_file.name
 
         try:
+            _limits = limits_from_settings(config)
             processed_count, changed_count = import_gacha_entries_from_csv(
-                sess, temp_path, limits_from_settings(config).max_item_units_per_request
+                sess,
+                temp_path,
+                _limits.max_item_units_per_request,
+                _limits.max_fav_units_per_request,
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.

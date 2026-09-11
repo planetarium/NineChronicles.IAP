@@ -12,11 +12,17 @@
    나중에 칸을 읽어 지급하면 운영이 표를 고치는 것이 곧 뒷문 재추첨이 된다.
 4. **풀 스냅샷을 같이 남긴다**. 표를 바꾸면 "그때 확률이 얼마였나"를 재현할 수 없고,
    확률 공시 분쟁에서 그게 유일한 증거다.
+5. **상금은 아이템과 FAV 둘 다**다(룬스톤·소울스톤·크리스탈이 FAV 축이다). 온체인에선
+   둘 다 FungibleAssetValue 라 티커 하나로 합치되, `kind` 를 결과에 못박는다 — 머니 가드가
+   FAV 를 얼로우리스트와 별도 상한으로 보기 때문이고, 그 분기를 티커 접두어로 복원하면
+   접두어 관례 하나에 가드가 뚫린다.
 """
 
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence
+
+from shared.models.product import GACHA_KIND_FAV, GACHA_KIND_ITEM
 
 # 추첨 결과 JSON 의 버전. 형식을 바꾸면 올리고, 읽는 쪽이 모르는 버전을 만나면 **거절**한다
 # (모르는 형식을 추측해서 지급하면 안 된다 — 조용히 다른 걸 주는 것보다 멈추는 게 낫다).
@@ -79,8 +85,10 @@ def pool_snapshot(entries: Sequence[Any]) -> List[Dict[str, Any]]:
             "entryId": getattr(e, "id", None),
             "name": e.name,
             "weight": _weight_of(e),
+            "kind": e.kind,
+            "ticker": e.ticker,
+            "decimalPlaces": int(e.decimal_places or 0),
             "sheetItemId": e.sheet_item_id,
-            "fungibleItemId": e.fungible_item_id,
             "amount": e.amount,
         }
         for e in sorted(entries, key=lambda e: (getattr(e, "id", 0) or 0))
@@ -98,7 +106,10 @@ def build_gacha_result(
 
     `claim` 은 **지급 명령**이다 — 워커가 이 값만 보고 tx 를 만든다. 그래서 여기서
     `build_claim_data` 와 같은 모양(ticker/decimalPlaces/amount)으로 펼쳐 둔다.
-    아이템은 `decimal_places=0` 고정이다(아이템에 소수 자릿수가 없다 — FAV 와의 차이).
+
+    `kind` 를 같이 싣는 이유: 머니 가드가 FAV 를 얼로우리스트와 **FAV 전용 수량 상한**으로
+    따로 본다. 그 분기를 나중에 티커 접두어로 복원하면 접두어 관례 하나에 가드가 뚫린다 —
+    뽑은 시점에 무엇이었는지를 결과에 못박아 둔다.
     """
     return {
         "version": GACHA_RESULT_VERSION,
@@ -106,8 +117,9 @@ def build_gacha_result(
         "entryName": picked.name,
         "claim": [
             {
-                "ticker": picked.fungible_item_id,
-                "decimalPlaces": 0,
+                "kind": picked.kind,
+                "ticker": picked.ticker,
+                "decimalPlaces": int(picked.decimal_places or 0),
                 "amount": picked.amount,
             }
         ],
@@ -144,15 +156,17 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             raise GachaPoolError(f"claim ticker 가 비었습니다: {row!r}")
         if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
             raise GachaPoolError(f"claim amount 가 양의 정수가 아닙니다: {row!r}")
-        # ⚠️ v1 풀은 **아이템 전용**이고 아이템의 decimal_places 는 항상 0 이다.
-        #    0 이 아닌 값을 통과시키면 `FungibleAssetValue.plain_value` 가
-        #    `amount * 10**places` 로 부풀려 발행한다(18 이면 10^18 배). 그리고 그건
-        #    사실상 FAV 발행인데, FAV 얼로우리스트(`check_fav_tickers`)는 풀을 보지 않으므로
-        #    **조용히 우회된다**. 그래서 여기서 못박는다 — v2 에서 FAV 상금을 넣을 때
-        #    이 줄이 걸리는 게 정확히 원하는 트립와이어다(가드도 같이 고쳐야 한다는 신호).
-        if places != 0:
+        kind = row.get("kind")
+        if kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
+            # kind 가 없거나 모르는 값이면 **멈춘다**. 여기서 접두어로 추측해 채우면
+            # 머니 가드의 FAV/아이템 분기가 추측 위에 서게 된다.
+            raise GachaPoolError(f"claim kind 가 ITEM/FAV 가 아닙니다: {row!r}")
+        # ⚠️ 아이템의 자릿수는 **항상 0** 이다. 0 이 아닌 값을 통과시키면
+        #    `FungibleAssetValue.plain_value` 가 `amount * 10**places` 로 부풀려 발행한다
+        #    (18 이면 10^18 배). 아이템 축에서 그건 순수한 발행 사고다.
+        if kind == GACHA_KIND_ITEM and places != 0:
             raise GachaPoolError(
-                f"claim decimalPlaces 는 0 이어야 한다(v1 풀은 아이템 전용): {row!r}"
+                f"ITEM claim 의 decimalPlaces 는 0 이어야 합니다: {row!r}"
             )
     return claim
 
@@ -182,8 +196,10 @@ def build_gacha_pool_schema(entries: Sequence[Any]) -> List[Any]:
             name=e.name,
             weight=_weight_of(e),
             rate=round(_weight_of(e) / total, 10),
+            kind=e.kind,
+            ticker=e.ticker,
+            decimal_places=int(e.decimal_places or 0),
             sheet_item_id=e.sheet_item_id,
-            fungible_item_id=e.fungible_item_id,
             amount=e.amount,
         )
         for e in ordered

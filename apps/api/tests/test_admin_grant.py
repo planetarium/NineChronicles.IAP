@@ -1650,16 +1650,23 @@ class TestWhitelistCsvImport:
 # **전부 통과**했다. 순수 함수(`grant_units`·`draw_entry`) 테스트만으로는 "그 함수를
 # 실제로 부르는가"가 하나도 안 잡힌다 — 민터 경로의 배선은 엔드포인트에서 못박아야 한다.
 def make_gacha_product(sess, *, entries, name="gacha", with_item=False, **kwargs):
-    """풀을 가진 상품. `entries` = [(이름, weight, 티커, amount), ...]"""
+    """
+    풀을 가진 상품. `entries` = [(이름, weight, 티커, amount), ...]
+    티커가 `FAV__` 로 시작하면 FAV 칸으로 만든다(**테스트 편의일 뿐** — 실제 kind 는
+    CSV/DB 의 명시 값이고, 코드가 접두어로 추론하지 않는다).
+    """
     product = make_product(sess, with_item=with_item, name=name, **kwargs)
     for entry_name, weight, ticker, amount in entries:
+        is_fav = ticker.startswith("FAV__")
         sess.add(
             ProductGachaEntry(
                 product_id=product.id,
                 name=entry_name,
                 weight=weight,
-                sheet_item_id=400000,
-                fungible_item_id=ticker,
+                kind="FAV" if is_fav else "ITEM",
+                ticker=ticker,
+                decimal_places=0,
+                sheet_item_id=None if is_fav else 400000,
                 amount=amount,
             )
         )
@@ -1681,7 +1688,7 @@ class TestGachaGrant:
         assert result is not None, "뽑기인데 결과가 비어 있으면 포탈이 받아 적을 게 없다"
         assert result["entryName"] == "레어"
         assert result["claim"] == [
-            {"ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}
+            {"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}
         ]
         # 풀 스냅샷 — 표를 나중에 바꿔도 "그때 확률"을 재현할 수 있어야 한다.
         assert result["totalWeight"] == 1
@@ -1754,3 +1761,43 @@ class TestGachaGrant:
         assert resp.status_code == 201
         assert resp.json()["drawResult"] is None
         assert rows_of(sess)[0].gacha_entry_id is None
+
+
+    def test_룬스톤_칸은_얼로우리스트가_열려_있어야_지급된다(self, client, sess, limits):
+        # 화폐 발행은 "실수로 열려 있는" 상태가 없어야 한다 — 뽑기로도 마찬가지다.
+        product = make_gacha_product(
+            sess,
+            entries=[("Runestone", 1, "FAV__RUNESTONE_HP", 100)],
+            name="gacha-rune",
+        )
+
+        limits(grant_allowed_fav_tickers="")
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 503
+        assert rows_of(sess) == [], "503 에서도 행을 만들지 않는다"
+
+        limits(grant_allowed_fav_tickers="FAV__CRYSTAL")
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 400
+
+        limits(grant_allowed_fav_tickers="FAV__RUNESTONE_HP")
+        resp = client.post(GRANT_URL, json=payload(product))
+        assert resp.status_code == 201
+        assert resp.json()["drawResult"]["claim"][0]["kind"] == "FAV"
+
+    def test_FAV_수량은_FAV_상한으로_잰다_아이템_상한이_아니라(self, client, sess, limits):
+        # 합치면 "물약 1,000개 상한이 곧 NCG 1,000 발행 상한" 이 된다.
+        limits(
+            grant_allowed_fav_tickers="FAV__RUNESTONE_HP",
+            grant_max_item_units_per_request=1000,
+            grant_max_fav_units_per_request=50,
+        )
+        product = make_gacha_product(
+            sess,
+            entries=[("Runestone", 1, "FAV__RUNESTONE_HP", 100)],
+            name="gacha-rune-cap",
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400, "아이템 상한(1000)으로 통과시키면 안 된다"
+        assert "FAV 발행량" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []

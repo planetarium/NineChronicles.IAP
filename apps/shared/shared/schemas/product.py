@@ -133,8 +133,14 @@ class GachaEntrySchema(BaseSchema):
     weight: int
     #: weight / Σweight (10자리 반올림 — 6자리면 큰 풀에서 희귀 칸이 0.0 이 된다).
     rate: float
-    sheet_item_id: int
-    fungible_item_id: str
+    #: 'ITEM' | 'FAV'. 화면이 아이콘 소스를 가르는 축이기도 하다(아이템=sheet id, FAV=티커).
+    kind: str
+    #: 온체인 티커. `Item_NT_400000` / `FAV__RUNESTONE_HP`.
+    ticker: str
+    #: FAV 자릿수. 아이템은 0.
+    decimal_places: int = 0
+    #: 아이템 아이콘용. **FAV 는 null** 이다.
+    sheet_item_id: Optional[int] = None
     amount: int
 
     class Config:

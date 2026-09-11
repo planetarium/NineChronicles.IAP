@@ -7,6 +7,8 @@ from shared.models.product import (
     FungibleAssetProduct,
     FungibleItemProduct,
     Price,
+    GACHA_KIND_FAV,
+    GACHA_KIND_ITEM,
     Product,
     ProductAssetUISize,
     ProductGachaEntry,
@@ -722,7 +724,11 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
 
 
 # ── (PLD-1562) 뽑기 풀 CSV ────────────────────────────────────────────────────
-# 컬럼: product_id, name, weight, sheet_item_id, fungible_item_id, amount
+# 컬럼: product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places
+#   · kind           = ITEM | FAV (생략 시 ITEM — 기존 시트 하위호환)
+#   · ticker         = Item_NT_400000 / FAV__RUNESTONE_HP
+#   · sheet_item_id  = 아이템 아이콘용(ITEM 필수 / FAV 는 비워 둘 것)
+#   · decimal_places = FAV 자릿수(생략 시 0). 아이템은 항상 0
 #
 # `fungible-items/import` 와 같은 모양(상품당 여러 행)을 따른다. voucher 처럼 고정 슬롯을
 # 쓰지 않는 이유: 풀은 수십 칸이 될 수 있어 `gacha_item_1..N` 으로는 표가 못 넘어간다.
@@ -754,37 +760,78 @@ def assert_not_mixed_components(db: Session, product_id: int) -> None:
         )
 
 
-def assert_gacha_entry_within_caps(db: Session, product_id: int, max_item_units) -> None:
+def assert_gacha_entry_within_caps(
+    db: Session, product_id: int, max_item_units, max_fav_units=None
+) -> None:
     """
     풀의 **모든 칸**이 요청 단위 수량 상한 안인지. 상한이 미설정(None)이면 검사하지 않는다.
+
+    ⚠️ FAV 칸은 **FAV 상한**으로 잰다. 아이템 상한으로 재면 "물약 1,000개를 허용하려고
+       올린 상한이 NCG 1,000 발행을 허용한다"가 등록 시점에 그대로 재현된다.
 
     ⚠️ 이게 없으면 "임포트는 200 인데 **그 칸에 당첨된 유저만** 400" 이 된다. 확률이 낮은
        칸일수록 늦게 발견되고, 운영에는 저빈도 거절 알림만 보여 공격처럼 읽힌다.
        같은 함정을 FAV 티커에서 이미 겪고 선례를 만들어 뒀다(admin.py 의
        "임포트는 200 인데 실주문이 전부 거절되는 상태를 만들지 않는다").
     """
-    if max_item_units is None:
-        return
-    over = [
-        entry
-        for entry in db.query(ProductGachaEntry)
+    caps = {GACHA_KIND_ITEM: max_item_units, GACHA_KIND_FAV: max_fav_units}
+    over = []
+    for entry in (
+        db.query(ProductGachaEntry)
         .filter(ProductGachaEntry.product_id == product_id)
         .all()
-        if int(entry.amount) > max_item_units
-    ]
+    ):
+        cap = caps.get(entry.kind)
+        if cap is not None and int(entry.amount) > cap:
+            over.append((entry, cap))
     if over:
-        names = ", ".join(f"{e.name}(x{e.amount})" for e in over)
+        names = ", ".join(f"{e.name}[{e.kind}](x{e.amount}>{cap})" for e, cap in over)
         raise ValueError(
-            f"product {product_id} 뽑기 칸의 수량이 요청 단위 상한({max_item_units})을"
-            f" 넘는다: {names} — 그 칸에 당첨된 유저만 지급이 거절된다"
+            f"product {product_id} 뽑기 칸의 수량이 요청 단위 상한을 넘는다: {names}"
+            " — 그 칸에 당첨된 유저만 지급이 거절된다"
         )
 
 
 def process_gacha_entry_row(db: Session, row: dict) -> bool:
-    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, fungible_item_id) — 테이블 UNIQUE 와 같다."""
+    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, ticker) — 테이블 UNIQUE 와 같다."""
     weight = parse_int((row.get("weight") or "").replace(",", ""))
     amount = parse_int((row.get("amount") or "").replace(",", ""))
     product_id = parse_int(row["product_id"])
+    # 컬럼이 없으면 ITEM(기존 시트 하위호환). **틀린 값은 거절한다** — 머니 가드의 FAV/아이템
+    #   분기가 이 값으로 갈리므로 "모르면 ITEM" 은 FAV 를 아이템 상한으로 재는 사고가 된다.
+    kind = (row.get("kind") or GACHA_KIND_ITEM).strip().upper() or GACHA_KIND_ITEM
+    if kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
+        raise ValueError(
+            f"gacha product {product_id}: kind 는 ITEM 또는 FAV 여야 한다 (got {kind!r})"
+        )
+    # `ticker` 가 정본이고 `fungible_item_id` 는 옛 컬럼명이다(기존 시트가 그대로 돈다).
+    ticker = (row.get("ticker") or row.get("fungible_item_id") or "").strip()
+    if not ticker:
+        raise ValueError(f"gacha product {product_id}: ticker 가 비어 있다")
+    sheet_item_id = parse_int((row.get("sheet_item_id") or "").strip() or "0") or None
+    decimal_places = parse_int((row.get("decimal_places") or "").strip() or "0") or 0
+
+    if kind == GACHA_KIND_ITEM:
+        if sheet_item_id is None:
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 칸은 sheet_item_id 가 필요하다"
+                f" ({ticker}) — 화면 아이콘이 이걸로 그려진다"
+            )
+        if decimal_places != 0:
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 의 decimal_places 는 0 이어야 한다"
+                f" ({ticker}) — 아이템에 소수 자릿수가 없다"
+            )
+    else:
+        if sheet_item_id is not None:
+            raise ValueError(
+                f"gacha product {product_id}: FAV 칸에 sheet_item_id 를 두지 말 것"
+                f" ({ticker}) — 화면이 없는 아이콘을 그린다"
+            )
+        if decimal_places < 0:
+            raise ValueError(
+                f"gacha product {product_id}: decimal_places 는 0 이상이어야 한다 ({ticker})"
+            )
 
     # 0·음수는 DB CheckConstraint 도 막지만, 여기서 끊어야 **어느 행이** 틀렸는지 말해줄 수
     # 있다(제약 위반은 IntegrityError 문자열만 남아 운영이 CSV 를 못 찾는다).
@@ -802,8 +849,10 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
         "product_id": product_id,
         "name": row["name"],
         "weight": weight,
-        "sheet_item_id": parse_int(row["sheet_item_id"]),
-        "fungible_item_id": row["fungible_item_id"],
+        "kind": kind,
+        "ticker": ticker,
+        "decimal_places": decimal_places,
+        "sheet_item_id": sheet_item_id,
         "amount": amount,
     }
 
@@ -811,7 +860,7 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
         db.query(ProductGachaEntry)
         .filter(
             ProductGachaEntry.product_id == csv_data["product_id"],
-            ProductGachaEntry.fungible_item_id == csv_data["fungible_item_id"],
+            ProductGachaEntry.ticker == csv_data["ticker"],
         )
         .first()
     )
@@ -826,7 +875,7 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
             return False
         print(
             f"\n🔍 Gacha entry (product {csv_data['product_id']} /"
-            f" {csv_data['fungible_item_id']}) 변경:"
+            f" {csv_data['ticker']}) 변경:"
         )
         for field, (old, new) in changes.items():
             print(f"  - {field}: 기존({old}) → 변경({new})")
@@ -836,13 +885,14 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
     db.add(ProductGachaEntry(**csv_data))
     print(
         f"🆕 Gacha entry 추가: product {csv_data['product_id']} /"
-        f" {csv_data['fungible_item_id']} x{csv_data['amount']} (weight {csv_data['weight']})"
+        f" [{csv_data['kind']}] {csv_data['ticker']} x{csv_data['amount']}"
+        f" (weight {csv_data['weight']})"
     )
     return True
 
 
 def import_gacha_entries_from_csv(
-    db: Session, csv_path: str, max_item_units=None
+    db: Session, csv_path: str, max_item_units=None, max_fav_units=None
 ) -> Tuple[int, int]:
     """
     뽑기 풀 CSV 임포트.
@@ -869,7 +919,9 @@ def import_gacha_entries_from_csv(
             db.flush()
             for product_id in touched_products:
                 assert_not_mixed_components(db, product_id)
-                assert_gacha_entry_within_caps(db, product_id, max_item_units)
+                assert_gacha_entry_within_caps(
+                    db, product_id, max_item_units, max_fav_units
+                )
 
             db.commit()
             print(

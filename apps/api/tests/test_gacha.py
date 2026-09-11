@@ -16,7 +16,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.grant_guard import grant_units
+from app.grant_guard import GrantGuardViolation, check_fav_tickers, grant_units
 from shared.utils.gacha import (
     GACHA_RESULT_VERSION,
     GachaPoolError,
@@ -29,13 +29,23 @@ from shared.utils.gacha import (
 class FakeEntry:
     """ProductGachaEntry 의 추첨에 필요한 면만. DB 없이 분포·경계를 본다."""
 
-    def __init__(self, id, weight, ticker="Item_NT_400000", amount=1, name=None):
+    def __init__(
+        self, id, weight, ticker="Item_NT_400000", amount=1, name=None,
+        kind="ITEM", decimal_places=0,
+    ):
         self.id = id
         self.weight = weight
-        self.fungible_item_id = ticker
-        self.sheet_item_id = 400000
+        self.kind = kind
+        self.ticker = ticker
+        self.decimal_places = decimal_places
+        self.sheet_item_id = 400000 if kind == "ITEM" else None
         self.amount = amount
         self.name = name or f"entry{id}"
+
+
+def fav_entry(id, weight, ticker="FAV__RUNESTONE_HP", amount=1, **kw):
+    """룬스톤·소울스톤·크리스탈은 전부 이 축이다."""
+    return FakeEntry(id, weight, ticker=ticker, amount=amount, kind="FAV", **kw)
 
 
 # ── ④ 분포·경계 ───────────────────────────────────────────────────────────────
@@ -107,7 +117,7 @@ class TestFrozenResult:
         picked = FakeEntry(7, 1, ticker="Item_NT_500000", amount=3)
         result = build_gacha_result([picked], picked)
         assert result["claim"] == [
-            {"ticker": "Item_NT_500000", "decimalPlaces": 0, "amount": 3}
+            {"kind": "ITEM", "ticker": "Item_NT_500000", "decimalPlaces": 0, "amount": 3}
         ]
         assert claim_from_result(result) == result["claim"]
 
@@ -117,7 +127,8 @@ class TestClaimFromResultFailsClosed:
 
     def test_모르는_버전은_거부(self):
         with pytest.raises(GachaPoolError, match="버전"):
-            claim_from_result({"version": 999, "claim": [{"ticker": "a", "decimalPlaces": 0, "amount": 1}]})
+            claim_from_result({"version": 999, "claim": [
+                {"kind": "ITEM", "ticker": "a", "decimalPlaces": 0, "amount": 1}]})
 
     @pytest.mark.parametrize(
         "claim",
@@ -125,15 +136,17 @@ class TestClaimFromResultFailsClosed:
             [],
             None,
             "not-a-list",
-            [{"ticker": "", "decimalPlaces": 0, "amount": 1}],
-            [{"ticker": "a", "decimalPlaces": 0, "amount": 0}],
-            [{"ticker": "a", "decimalPlaces": 0, "amount": -1}],
-            [{"ticker": "a", "decimalPlaces": 0, "amount": 1.5}],
-            [{"ticker": "a", "decimalPlaces": -1, "amount": 1}],
-            # v1 풀은 아이템 전용이라 항상 0 이다. 0 이 아니면 amount * 10**places 로
-            # 부풀려 발행되고, 그건 사실상 FAV 발행인데 FAV 얼로우리스트가 풀을 안 본다.
-            [{"ticker": "a", "decimalPlaces": 18, "amount": 1}],
-            [{"ticker": "a", "decimalPlaces": 1, "amount": 1}],
+            [{"kind": "ITEM", "ticker": "", "decimalPlaces": 0, "amount": 1}],
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 0, "amount": 0}],
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 0, "amount": -1}],
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 0, "amount": 1.5}],
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": -1, "amount": 1}],
+            # 아이템 자릿수는 항상 0. 0 이 아니면 amount * 10**places 로 부풀려 발행된다.
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 18, "amount": 1}],
+            [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 1, "amount": 1}],
+            # kind 가 없거나 모르는 값이면 머니 가드의 FAV/아이템 분기가 추측 위에 선다.
+            [{"ticker": "a", "decimalPlaces": 0, "amount": 1}],
+            [{"kind": "COIN", "ticker": "a", "decimalPlaces": 0, "amount": 1}],
             [{"amount": 1}],
             ["not-a-dict"],
         ],
@@ -175,3 +188,64 @@ class TestGrantUnitsCountsTheDrawnEntry:
         claim = build_gacha_result(pool, pool[0])["claim"]
         _, items = grant_units(FakeProduct(), claim)
         assert items == 1
+
+
+# ── 룬스톤·소울스톤·크리스탈 = FAV 축 ─────────────────────────────────────────
+#
+# v1 을 아이템 전용으로 좁힌 건 잘못된 범위였다. 고정 상품은 `fav_list` 로 이미 FAV 를
+# 주고, 뽑기라고 상금 종류가 좁을 이유가 없다. 다만 FAV 는 **얼로우리스트와 별도 수량
+# 상한**을 지나야 하므로, 그 두 가드가 풀을 실제로 본다는 걸 여기서 못박는다.
+class TestFavPrizes:
+    def test_FAV_칸은_자릿수를_그대로_싣는다(self):
+        # 아이템과 달리 FAV 는 0 이 아닌 자릿수를 가질 수 있다(CRYSTAL dp=18).
+        picked = fav_entry(1, 1, ticker="FAV__CRYSTAL", amount=5, decimal_places=18)
+        result = build_gacha_result([picked], picked)
+        assert result["claim"] == [
+            {"kind": "FAV", "ticker": "FAV__CRYSTAL", "decimalPlaces": 18, "amount": 5}
+        ]
+        assert claim_from_result(result) == result["claim"]
+
+    def test_룬스톤_칸이_통과한다(self):
+        picked = fav_entry(1, 1, ticker="FAV__RUNESTONE_GOLDENTHOR", amount=100)
+        result = build_gacha_result([picked], picked)
+        assert claim_from_result(result)[0]["ticker"] == "FAV__RUNESTONE_GOLDENTHOR"
+
+    def test_아이템과_FAV_를_섞은_풀도_뽑힌다(self):
+        pool = [FakeEntry(1, 1), fav_entry(2, 1)]
+        picked = {draw_entry(pool, rand_below=lambda _n, r=r: r).kind for r in range(2)}
+        assert picked == {"ITEM", "FAV"}
+
+    def test_수량은_축별로_따로_센다(self):
+        # 합치면 FAV 상한이 아이템 상한에 흡수된다 — "물약 1,000개 상한이 곧 NCG 1,000
+        #   발행 상한" 이 되는 자리다(grant_units 도커스트링).
+        item = FakeEntry(1, 1, amount=500)
+        fav = fav_entry(2, 1, amount=7)
+        item_claim = build_gacha_result([item], item)["claim"]
+        fav_claim = build_gacha_result([fav], fav)["claim"]
+
+        assert grant_units(FakeProduct(), item_claim) == (Decimal(0), 500)
+        assert grant_units(FakeProduct(), fav_claim) == (Decimal(7), 0)
+
+    def test_뽑힌_FAV_티커가_얼로우리스트를_지난다(self):
+        # 뽑기 상품은 product.fav_list 가 비어 있다. product 만 보면 룬스톤 뽑기가
+        #   화폐 얼로우리스트를 통째로 우회한다.
+        fav = fav_entry(1, 1, ticker="FAV__RUNESTONE_HP")
+        claim = build_gacha_result([fav], fav)["claim"]
+
+        # 허용목록 밖 → 400
+        with pytest.raises(GrantGuardViolation) as denied:
+            check_fav_tickers(FakeProduct(), frozenset({"FAV__CRYSTAL"}), claim)
+        assert denied.value.status_code == 400
+
+        # 허용목록이 비어 있음 → 503(배선 실수일 수 있어 재시도 가능해야 한다)
+        with pytest.raises(GrantGuardViolation) as unset:
+            check_fav_tickers(FakeProduct(), frozenset(), claim)
+        assert unset.value.status_code == 503
+
+        # 열려 있으면 통과
+        check_fav_tickers(FakeProduct(), frozenset({"FAV__RUNESTONE_HP"}), claim)
+
+    def test_아이템_칸은_얼로우리스트와_무관하다(self):
+        item = FakeEntry(1, 1)
+        claim = build_gacha_result([item], item)["claim"]
+        check_fav_tickers(FakeProduct(), frozenset(), claim)  # 안 던진다

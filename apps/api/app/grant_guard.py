@@ -411,10 +411,10 @@ def grant_units(
        덤으로 `claim_from_result` 의 fail-closed 검증이 **요청 시점으로 앞당겨진다** —
        형식 오류가 "유저가 포인트를 쓰고 결과까지 본 뒤 FAILED→환급" 이 아니라 400 이 된다.
 
-    ⚠️ claim 을 **전부 아이템으로 센다.** `claim_from_result` 가 `decimalPlaces == 0` 을
-       강제하므로 v1 에서 이건 참이다. v2 에서 풀에 FAV 상금을 넣으면 그 검증이 먼저
-       깨지므로(= 여기 오지 못한다) 조용히 틀리지 않는다 — 그때 이 함수와
-       `check_fav_tickers` 를 같이 고쳐야 한다.
+    ⚠️ claim 은 **`kind` 로 가른다.** 뽑기 풀은 아이템과 FAV 를 둘 다 담으므로(룬스톤·
+       소울스톤·크리스탈이 FAV 축이다) 여기서 합치면 FAV 상한이 아이템 상한에 흡수된다 —
+       "물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다"가 그대로 재현된다.
+       `kind` 는 추첨 시점에 결과에 동결된 값이라 티커 접두어로 추측하지 않는다.
 
     FAV(NCG·CRYSTAL 등)와 아이템을 **따로** 센다. 하나로 합치면 상한이 큰 쪽에 맞춰지고
     (예: 물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다) 가드가 무의미해진다.
@@ -426,7 +426,14 @@ def grant_units(
     if gacha_claim is not None:
         # 뽑기는 **뽑힌 칸 하나**만 지급한다(풀 전체가 아니다). 풀 전체를 세면 상한이
         # 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
-        return Decimal(0), sum(int(row["amount"]) for row in gacha_claim)
+        gacha_fav = sum(
+            (Decimal(str(row["amount"])) for row in gacha_claim if row.get("kind") == "FAV"),
+            Decimal(0),
+        )
+        gacha_items = sum(
+            int(row["amount"]) for row in gacha_claim if row.get("kind") == "ITEM"
+        )
+        return gacha_fav, gacha_items
     fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
     items = sum((int(row.amount) for row in product.fungible_item_list), 0)
     return fav, items
@@ -445,9 +452,15 @@ def parse_fav_tickers(raw: Optional[str]) -> frozenset:
     return frozenset(token.strip() for token in str(raw).split(",") if token.strip())
 
 
-def check_fav_tickers(product: Product, allowed: frozenset) -> None:
+def check_fav_tickers(
+    product: Product, allowed: frozenset, gacha_claim: Optional[List[dict]] = None
+) -> None:
     """
-    이 상품의 FAV 구성품 티커가 전부 허용목록 안인지.
+    이 상품이 지급할 FAV 티커가 전부 허용목록 안인지.
+
+    ⚠️ (PLD-1562) **뽑힌 칸의 FAV 도 본다.** 뽑기 상품은 `product.fav_list` 가 비어 있고
+       상금이 풀에 있으므로, 여기서 product 만 보면 룬스톤·크리스탈 뽑기가 얼로우리스트를
+       통째로 우회한다(화폐 발행이 "실수로 열려 있는" 상태가 된다 — 이 모듈이 가장 피하는 것).
 
     수량 상한보다 이게 먼저 필요한 가드다: `product.fav_list` 는 상품 CSV(`fungible-assets/import`)
     로 갈아치울 수 있어서, 화이트리스트에 이미 올라간 상품의 구성품을 CRYSTAL → NCG 로 바꾸면
@@ -461,6 +474,11 @@ def check_fav_tickers(product: Product, allowed: frozenset) -> None:
       · 허용목록이 있는데 이 상품 티커가 밖이다 → **400**. 상품 구성 오류라 재시도해도 같다.
     """
     tickers = {row.ticker for row in product.fav_list}
+    tickers |= {
+        row["ticker"]
+        for row in (gacha_claim or [])
+        if row.get("kind") == "FAV"
+    }
     if not tickers:
         return
     if not allowed:
@@ -624,7 +642,7 @@ def enforce_grant_guards(
     )
 
     # ── 3) 구성품 티커 얼로우리스트 + 요청 단위 발행량 상한 ──────────────────
-    check_fav_tickers(product, limits.allowed_fav_tickers)
+    check_fav_tickers(product, limits.allowed_fav_tickers, gacha_claim)
     # (PLD-1562) 뽑기는 **추첨을 먼저 끝내고** 여기 온다. 뽑힌 칸이 곧 실지급분이므로
     #   수량 상한이 그 칸을 기준으로 걸린다(그러지 않으면 뽑기가 상한을 통째로 우회한다).
     fav_units, item_units = grant_units(product, gacha_claim)

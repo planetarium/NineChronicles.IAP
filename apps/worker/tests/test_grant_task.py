@@ -672,7 +672,7 @@ class TestGachaGrantsFrozenResult:
         row = make_gacha_row(
             sess,
             product,
-            [{"ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}],
+            [{"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}],
         )
         seen = capture_claim(monkeypatch)
 
@@ -703,7 +703,9 @@ class TestGachaGrantsFrozenResult:
         # 지급 tx 는 되돌릴 수 없다 — "이상하면 일단 준다"가 없어야 한다.
         #   FAILED 로 종단되면 포탈이 환급한다(그게 옳은 결말이다).
         product = make_product(sess, with_item=True)
-        row = make_gacha_row(sess, product, [{"ticker": "", "decimalPlaces": 0, "amount": 1}])
+        row = make_gacha_row(
+            sess, product, [{"kind": "ITEM", "ticker": "", "decimalPlaces": 0, "amount": 1}]
+        )
         stage = stage_ok()
 
         result = gt.process_grant(
@@ -719,7 +721,10 @@ class TestGachaGrantsFrozenResult:
     def test_모르는_버전은_종단_실패다(self, sess):
         product = make_product(sess, with_item=True)
         row = make_outbox(sess, product)
-        row.gacha_result = {"version": 999, "claim": [{"ticker": "a", "decimalPlaces": 0, "amount": 1}]}
+        row.gacha_result = {
+            "version": 999,
+            "claim": [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 0, "amount": 1}],
+        }
         sess.commit()
 
         result = gt.process_grant(
@@ -728,3 +733,22 @@ class TestGachaGrantsFrozenResult:
 
         assert result.startswith("failed")
         assert row.status == GrantStatus.FAILED
+
+    def test_FAV_칸도_동결본_그대로_지급한다(self, sess, monkeypatch):
+        # 룬스톤·소울스톤·크리스탈은 FAV 축이다. 워커는 kind 를 보지 않고 티커·자릿수를
+        #   그대로 실으면 되지만(온체인에선 둘 다 FungibleAssetValue), 자릿수가 살아야 한다.
+        product = make_product(sess, with_item=True)
+        row = make_gacha_row(
+            sess,
+            product,
+            [{"kind": "FAV", "ticker": "FAV__CRYSTAL", "decimalPlaces": 18, "amount": 5}],
+        )
+        seen = capture_claim(monkeypatch)
+
+        gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage_ok()
+        )
+
+        assert seen[0][0].currency.ticker == "FAV__CRYSTAL"
+        assert seen[0][0].currency.decimal_places == 18
+        assert seen[0][0].amount == 5
