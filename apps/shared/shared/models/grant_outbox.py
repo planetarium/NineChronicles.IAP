@@ -107,17 +107,20 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
         ForeignKey("product_gacha_entry.id", ondelete="SET NULL"),
         nullable=True,
         doc=(
-            "뽑힌 풀 칸. **조회·집계 편의용이고 지급 근거가 아니다** —"
-            " 지급은 gacha_result 의 동결값으로 한다(아래 주석)"
+            "뽑힌 풀 칸. **조회·집계 편의용이고 지급 근거가 아니다**(지급은 gacha_result 의"
+            " 동결값으로 한다). ⚠️ **단연(draw_count=1)일 때만 채운다** — 10연에서 대표 칸"
+            " 하나를 박으면 나머지 9회가 조인에서 사라져 집계가 거짓말을 한다."
+            " 회차별 원본은 gacha_result['draws'] 가 전부 들고 있으므로 집계는 그쪽을 쓸 것"
         ),
     )
     gacha_result = Column(
         GACHA_RESULT_TYPE,
         nullable=True,
         doc=(
-            "추첨 결과 동결본 + 그때의 풀 스냅샷."
-            " {entryId, entryName, claim:[{ticker,decimalPlaces,amount}],"
-            " pool:[{entryId,name,weight}], totalWeight, drawnAt}"
+            "추첨 결과 동결본 + 그때의 풀 스냅샷(확률 분쟁의 증거)."
+            " v2: {version, drawCount, draws:[{entryId,entryName,kind,ticker,"
+            "decimalPlaces,amount}], claim:[티커별 **합산**], pool:[...], totalWeight,"
+            " drawnAt}. claim 은 지급 명령이고 draws 가 회차별 원본이다"
         ),
     )
 

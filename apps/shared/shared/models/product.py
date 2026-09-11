@@ -190,12 +190,13 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
 
     gacha_draw_count = Column(
         Integer,
-        CheckConstraint("gacha_draw_count >= 1"),
+        CheckConstraint("gacha_draw_count between 1 and 100"),
         nullable=False,
         server_default="1",
         doc=(
             "한 번 구매가 돌리는 추첨 횟수. 1=단연, 10=10연."
-            " **10연은 별도 SKU 다**(가격이 다르므로) — 이 상품은 자기 풀을 갖는다"
+            " **10연은 별도 SKU 다**(가격이 다르므로) — 이 상품은 자기 풀을 갖는다."
+            " 상한 100: 추첨이 전역 advisory lock 안에서 돌아 큰 값이 지급 처리량을 막는다"
         ),
     )
 

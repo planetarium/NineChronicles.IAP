@@ -41,10 +41,13 @@ def upgrade() -> None:
     )
     # 0·음수는 "뽑기인데 아무것도 안 뽑는" 상품이 된다 — 지급 API 가 빈 claim 으로 죽거나,
     #   더 나쁘게는 포인트만 받고 아무것도 안 주는 주문이 된다.
+    # 상한도 둔다: 추첨은 전 네임스페이스를 직렬화하는 advisory lock **안**에서 돈다.
+    #   오타 `100000` 하나면 그 CPU 구간(≈1초) 동안 모든 지급 요청이 줄을 서고, 결과 JSON
+    #   도 주문마다 수 MB 씩 영구 저장된다. 실무상 10연이 최대라 넉넉히 100.
     op.create_check_constraint(
         "ck_product_gacha_draw_count",
         "product",
-        "gacha_draw_count >= 1",
+        "gacha_draw_count between 1 and 100",
     )
 
 

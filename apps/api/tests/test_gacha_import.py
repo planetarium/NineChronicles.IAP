@@ -21,7 +21,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.utils.import_utils import import_gacha_entries_from_csv
+from app.utils.import_utils import (
+    import_gacha_entries_from_csv,
+    import_products_from_csv,
+)
 from shared.enums import ProductAssetUISize, ProductRarity, ProductType
 from shared.models.base import Base
 from shared.models.product import FungibleItemProduct, Product, ProductGachaEntry
@@ -264,3 +267,108 @@ class TestMixedComponents:
     def test_없는_상품은_거절(self, sess):
         with pytest.raises(ValueError, match="존재하지 않는다"):
             run_import(sess, ["999,X,100,ITEM,Item_NT_400000,1,400000,0"])
+
+
+# ── 10연: 상한은 1 요청 단위다 ────────────────────────────────────────────────
+PRODUCT_HEADER = (
+    "id,name,google_sku,apple_sku,apple_sku_k,daily_limit,weekly_limit,account_limit,"
+    "order,active,open_timestamp,close_timestamp,discount,rarity,size,popup_path_key,"
+    "required_level,product_type,mileage,mileage_price,gacha_draw_count"
+)
+
+
+def run_product_import(sess, rows, **kwargs):
+    content = PRODUCT_HEADER + "\n" + "\n".join(rows) + "\n"
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+        f.write(content)
+        path = f.name
+    try:
+        return import_products_from_csv(
+            sess, path, "internal", interactive=False, **kwargs
+        )
+    finally:
+        os.unlink(path)
+
+
+def product_row(draws):
+    return (
+        f"900,gacha,g,a,ak,,,,1,TRUE,,,0.0,NORMAL,ONE_BY_ONE,,,FREE,0,,{draws}"
+    )
+
+
+class TestDrawCountCaps:
+    """
+    상한은 **1 요청** 단위인데 10연은 한 요청이 10회 지급이다. 회차당으로 재면 10연이
+    상한을 10배 우회하고, 반대로 재검증을 빠뜨리면 "운 좋은 10연만 400" 이 된다 —
+    그 400 은 그 주문만 멈추는 게 아니라 **조용한 재추첨**이다(행이 안 생겨 포탈 재시도가
+    멱등에 안 걸린다).
+    """
+
+    def test_최악의_10연_합계로_잰다(self, sess, product):
+        # amount=30 × 10연 = 300 > 100 → 등록 시점에 막혀야 한다.
+        product.gacha_draw_count = 10
+        sess.commit()
+        with pytest.raises(ValueError, match="상한"):
+            run_import(sess, [ITEM_ROW], max_item_units=100)
+        assert entries(sess) == []
+
+    def test_단연이면_같은_칸이_통과한다(self, sess, product):
+        # 회차당으로 재는 회귀를 가른다 — draws=1 이면 30 ≤ 100 이라 통과다.
+        run_import(sess, [ITEM_ROW], max_item_units=100)
+        assert len(entries(sess)) == 1
+
+    def test_상품_CSV_로_10연을_켜면_풀_상한을_다시_잰다(self, sess, product):
+        # 🔴 이 경로가 없으면 상한 검사가 **한 번도 안 돌고**, 그 뒤 큰 칸이 뽑힌 10연만
+        #    지급 시점에 400 이 된다(= 재추첨).
+        run_import(sess, [ITEM_ROW], max_item_units=100)  # draws=1 이라 통과
+        with pytest.raises(ValueError, match="상한"):
+            run_product_import(sess, [product_row(10)], max_item_units=100)
+
+    def test_상품_CSV_로_켠_10연이_상한_안이면_통과한다(self, sess, product):
+        run_import(sess, [ITEM_ROW], max_item_units=1000)
+        run_product_import(sess, [product_row(10)], max_item_units=1000)
+        sess.refresh(product)
+        assert product.gacha_draw_count == 10
+
+    def test_풀이_없는_상품은_재검증하지_않는다(self, sess, product):
+        # 뽑기와 무관한 상품 임포트마다 풀을 조회할 이유가 없다.
+        run_product_import(sess, [product_row(10)], max_item_units=1)
+        sess.refresh(product)
+        assert product.gacha_draw_count == 10
+
+
+class TestDrawCountColumn:
+    def test_헤더가_없으면_기존_값을_유지한다(self, sess, product):
+        # 2상태로 읽으면 옛 시트 재임포트가 10연을 조용히 단연으로 되돌린다.
+        product.gacha_draw_count = 10
+        sess.commit()
+        header_no_draws = PRODUCT_HEADER.replace(",gacha_draw_count", "")
+        content = header_no_draws + "\n" + product_row(10).rsplit(",", 1)[0] + "\n"
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, "internal", interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.gacha_draw_count == 10
+
+    def test_빈칸도_기존_값을_유지한다(self, sess, product):
+        product.gacha_draw_count = 10
+        sess.commit()
+        run_product_import(sess, [product_row("")])
+        sess.refresh(product)
+        assert product.gacha_draw_count == 10
+
+    @pytest.mark.parametrize("draws", ["0", "-1", "101", "100000"])
+    def test_범위_밖은_거절(self, sess, product, draws):
+        # 상한이 필요한 이유: 추첨이 전역 advisory lock 안에서 돈다(큰 값 = 지급 처리량 정지).
+        with pytest.raises(ValueError, match="gacha_draw_count"):
+            run_product_import(sess, [product_row(draws)])
+
+    def test_경계값_1_과_100_은_통과한다(self, sess, product):
+        for draws in (1, 100):
+            run_product_import(sess, [product_row(draws)])
+            sess.refresh(product)
+            assert product.gacha_draw_count == draws

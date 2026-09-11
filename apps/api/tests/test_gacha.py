@@ -330,6 +330,14 @@ class TestMultiDraw:
         claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]
         assert grant_units(FakeProduct(), claim) == (Decimal(0), 300)
 
+    def test_여러_칸이_섞인_10연도_합계로_잰다(self):
+        # 1칸 풀이면 claim 이 1줄이라 "합계를 세는가"가 실제로는 미검증이다.
+        a = FakeEntry(1, 1, ticker="Item_NT_400000", amount=30)
+        b = FakeEntry(2, 1, ticker="Item_NT_500000", amount=20)
+        claim = build_gacha_result([a, b], [a] * 6 + [b] * 4)["claim"]
+        assert len(claim) == 2, "서로 다른 티커는 합쳐지지 않는다"
+        assert grant_units(FakeProduct(), claim) == (Decimal(0), 6 * 30 + 4 * 20)
+
     def test_10연_FAV_도_축별로_합산된다(self):
         pool = [fav_entry(1, 1, amount=200)]
         claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]

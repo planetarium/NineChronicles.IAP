@@ -359,6 +359,9 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
                 interactive=False,
                 voucher_tables=voucher_tables,
                 voucher_cap=voucher_cap,
+                # (PLD-1562) gacha_draw_count 를 바꾸는 행의 풀 상한 재검증용.
+                max_item_units=limits_from_settings(config).max_item_units_per_request,
+                max_fav_units=limits_from_settings(config).max_fav_units_per_request,
                 # (PLD-1575) `point_shop_grantable` 을 켜는 행의 FAV 티커 선검증에 쓴다.
                 #   가드가 **지급 시점에 보는 값과 같아야** 한다 — 임포트는 200 인데 실주문이
                 #   전부 거절되는 상태를 만들지 않는다(미주입 503 / 목록 밖 400).

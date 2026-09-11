@@ -27,9 +27,15 @@ from shared.models.product import GACHA_KIND_FAV, GACHA_KIND_ITEM
 # 추첨 결과 JSON 의 버전. 형식을 바꾸면 올리고, 읽는 쪽이 모르는 버전을 만나면 **거절**한다
 # (모르는 형식을 추측해서 지급하면 안 된다 — 조용히 다른 걸 주는 것보다 멈추는 게 낫다).
 #   v2: 10연뽑. `draws`(회차별) 추가, `claim` 은 티커별 **합산**본이 됐다.
-#       v1 을 읽는 경로는 두지 않는다 — v1 결과가 저장된 행이 **0건**임을 확인하고 올렸다
-#       (있었다면 마이그레이션이나 양쪽 리더가 필요했다).
 GACHA_RESULT_VERSION = 2
+
+#: **읽을 수 있는** 버전. 쓰기는 항상 최신(GACHA_RESULT_VERSION)이다.
+#: v1 을 남겨 두는 이유는 데이터가 아니라 **배포 스큐**다 — api/worker 가 별도 Deployment 라
+#: 롤아웃/롤백 중에 (구 워커 × v2 행) 또는 (신 워커 × v1 행) 창이 열린다. 그 창에 들어온
+#: 뽑기 주문은 워커가 `_fail` 로 **즉시 종단**시켜 "결과를 본 뒤 환급" 이 된다.
+#: v1 의 `claim` 은 v2 와 모양이 완전히 같아서(1줄짜리 같은 dict) 읽는 비용이 0 이다 —
+#: 얻는 것 없는 fail-closed 를 지불하고 롤백 창을 열 이유가 없다.
+READABLE_RESULT_VERSIONS = frozenset({1, 2})
 
 #: FAV 자릿수 상한. 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데, 이 축을 재는
 #: 가드가 따로 없다(얼로우리스트=티커, 수량 상한=amount). lib9c 통화의 최대 자릿수가 18 이다.
@@ -128,7 +134,9 @@ def aggregate_claim(picked: Sequence[Any]) -> List[Dict[str, Any]]:
             }
         else:
             row["amount"] += int(e.amount)
-    return list(merged.values())
+    # 결정적 순서 — 같은 풀·같은 결과면 동결본이 바이트까지 같아야 diff 로 재현된다
+    #   (추첨 순서에 의존하면 같은 결과라도 tx 항목 순서가 요청마다 달라진다).
+    return [merged[k] for k in sorted(merged)]
 
 
 def pool_snapshot(entries: Sequence[Any]) -> List[Dict[str, Any]]:
@@ -202,9 +210,9 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not result:
         raise GachaPoolError("뽑기 결과가 비어 있습니다")
     version = result.get("version")
-    if version != GACHA_RESULT_VERSION:
+    if version not in READABLE_RESULT_VERSIONS:
         raise GachaPoolError(
-            f"모르는 뽑기 결과 버전 {version!r} (지원: {GACHA_RESULT_VERSION})"
+            f"모르는 뽑기 결과 버전 {version!r} (지원: {sorted(READABLE_RESULT_VERSIONS)})"
         )
     claim = result.get("claim")
     if not isinstance(claim, list) or not claim:

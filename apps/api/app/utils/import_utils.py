@@ -41,6 +41,9 @@ POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
 POINT_PRICE_COLUMN = "point_price"
 # (PLD-1562) 10연뽑. 헤더 없음=유지 / 빈칸=유지 / 값=1 이상 정수.
 GACHA_DRAW_COUNT_COLUMN = "gacha_draw_count"
+# 추첨은 전역 advisory lock 안에서 돈다 — 큰 값은 그 구간을 늘려 모든 지급 요청을 줄 세우고
+# 결과 JSON 도 주문마다 영구 저장된다. 실무상 10연이 최대이므로 넉넉히 100.
+MAX_GACHA_DRAW_COUNT = 100
 
 
 def parse_boolean(value: str) -> bool:
@@ -121,10 +124,13 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         raw = (row.get(GACHA_DRAW_COUNT_COLUMN) or "").strip()
         if raw:
             draws = parse_int(raw)
-            if draws is None or draws < 1:
+            if draws is None or not 1 <= draws <= MAX_GACHA_DRAW_COUNT:
+                # 상한이 필요한 이유: 추첨은 전 네임스페이스를 직렬화하는 advisory lock
+                #   **안**에서 돈다. 오타 `100000` 하나면 그 1초짜리 CPU 구간 동안 모든
+                #   지급 요청이 줄을 서고, 결과 JSON 도 주문마다 수 MB 씩 영구 저장된다.
                 raise ValueError(
-                    f"product {csv_data['id']}: {GACHA_DRAW_COUNT_COLUMN} 는 1 이상"
-                    f" 정수여야 한다 (got {raw!r})"
+                    f"product {csv_data['id']}: {GACHA_DRAW_COUNT_COLUMN} 는"
+                    f" 1~{MAX_GACHA_DRAW_COUNT} 정수여야 한다 (got {raw!r})"
                 )
             csv_data[GACHA_DRAW_COUNT_COLUMN] = draws
 
@@ -337,6 +343,28 @@ def _check_grantable_fav_row(
     check_fav_tickers(product, allowed_fav_tickers)
 
 
+def _check_gacha_draw_count_row(db: Session, csv_data: dict, max_item_units, max_fav_units):
+    """
+    이 행이 `gacha_draw_count` 를 실었고 그 상품이 풀을 갖고 있으면 상한을 다시 잰다.
+
+    컬럼이 없는 행(= 추첨 횟수 미변경)은 건너뛴다 — 뽑기와 무관한 상품 임포트마다 풀을
+    조회할 이유가 없다.
+    """
+    if GACHA_DRAW_COUNT_COLUMN not in csv_data:
+        return
+    db.flush()  # 위 update 가 아직 세션에만 있을 수 있다(상한은 **새 값**으로 재야 한다)
+    if (
+        db.query(ProductGachaEntry)
+        .filter(ProductGachaEntry.product_id == csv_data["id"])
+        .first()
+        is None
+    ):
+        return
+    assert_gacha_entry_within_caps(
+        db, csv_data["id"], max_item_units, max_fav_units
+    )
+
+
 def import_products_from_csv(
     db: Session,
     csv_path: str,
@@ -345,6 +373,8 @@ def import_products_from_csv(
     voucher_tables: Optional[dict] = None,
     voucher_cap: Optional[int] = None,
     allowed_fav_tickers: frozenset = frozenset(),
+    max_item_units=None,
+    max_fav_units=None,
 ) -> tuple[int, int]:
     """
     CSV 파일에서 상품 데이터를 가져와 데이터베이스에 임포트합니다.
@@ -358,6 +388,9 @@ def import_products_from_csv(
             쓴다. **미전달 = 빈 집합 = FAV 구성품이 있는 상품은 켤 수 없다**(fail-closed —
             `grant_guard.parse_fav_tickers` 와 같은 의미). 값의 출처는 설정이고 호출부가 넣는다
             (voucher_cap 과 같은 규칙 — 이 모듈은 `app.config` 를 임포트하지 않는다).
+        max_item_units / max_fav_units: (PLD-1562) 요청 단위 발행량 상한. `gacha_draw_count`
+            를 바꾸는 행에서 **풀의 수량 상한을 다시 재는 데** 쓴다(그 경로가 없으면
+            1→10 변경이 상한 검사를 통째로 건너뛴다 — 조용한 재추첨의 입구).
 
     Returns:
         tuple[int, int]: (처리된 상품 수, 업데이트된 상품 수)
@@ -380,6 +413,15 @@ def import_products_from_csv(
                 _check_grantable_fav_row(db, csv_data, allowed_fav_tickers)
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
+                # (PLD-1562) 🔴 `gacha_draw_count` 가 바뀌면 **풀의 수량 상한을 다시 잰다.**
+                #   상한은 1 요청 단위인데 10연은 한 요청이 10회 지급이라, 1→10 으로 고치는
+                #   순간 이미 등록된 칸들의 최악값이 10배가 된다. 풀 CSV 쪽 검사만 있으면
+                #   이 경로는 **한 번도 안 돌고**, 그 뒤 `amount × 10 > cap` 인 칸이 뽑힌
+                #   10연만 지급 시점에 400 이 된다 — 그 400 이 곧 조용한 재추첨이다
+                #   (행이 안 생겨 포탈 재시도가 멱등에 안 걸리고 다시 뽑는다).
+                _check_gacha_draw_count_row(
+                    db, csv_data, max_item_units, max_fav_units
+                )
                 # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).
                 _apply_voucher_row(
                     db,
