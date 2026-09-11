@@ -35,6 +35,9 @@ _TABLES = (
     "fungible_asset_product",
     "fungible_item_product",
     "grant_outbox",
+    # (PLD-1562) grant_outbox.gacha_entry_id 의 FK 대상. 워커는 이 테이블을 **읽지 않지만**
+    #   (지급은 동결본으로 한다) 테이블이 없으면 grant_outbox 생성 DDL 이 깨진다.
+    "product_gacha_entry",
 )
 
 # nonce 통합 조회(shared.utils.nonce)가 보는 컬럼만. 실제 receipt 는 훨씬 넓다.
@@ -622,3 +625,106 @@ class TestSendGrantTask:
         )
         result = gt.send_grant.run({"external_ref": "shop:ghost"})
         assert result == "not found"
+
+
+# ── (PLD-1562) 뽑기 ───────────────────────────────────────────────────────────
+def make_gacha_row(sess, product, claim, **kwargs):
+    """추첨 결과가 동결된 아웃박스 행. 풀 테이블 없이 **동결본만으로** 지급되는지 본다."""
+    row = make_outbox(sess, product, **kwargs)
+    row.gacha_result = {
+        "version": 1,
+        "entryId": 42,
+        "entryName": "레어",
+        "claim": claim,
+        "pool": [{"entryId": 42, "name": "레어", "weight": 1}],
+        "totalWeight": 1,
+        "drawnAt": "2026-09-11T00:00:00+00:00",
+    }
+    sess.commit()
+    sess.refresh(row)
+    return row
+
+
+def capture_claim(monkeypatch):
+    """tx 에 실제로 들어가는 claim_data 를 가로챈다."""
+    seen = []
+    real = gt.create_grant_items_tx
+
+    def _spy(**kwargs):
+        seen.append(kwargs["claim_data"])
+        return real(**kwargs)
+
+    monkeypatch.setattr(gt, "create_grant_items_tx", _spy)
+    return seen
+
+
+class TestGachaGrantsFrozenResult:
+    """
+    뽑기 지급의 핵심 불변식: **워커는 풀을 다시 읽지 않는다.**
+
+    읽으면 운영이 표를 고치는 것이 곧 뒷문 재추첨이 된다 — 유저가 뽑은 것과 다른 게 나가고,
+    화면엔 뽑은 것이 찍혀 있어 아무도 모른다.
+    """
+
+    def test_동결된_claim_으로_지급한다_상품_구성품이_아니라(self, sess, monkeypatch):
+        # 상품에는 AP포션 10개가 붙어 있지만(with_item=True), 뽑힌 건 다른 아이템이다.
+        product = make_product(sess, with_item=True)
+        row = make_gacha_row(
+            sess,
+            product,
+            [{"ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}],
+        )
+        seen = capture_claim(monkeypatch)
+
+        result = gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage_ok()
+        )
+
+        assert result.startswith("staged")
+        assert len(seen) == 1
+        claim = seen[0]
+        assert len(claim) == 1, "상품 구성품이 같이 나가면 안 된다"
+        assert claim[0].currency.ticker == "Item_NT_400000"
+        assert claim[0].amount == 3
+
+    def test_고정_상품은_기존_경로_그대로다(self, sess, monkeypatch):
+        product = make_product(sess, with_item=True)
+        row = make_outbox(sess, product)  # gacha_result 없음
+        seen = capture_claim(monkeypatch)
+
+        gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage_ok()
+        )
+
+        assert seen[0][0].currency.ticker == "Item_NT_500000"
+        assert seen[0][0].amount == 10
+
+    def test_망가진_결과는_종단_실패다_지급하지_않는다(self, sess):
+        # 지급 tx 는 되돌릴 수 없다 — "이상하면 일단 준다"가 없어야 한다.
+        #   FAILED 로 종단되면 포탈이 환급한다(그게 옳은 결말이다).
+        product = make_product(sess, with_item=True)
+        row = make_gacha_row(sess, product, [{"ticker": "", "decimalPlaces": 0, "amount": 1}])
+        stage = stage_ok()
+
+        result = gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage
+        )
+
+        assert result.startswith("failed")
+        assert row.status == GrantStatus.FAILED
+        assert stage.calls == [], "망가진 결과로 tx 를 내보내면 안 된다"
+        # 상품 구성품으로 **폴백하지 않는다** — 폴백하면 유저가 뽑은 것과 다른 게 나간다.
+        assert row.tx is None
+
+    def test_모르는_버전은_종단_실패다(self, sess):
+        product = make_product(sess, with_item=True)
+        row = make_outbox(sess, product)
+        row.gacha_result = {"version": 999, "claim": [{"ticker": "a", "decimalPlaces": 0, "amount": 1}]}
+        sess.commit()
+
+        result = gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage_ok()
+        )
+
+        assert result.startswith("failed")
+        assert row.status == GrantStatus.FAILED

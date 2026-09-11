@@ -6,10 +6,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, relationship
@@ -182,6 +184,86 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         back_populates="product"
     )
     price_list: Mapped[List["Price"]] = relationship(back_populates="product")
+    gacha_entry_list: Mapped[List["ProductGachaEntry"]] = relationship(
+        back_populates="product"
+    )
+
+    @property
+    def is_gacha(self) -> bool:
+        """
+        뽑기 상품인가 = **자기 안에 풀을 들고 있는가**.
+
+        별도 상품 유형(enum)을 두지 않는다. 뽑기는 도메인상 SKU 하나이고 그 안에 드롭
+        테이블이 있는 것이지, "뽑기용 유령 상품"을 따로 만들어 숨기는 구조가 아니다.
+        판정을 파생값으로 두면 플래그와 실데이터가 어긋날 자리 자체가 없다.
+
+        ⚠️ 이 관계가 **로드돼 있어야** 한다(`selectinload(Product.gacha_entry_list)`).
+           lazy 로 두면 세션 밖에서 DetachedInstanceError 가 나고, 그건 "뽑기가 아니다"로
+           오독될 수 있는 자리가 아니라 예외라 차라리 낫지만, 호출부가 전부 로드한다.
+        """
+        return bool(self.gacha_entry_list)
+
+
+class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
+    """
+    (PLD-1562) 뽑기 풀의 한 칸 — **뽑기 상품이 자기 안에 든다**.
+
+    ## 왜 상금표가 IAP 에 있는가
+    상금표는 **지급하는 쪽**에 둔다. 복권(PLD-1458)의 상금은 NCG 라 포탈이 자기 원장에서
+    크레딧하므로 표가 포탈에 있고, 뽑기의 상금은 온체인 아이템이라 IAP 가 `grant_items` 로
+    지급하므로 표가 여기 있다. 두 관례가 갈리는 게 아니라 같은 원칙의 두 사례다.
+
+    ## 왜 "뽑기용 상품"을 따로 만들지 않는가
+    풀 멤버마다 Product 행을 만들면 50종 뽑기가 상품 50개가 되고, 그것들이 목록에 뜨면
+    안 되니 "숨김" 플래그를 또 만들어야 한다. 애초에 유령 상품을 만들지 않으면 숨길 일도
+    없다. 그래서 풀은 상품의 **자식 행**이다.
+
+    ## 재추첨 불가가 어디서 강제되는가
+    여기가 아니라 `grant_outbox` 다. 추첨은 아웃박스 행을 만들 때 1회 일어나고 결과가
+    그 행에 **동결**된다(`gacha_result`). `external_ref` UNIQUE 가 "1 주문 = 1 행" 이므로
+    같은 주문의 재요청은 같은 행 = 같은 결과다. 앱 규약이 아니라 DB 제약이 막는다.
+
+    ⚠️ 그래서 이 표를 나중에 고쳐도 **이미 뽑힌 주문의 결과는 바뀌지 않는다**. 워커는 이
+       테이블을 읽지 않고 아웃박스에 동결된 값으로 지급한다(그렇게 하지 않으면 운영이
+       표를 고치는 것이 곧 뒷문 재추첨이 된다).
+
+    ## v1 범위
+    한 칸 = **아이템 1종 × 수량**. 번들(한 번에 여러 종)과 FAV(CRYSTAL 등) 상금은 넣지
+    않았다. FAV 제외는 편의가 아니라 안전 쪽이다 — 화폐 발행은 `check_fav_tickers` 의
+    얼로우리스트를 지나야 하는데, 풀 안에서 그걸 태우는 경로를 v1 에 만들지 않는다.
+    """
+
+    __tablename__ = "product_gacha_entry"
+
+    product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
+    product: Mapped["Product"] = relationship(back_populates="gacha_entry_list")
+    name = Column(Text, nullable=False, doc="운영·감사용 칸 이름(화면 라벨 아님)")
+    weight = Column(
+        Integer,
+        CheckConstraint("weight > 0"),
+        nullable=False,
+        doc=(
+            "가중치. 확률 = weight / Σweight. 0·음수는 제약으로 막는다 —"
+            " 0 을 허용하면 '넣었는데 절대 안 나오는 칸'이 조용히 생긴다"
+        ),
+    )
+    sheet_item_id = Column(Integer, nullable=False, doc="9c Item sheet ID e.g., 400000")
+    fungible_item_id = Column(
+        Text,
+        nullable=False,
+        doc="9c Fungible ID(온체인 티커). FungibleItemProduct 와 같은 값 체계",
+    )
+    amount = Column(Integer, CheckConstraint("amount > 0"), nullable=False)
+
+    __table_args__ = (
+        # 풀 조회는 항상 상품 단위다(`WHERE product_id = ?`).
+        Index("ix_product_gacha_entry_product_id", "product_id"),
+        # 같은 상품 안에 같은 아이템 칸이 둘이면 운영 실수(CSV 재임포트의 중복 삽입)다.
+        # 수량이 다른 칸을 둘 이유가 있다면 이 제약을 풀되, 그때 CSV upsert 키도 같이 바꿀 것.
+        UniqueConstraint(
+            "product_id", "fungible_item_id", name="uq_product_gacha_entry_item"
+        ),
+    )
 
 
 class FungibleAssetProduct(AutoIdMixin, TimeStampMixin, Base):

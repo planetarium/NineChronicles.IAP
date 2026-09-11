@@ -116,6 +116,31 @@ class FungibleItemSchema(BaseSchema):
         from_attributes = True
 
 
+class GachaEntrySchema(BaseSchema):
+    """
+    (PLD-1562) 뽑기 풀 한 칸의 **공개** 표현 — 확률 공시용.
+
+    `rate` 를 서버가 계산해 실어 보낸다. 클라가 weight/Σweight 를 직접 나누게 하면 공시
+    값이 구현마다 갈리고(반올림·부동소수), 무엇보다 **화면에 뜬 확률과 서버가 뽑는 확률이
+    다를 수 있는 자리**가 생긴다. 같은 수를 한 곳에서만 만든다.
+
+    ⚠️ `weight` 도 같이 낸다. rate 는 반올림된 표시값이라 감사에 못 쓰고, 공시 분쟁에서
+       필요한 건 원본 가중치다(주문에 동결되는 스냅샷도 weight 를 남긴다).
+    """
+
+    entry_id: int
+    name: str
+    weight: int
+    #: weight / Σweight. 소수점 6자리 반올림(= 0.0001% 해상도).
+    rate: float
+    sheet_item_id: int
+    fungible_item_id: str
+    amount: int
+
+    class Config:
+        from_attributes = True
+
+
 class ProductSchema(SimpleProductSchema):
     id: int
     purchase_count: int = 0
@@ -131,6 +156,11 @@ class ProductSchema(SimpleProductSchema):
 
     fav_list: List[FungibleAssetValueSchema]
     fungible_item_list: List[FungibleItemSchema]
+
+    # (PLD-1562) 뽑기 풀. **빈 리스트 = 뽑기가 아니다**(하위호환 — 필드를 모르는 구버전
+    #   클라와 고정 상품이 같은 모양이다). 채우는 주체는 상품 조회 API 뿐이다
+    #   (ORM 관계명이 gacha_entry_list 로 달라 model_validate 만으로는 항상 []).
+    gacha_pool: List[GachaEntrySchema] = Field(default_factory=list)
 
     price_list: List[PriceSchema]
 

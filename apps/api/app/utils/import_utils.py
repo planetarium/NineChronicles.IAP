@@ -9,6 +9,7 @@ from shared.models.product import (
     Price,
     Product,
     ProductAssetUISize,
+    ProductGachaEntry,
     ProductRarity,
     ProductType,
     Store,
@@ -705,6 +706,123 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
             db.commit()
             print(f"\n✅ 가격 정보 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")
             return processed_count, updated_count
+
+    except Exception as e:
+        db.rollback()
+        raise e
+
+
+# ── (PLD-1562) 뽑기 풀 CSV ────────────────────────────────────────────────────
+# 컬럼: product_id, name, weight, sheet_item_id, fungible_item_id, amount
+#
+# `fungible-items/import` 와 같은 모양(상품당 여러 행)을 따른다. voucher 처럼 고정 슬롯을
+# 쓰지 않는 이유: 풀은 수십 칸이 될 수 있어 `gacha_item_1..N` 으로는 표가 못 넘어간다.
+#
+# ⚠️ **REPLACE 가 아니라 upsert 다.** 행을 지우려면 CSV 가 아니라 명시적으로 지워야 한다.
+#    REPLACE 로 만들면 부분 CSV 를 올리는 순간 나머지 칸이 조용히 사라지고, 그건 확률이
+#    통째로 바뀌는 사고다(그리고 이미 뽑힌 주문은 동결돼 있어 대조로도 안 드러난다).
+
+
+def process_gacha_entry_row(db: Session, row: dict) -> bool:
+    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, fungible_item_id) — 테이블 UNIQUE 와 같다."""
+    weight = parse_int((row.get("weight") or "").replace(",", ""))
+    amount = parse_int((row.get("amount") or "").replace(",", ""))
+    product_id = parse_int(row["product_id"])
+
+    # 0·음수는 DB CheckConstraint 도 막지만, 여기서 끊어야 **어느 행이** 틀렸는지 말해줄 수
+    # 있다(제약 위반은 IntegrityError 문자열만 남아 운영이 CSV 를 못 찾는다).
+    if weight is None or weight <= 0:
+        raise ValueError(
+            f"gacha product {product_id}: weight 는 양의 정수여야 한다 (got {row.get('weight')!r})."
+            " 0 을 넣으면 '넣었는데 절대 안 나오는 칸'이 된다"
+        )
+    if amount is None or amount <= 0:
+        raise ValueError(
+            f"gacha product {product_id}: amount 는 양의 정수여야 한다 (got {row.get('amount')!r})"
+        )
+
+    csv_data = {
+        "product_id": product_id,
+        "name": row["name"],
+        "weight": weight,
+        "sheet_item_id": parse_int(row["sheet_item_id"]),
+        "fungible_item_id": row["fungible_item_id"],
+        "amount": amount,
+    }
+
+    existing = (
+        db.query(ProductGachaEntry)
+        .filter(
+            ProductGachaEntry.product_id == csv_data["product_id"],
+            ProductGachaEntry.fungible_item_id == csv_data["fungible_item_id"],
+        )
+        .first()
+    )
+
+    if existing:
+        changes = {
+            key: (getattr(existing, key), value)
+            for key, value in csv_data.items()
+            if getattr(existing, key) != value
+        }
+        if not changes:
+            return False
+        print(
+            f"\n🔍 Gacha entry (product {csv_data['product_id']} /"
+            f" {csv_data['fungible_item_id']}) 변경:"
+        )
+        for field, (old, new) in changes.items():
+            print(f"  - {field}: 기존({old}) → 변경({new})")
+            setattr(existing, field, new)
+        return True
+
+    db.add(ProductGachaEntry(**csv_data))
+    print(
+        f"🆕 Gacha entry 추가: product {csv_data['product_id']} /"
+        f" {csv_data['fungible_item_id']} x{csv_data['amount']} (weight {csv_data['weight']})"
+    )
+    return True
+
+
+def import_gacha_entries_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
+    """
+    뽑기 풀 CSV 임포트.
+
+    ⚠️ 임포트가 끝나고 **고정 구성품과 겹치지 않는지** 확인한다. 한 상품이 고정 구성품과
+       풀을 동시에 가지면 "둘 다 주나 하나만 주나"가 정의되지 않아 지급 API 가 400 으로
+       끊는다(admin.create_grant) — 그걸 지급 시점이 아니라 **등록 시점**에 알려준다.
+       지급 시점에만 걸리면 유저가 포인트를 쓴 뒤에 실패한다.
+    """
+    processed_count = 0
+    changed_count = 0
+    touched_products = set()
+
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                processed_count += 1
+                touched_products.add(parse_int(row["product_id"]))
+                if process_gacha_entry_row(db, row):
+                    changed_count += 1
+
+            db.flush()
+            for product_id in touched_products:
+                product = db.query(Product).filter(Product.id == product_id).first()
+                if product is None:
+                    raise ValueError(f"gacha 풀의 product {product_id} 가 존재하지 않는다")
+                if product.fav_list or product.fungible_item_list:
+                    raise ValueError(
+                        f"product {product_id} 는 고정 구성품을 가진 상품이다 —"
+                        " 뽑기 풀과 고정 구성품을 동시에 가질 수 없다"
+                        " (지급 시점에 400 으로 끊긴다)"
+                    )
+
+            db.commit()
+            print(
+                f"\n✅ Gacha 풀 동기화 완료! (처리: {processed_count}, 변경: {changed_count})"
+            )
+            return processed_count, changed_count
 
     except Exception as e:
         db.rollback()

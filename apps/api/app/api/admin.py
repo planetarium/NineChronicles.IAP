@@ -34,6 +34,11 @@ from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import AdminProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
 from shared.utils.address import format_addr
+from shared.utils.gacha import (
+    GachaPoolError,
+    build_gacha_result,
+    draw_entry,
+)
 from shared.utils.alert import send_slack_alert
 from sqlalchemy import Date, and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -60,6 +65,7 @@ from app.utils.import_utils import (
     import_category_products_from_csv,
     import_fungible_assets_from_csv,
     import_fungible_items_from_csv,
+    import_gacha_entries_from_csv,
     import_prices_from_csv,
     import_products_from_csv,
 )
@@ -119,6 +125,10 @@ class ImportFungibleItemsRequest(BaseModel):
 
 
 class ImportPricesRequest(BaseModel):
+    csv_content: str
+
+
+class ImportGachaEntriesRequest(BaseModel):
     csv_content: str
 
 
@@ -494,6 +504,49 @@ def import_fungible_items_endpoint(
             }
         finally:
             # 임시 파일 삭제
+            os.unlink(temp_path)
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/products/gacha/import")
+def import_gacha_entries_endpoint(
+    request: ImportGachaEntriesRequest, sess=Depends(session)
+):
+    """
+    # (PLD-1562) 뽑기 풀 임포트
+    ---
+    컬럼: `product_id, name, weight, sheet_item_id, fungible_item_id, amount`
+
+    `fungible-items/import` 와 같은 모양(상품당 여러 행)이다. **upsert 이고 REPLACE 가
+    아니다** — 부분 CSV 로 나머지 칸이 조용히 사라지면 확률이 통째로 바뀌는 사고가 된다.
+    칸을 빼려면 명시적으로 지워야 한다.
+
+    이미 뽑힌 주문은 결과가 아웃박스에 동결돼 있어 이 임포트의 영향을 받지 않는다
+    (표를 고치는 것이 뒷문 재추첨이 되지 않게 한 설계 — grant_outbox 모델 주석).
+    """
+    try:
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix=".csv"
+        ) as temp_file:
+            temp_file.write(request.csv_content)
+            temp_path = temp_file.name
+
+        try:
+            processed_count, changed_count = import_gacha_entries_from_csv(
+                sess, temp_path
+            )
+            return {
+                "message": "뽑기 풀 데이터가 성공적으로 임포트되었습니다.",
+                "processed_count": processed_count,
+                "changed_count": changed_count,
+            }
+        finally:
             os.unlink(temp_path)
 
     except Exception as e:
@@ -1666,6 +1719,10 @@ class GrantSchema(BaseModel):
     last_error: Optional[str] = None
     created_at: Optional[datetime] = None
     granted_at: Optional[datetime] = None
+    # (PLD-1562) 뽑기 결과. 고정 상품은 null. POST 응답(201/200)과 GET 양쪽에 실린다 —
+    #   포탈이 **재요청으로도 같은 결과를 다시 받을 수 있어야** 대조 배치가 결과를 메운다
+    #   (첫 POST 응답이 네트워크로 유실돼도 주문이 결과 없이 남지 않는다).
+    draw_result: Optional[dict] = None
 
 
 class GrantListSchema(BaseModel):
@@ -1685,6 +1742,7 @@ def _grant_schema(row: GrantOutbox) -> GrantSchema:
         last_error=row.last_error,
         created_at=row.created_at,
         granted_at=row.granted_at,
+        draw_result=row.gacha_result,
     )
 
 
@@ -1833,13 +1891,25 @@ def create_grant(
         select(Product)
         .options(selectinload(Product.fav_list))
         .options(selectinload(Product.fungible_item_list))
+        .options(selectinload(Product.gacha_entry_list))
         .where(Product.id == request.product_id)
     )
     if product is None:
         raise HTTPException(
             status_code=400, detail=f"product {request.product_id} not found"
         )
-    if not (product.fav_list or product.fungible_item_list):
+    has_fixed = bool(product.fav_list or product.fungible_item_list)
+    if has_fixed and product.is_gacha:
+        # (PLD-1562) 고정 구성품 + 풀을 동시에 가진 상품은 "둘 다 주나 하나만 주나"가
+        #   정의되지 않는다. 지급은 되돌릴 수 없으므로 애매한 상태를 지급 시점에 끊는다.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"product {request.product_id} has both fixed components and a gacha"
+                " pool — a product must be one or the other"
+            ),
+        )
+    if not (has_fixed or product.is_gacha):
         # 구성품이 없으면 "성공했는데 아무것도 안 준" tx 가 된다 — 요청 단계에서 끊는다.
         raise HTTPException(
             status_code=400,
@@ -1859,6 +1929,29 @@ def create_grant(
     #   아래 INSERT 와 아바타 축 카운트가 **같은 문자열**을 봐야 한다(가드도 안에서 같은
     #   `format_addr` 로 정규화한다 — 멱등이므로 여기서 미리 맞춰 두는 게 안전하다).
     avatar_addr = format_addr(request.avatar_address)
+
+    # (PLD-1562) 추첨 — **가드보다 먼저, INSERT 와 같은 트랜잭션에서** 한 번.
+    #   · 가드보다 먼저인 이유: 수량 상한을 뽑힌 칸으로 재야 한다(뽑기 상품 자체는 구성품이
+    #     없어 발행량 0 으로 계산되므로, 순서가 반대면 뽑기가 상한을 통째로 우회한다).
+    #   · 여기서 뽑아도 **재추첨이 안 되는 이유**는 위 멱등 분기다. 같은 external_ref 재요청은
+    #     이 지점에 도달하지 않고 기존 행을 200 으로 돌려준다. 동시 요청으로 둘 다 여기까지
+    #     와도 INSERT 의 UNIQUE(external_ref) 가 하나만 남기고, 진 쪽은 이긴 행을 반환한다
+    #     (아래 IntegrityError 분기) — 즉 **행이 곧 추첨이고 행은 하나뿐**이다.
+    #   · 가드가 거절하면 행이 없으므로 이 추첨은 없던 일이다. 포탈이 환급하고, 재시도는
+    #     새로 뽑는다. 아무것도 지급되지 않았으므로 그게 맞다.
+    gacha_entry = None
+    gacha_result = None
+    if product.is_gacha:
+        try:
+            gacha_entry = draw_entry(product.gacha_entry_list)
+            gacha_result = build_gacha_result(product.gacha_entry_list, gacha_entry)
+        except GachaPoolError as e:
+            # 풀 설정 오류(빈 풀·잘못된 가중치). 재시도해도 같으므로 400 이다.
+            raise HTTPException(
+                status_code=400,
+                detail=f"product {request.product_id} gacha pool is unusable: {e}",
+            )
+
     pressure: List[GrantWarning] = []
     try:
         namespace = enforce_grant_guards(
@@ -1868,6 +1961,7 @@ def create_grant(
             avatar_addr=avatar_addr,
             limits=limits_from_settings(config),
             is_production=config.is_production,
+            gacha_entry=gacha_entry,
             on_warning=pressure.append,
         )
     except GrantGuardViolation as violation:
@@ -1887,6 +1981,8 @@ def create_grant(
         ),
         memo=memo,
         status=GrantStatus.PENDING,
+        gacha_entry_id=(gacha_entry.id if gacha_entry is not None else None),
+        gacha_result=gacha_result,
     )
     sess.add(row)
     try:

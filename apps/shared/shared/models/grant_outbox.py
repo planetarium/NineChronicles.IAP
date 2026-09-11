@@ -1,7 +1,13 @@
 from shared.enums import GrantStatus, PlanetID, TxStatus
 from shared.models.base import AutoIdMixin, Base, EnumType, TimeStampMixin
 from shared.models.product import Product
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, LargeBinary, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Index, Integer, LargeBinary, Text
+from sqlalchemy.dialects.postgresql import JSONB
+
+# 실 DB 는 Postgres 라 JSONB 를, 테스트는 SQLite 라 JSON 을 쓴다. `JSONB` 를 그대로 두면
+# SQLite 가 타입을 컴파일하지 못해 이 테이블을 쓰는 테스트가 **전부** 수집 단계에서 죽는다
+# (receipt.data 는 raw JSONB 지만 그 테이블은 SQLite 테스트에서 생성되지 않아 안 걸렸다).
+GACHA_RESULT_TYPE = JSON().with_variant(JSONB(), "postgresql")
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, relationship
 
@@ -91,6 +97,34 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
     attempts = Column(Integer, nullable=False, default=0, server_default="0")
     last_error = Column(Text, nullable=True)
     granted_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ── (PLD-1562) 뽑기 ────────────────────────────────────────────────────────
+    # 추첨은 **이 행을 만들 때 1회** 일어나고 결과가 여기 동결된다. `external_ref` UNIQUE 가
+    # "1 주문 = 1 행"이므로 재요청은 같은 행 = 같은 결과다 — 재추첨 불가가 앱 규약이 아니라
+    # DB 제약으로 강제되는 지점이다. 고정 상품 행은 둘 다 NULL 이다.
+    gacha_entry_id = Column(
+        Integer,
+        ForeignKey("product_gacha_entry.id"),
+        nullable=True,
+        doc=(
+            "뽑힌 풀 칸. **조회·집계 편의용이고 지급 근거가 아니다** —"
+            " 지급은 gacha_result 의 동결값으로 한다(아래 주석)"
+        ),
+    )
+    gacha_result = Column(
+        GACHA_RESULT_TYPE,
+        nullable=True,
+        doc=(
+            "추첨 결과 동결본 + 그때의 풀 스냅샷."
+            " {entryId, entryName, claim:[{ticker,decimalPlaces,amount}],"
+            " pool:[{entryId,name,weight}], totalWeight, drawnAt}"
+        ),
+    )
+
+    # ⚠️ 워커는 `gacha_entry_id` 로 풀을 **다시 읽지 않는다**. 읽으면 운영이 표를 고치는 것이
+    #    곧 뒷문 재추첨이 된다(유저가 뽑은 것과 다른 게 지급된다). 지급 근거는 항상
+    #    `gacha_result["claim"]` 이고, FK 는 "어느 칸이었나"를 나중에 조인해 보기 위한 것뿐이다.
+    #    같은 이유로 칸이 삭제돼도 지급은 영향받지 않아야 하므로 FK 에 CASCADE 를 걸지 않는다.
 
     __table_args__ = (
         # 미완료(PENDING) 폴링용 — voucher_grant_outbox 의 ix_..._status 선례와 같다.

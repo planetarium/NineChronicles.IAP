@@ -86,6 +86,9 @@ _TABLES = (
     "fungible_asset_product",
     "fungible_item_product",
     "grant_outbox",
+    # (PLD-1562) Product.gacha_entry_list 가 joinedload 대상이라, 없으면 상품 조회가
+    #   통째로 "no such table" 로 죽는다(뽑기를 안 쓰는 테스트도 같이).
+    "product_gacha_entry",
 )
 
 
@@ -243,6 +246,9 @@ class TestCreateGrant:
             "lastError",
             "createdAt",
             "grantedAt",
+            # (PLD-1562) 뽑기 결과. 고정 상품은 None 이고, 이 필드가 늘어난 것은
+            #   **추가**라 기존 포탈 클라이언트와 하위호환이다.
+            "drawResult",
         }
         assert body["externalRef"] == "shop:order-1"
         assert body["status"] == "PENDING"
@@ -252,6 +258,7 @@ class TestCreateGrant:
         assert body["lastError"] is None
         assert body["grantedAt"] is None
         assert body["createdAt"] is not None
+        assert body["drawResult"] is None, "고정 상품에는 추첨 결과가 없다"
         assert worker.call_count == 1
         assert worker.call_args[0][0] == "iap.send_grant"
         assert worker.call_args[0][1] == {"external_ref": "shop:order-1"}

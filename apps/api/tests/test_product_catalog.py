@@ -55,6 +55,9 @@ _TABLES = (
     "fungible_item_product",
     "price",
     "product_voucher_grant",
+    # (PLD-1562) Product.gacha_entry_list 가 joinedload 대상이라, 없으면 상품 조회가
+    #   통째로 "no such table" 로 죽는다(뽑기를 안 쓰는 테스트도 같이).
+    "product_gacha_entry",
 )
 
 

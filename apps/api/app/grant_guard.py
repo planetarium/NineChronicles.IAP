@@ -57,7 +57,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
 from shared.enums import ProductType
@@ -393,9 +393,15 @@ def validate_point_shop_grantable_eligible(
         )
 
 
-def grant_units(product: Product) -> Tuple[Decimal, int]:
+def grant_units(product: Product, gacha_entry: Optional[Any] = None) -> Tuple[Decimal, int]:
     """
     이 상품 1건 지급이 발행하는 총량 (FAV 합, 아이템 개수 합).
+
+    ⚠️ (PLD-1562) **뽑기 상품은 `product.fav_list`/`fungible_item_list` 가 비어 있다** —
+       상금이 풀(`product_gacha_entry`)에 있기 때문이다. 그래서 뽑기를 그냥 통과시키면
+       발행량이 항상 `(0, 0)` 으로 계산돼 **모든 수량 상한을 무조건 통과**한다(가드가
+       뽑기에만 통째로 꺼지는 셈이다). 뽑힌 칸을 넘겨 그 칸의 실지급량으로 재야 한다.
+       v1 풀은 아이템 전용이라 FAV 는 0 이다(모델 주석 참고).
 
     FAV(NCG·CRYSTAL 등)와 아이템을 **따로** 센다. 하나로 합치면 상한이 큰 쪽에 맞춰지고
     (예: 물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다) 가드가 무의미해진다.
@@ -404,6 +410,10 @@ def grant_units(product: Product) -> Tuple[Decimal, int]:
     발행 한도가 된다(개당 가치가 자릿수로 다르다). 그래서 수량 상한만으로는 부족하고,
     티커 자체를 얼로우리스트로 막는다(`check_fav_tickers`). 수량 상한은 그 위의 2차 방어다.
     """
+    if gacha_entry is not None:
+        # 뽑기는 **뽑힌 칸 하나**만 지급한다(풀 전체가 아니다). 풀 전체를 세면 상한이
+        # 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
+        return Decimal(0), int(gacha_entry.amount)
     fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
     items = sum((int(row.amount) for row in product.fungible_item_list), 0)
     return fav, items
@@ -531,6 +541,7 @@ def enforce_grant_guards(
     avatar_addr: str,
     limits: GrantLimits,
     is_production: bool,
+    gacha_entry: Optional[Any] = None,
     now: Optional[datetime] = None,
     on_warning: Optional[Callable[["GrantWarning"], None]] = None,
 ) -> str:
@@ -543,6 +554,9 @@ def enforce_grant_guards(
          깨지고(계약: 재요청 = 200) 지급/환급 판정이 뒤집힌다.
       2. 값이 싼 검사(설정·네임스페이스·상품·수량)를 먼저, DB 카운트를 마지막에.
       3. 이 함수가 성공하면 **같은 트랜잭션에서** INSERT+commit 해야 한다(잠금 유효 구간).
+      3-1. (PLD-1562) 뽑기는 **추첨이 이 함수보다 먼저**다 — 수량 상한을 뽑힌 칸으로 재기
+         때문이다. 가드가 거절하면 행이 생기지 않으므로 그 추첨은 없던 일이 되고(포탈이
+         환급한다) 재시도는 새로 뽑는다. 아무것도 지급되지 않았으므로 그게 맞다.
       4. 위반(예외)으로 빠졌으면 호출부가 **먼저 rollback** 해서 잠금·트랜잭션을 놓고 나서
          알림 같은 외부 I/O 를 해야 한다(안 그러면 Slack 지연이 전 지급 요청을 줄 세운다).
 
@@ -598,7 +612,9 @@ def enforce_grant_guards(
 
     # ── 3) 구성품 티커 얼로우리스트 + 요청 단위 발행량 상한 ──────────────────
     check_fav_tickers(product, limits.allowed_fav_tickers)
-    fav_units, item_units = grant_units(product)
+    # (PLD-1562) 뽑기는 **추첨을 먼저 끝내고** 여기 온다. 뽑힌 칸이 곧 실지급분이므로
+    #   수량 상한이 그 칸을 기준으로 걸린다(그러지 않으면 뽑기가 상한을 통째로 우회한다).
+    fav_units, item_units = grant_units(product, gacha_entry)
     if (
         limits.max_fav_units_per_request is not None
         and fav_units > limits.max_fav_units_per_request

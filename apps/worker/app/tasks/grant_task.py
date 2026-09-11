@@ -51,9 +51,11 @@ from gql.dsl import DSLQuery, dsl_gql
 from shared._crypto import Account
 from shared._graphql import GQL
 from shared.enums import GrantStatus, PlanetID, TxStatus
+from shared.lib9c.models.fungible_asset_value import FungibleAssetValue
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import Product
 from shared.schemas.message import SendGrantMessage
+from shared.utils.gacha import GachaPoolError, claim_from_result
 from shared.utils.grant import build_claim_data, create_grant_items_tx
 from shared.utils.nonce import as_bytes, lock_planet_nonce, max_db_nonce, pick_nonce
 from sqlalchemy import create_engine, func, or_, select, update
@@ -285,7 +287,25 @@ def process_grant(
             product = load_product(sess, row.product_id)
             if product is None:
                 return _commit(sess, _fail(row, f"product {row.product_id} not found"))
-            claim_data = build_claim_data(product, multiplier=GRANT_MULTIPLIER)
+            # (PLD-1562) 뽑기는 **아웃박스에 동결된 결과**로 지급한다. 풀을 다시 읽으면
+            #   운영이 표를 고치는 것이 곧 뒷문 재추첨이 되어, 유저가 뽑은 것과 다른 게
+            #   나간다(그리고 아무도 모른다 — 화면엔 뽑은 것이 찍혀 있다).
+            #   형식이 이상하면 **멈춘다**: 지급 tx 는 되돌릴 수 없으므로 "이상하면 일단
+            #   준다"가 없어야 한다. 종단 실패(FAILED)면 포탈이 환급한다.
+            if row.gacha_result is not None:
+                try:
+                    claim_data = [
+                        FungibleAssetValue.from_raw_data(
+                            ticker=c["ticker"],
+                            decimal_places=c["decimalPlaces"],
+                            amount=c["amount"] * GRANT_MULTIPLIER,
+                        )
+                        for c in claim_from_result(row.gacha_result)
+                    ]
+                except GachaPoolError as e:
+                    return _commit(sess, _fail(row, f"gacha result unusable: {e}"))
+            else:
+                claim_data = build_claim_data(product, multiplier=GRANT_MULTIPLIER)
             if not claim_data:
                 # 빈 지급 tx 는 "성공했는데 아무것도 안 준" 최악의 결과가 된다 → 종단 실패.
                 return _commit(

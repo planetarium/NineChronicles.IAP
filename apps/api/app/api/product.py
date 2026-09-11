@@ -7,6 +7,7 @@ from fastapi_cache.decorator import cache
 from shared.enums import PackageName, PlanetID
 from shared.models.product import Category, Product
 from shared.schemas.product import CategorySchema, ProductSchema, SimpleProductSchema
+from shared.utils.gacha import build_gacha_pool_schema
 from shared.utils.address import format_addr
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
@@ -94,6 +95,9 @@ def product_list(
                 joinedload(Category.product_list).joinedload(
                     Product.fungible_item_list
                 ),
+                # (PLD-1562) 뽑기 풀. 여기서 안 걸면 상품마다 lazy load 가 돌아 N+1 이 된다
+                #   (그리고 `is_gacha` 가 이 관계를 본다).
+                joinedload(Category.product_list).joinedload(Product.gacha_entry_list),
             )
             .where(Category.active.is_(True))
         )
@@ -181,6 +185,15 @@ def product_list(
                     item.amount *= 2
                 for fav in schema.fav_list:
                     fav.amount *= 2
+
+            # (PLD-1562) 뽑기 풀 = **확률 공시**. ORM 관계명(gacha_entry_list)과 스키마
+            #   필드명(gacha_pool)이 달라 model_validate 로는 안 채워지므로 여기서 붙인다.
+            #   ⚠️ 위 Thor 2배의 대상이 **아니다**. 지급은 아웃박스에 동결된 칸 수량을 1배로
+            #      주므로(grant_task.GRANT_MULTIPLIER=1) 여기서 부풀리면 공시 수량과 실제
+            #      지급 수량이 어긋난다 — 바로 위 복권 티켓과 같은 표시=지급 불변식이다.
+            #      애초에 뽑기는 포인트 전용이라 이 블록에 오지도 않는다(want_point_catalog).
+            if product.gacha_entry_list:
+                schema.gacha_pool = build_gacha_pool_schema(product.gacha_entry_list)
 
             schema_dict[product.id] = schema
             voucher_targets.append((product.id, schema))
