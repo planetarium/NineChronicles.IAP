@@ -237,7 +237,15 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
 
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
     product: Mapped["Product"] = relationship(back_populates="gacha_entry_list")
-    name = Column(Text, nullable=False, doc="운영·감사용 칸 이름(화면 라벨 아님)")
+    name = Column(
+        Text,
+        nullable=False,
+        doc=(
+            "칸 이름. ⚠️ **무인증 공개 API 에 그대로 나간다**"
+            "(GET /api/product 의 gacha_pool, 확률 공시). 내부 메모·티켓 번호를 적지 말 것"
+            " — 유저가 보는 문자열이다"
+        ),
+    )
     weight = Column(
         Integer,
         CheckConstraint("weight > 0"),

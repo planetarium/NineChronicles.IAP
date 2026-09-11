@@ -144,8 +144,16 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             raise GachaPoolError(f"claim ticker 가 비었습니다: {row!r}")
         if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
             raise GachaPoolError(f"claim amount 가 양의 정수가 아닙니다: {row!r}")
-        if not isinstance(places, int) or isinstance(places, bool) or places < 0:
-            raise GachaPoolError(f"claim decimalPlaces 가 0 이상 정수가 아닙니다: {row!r}")
+        # ⚠️ v1 풀은 **아이템 전용**이고 아이템의 decimal_places 는 항상 0 이다.
+        #    0 이 아닌 값을 통과시키면 `FungibleAssetValue.plain_value` 가
+        #    `amount * 10**places` 로 부풀려 발행한다(18 이면 10^18 배). 그리고 그건
+        #    사실상 FAV 발행인데, FAV 얼로우리스트(`check_fav_tickers`)는 풀을 보지 않으므로
+        #    **조용히 우회된다**. 그래서 여기서 못박는다 — v2 에서 FAV 상금을 넣을 때
+        #    이 줄이 걸리는 게 정확히 원하는 트립와이어다(가드도 같이 고쳐야 한다는 신호).
+        if places != 0:
+            raise GachaPoolError(
+                f"claim decimalPlaces 는 0 이어야 한다(v1 풀은 아이템 전용): {row!r}"
+            )
     return claim
 
 
@@ -157,8 +165,12 @@ def build_gacha_pool_schema(entries: Sequence[Any]) -> List[Any]:
     뜬 확률과 서버가 실제로 뽑는 확률이 다를 수 있는 자리가 생긴다. 같은 수를 한 곳에서만
     만든다 — 여기서 나눈 rate 와 `draw_entry` 가 쓰는 weight 는 같은 Σ 를 쓴다.
 
-    rate 는 **표시용**이다(6자리 반올림). 감사·분쟁의 근거는 반올림 안 된 `weight` 고,
-    주문에 동결되는 스냅샷도 weight 를 남긴다.
+    rate 는 **표시용**이다. 감사·분쟁의 근거는 반올림 안 된 `weight` 고, 주문에 동결되는
+    스냅샷도 weight 를 남긴다.
+
+    ⚠️ 자릿수를 10 으로 잡은 이유: 6자리면 Σweight 가 2,000,000 을 넘는 순간 희귀 칸이
+       **0.0 으로 표시**된다. "표시 0% 인데 나오는 칸"은 확률형 아이템 공시에서 가장
+       피해야 할 모양이다(있는 확률을 없다고 광고하는 것이다).
     """
     from shared.schemas.product import GachaEntrySchema
 
@@ -169,7 +181,7 @@ def build_gacha_pool_schema(entries: Sequence[Any]) -> List[Any]:
             entry_id=e.id,
             name=e.name,
             weight=_weight_of(e),
-            rate=round(_weight_of(e) / total, 6),
+            rate=round(_weight_of(e) / total, 10),
             sheet_item_id=e.sheet_item_id,
             fungible_item_id=e.fungible_item_id,
             amount=e.amount,

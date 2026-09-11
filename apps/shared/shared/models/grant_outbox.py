@@ -2,14 +2,14 @@ from shared.enums import GrantStatus, PlanetID, TxStatus
 from shared.models.base import AutoIdMixin, Base, EnumType, TimeStampMixin
 from shared.models.product import Product
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Index, Integer, LargeBinary, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ENUM, JSONB
+from sqlalchemy.orm import Mapped, relationship
 
 # 실 DB 는 Postgres 라 JSONB 를, 테스트는 SQLite 라 JSON 을 쓴다. `JSONB` 를 그대로 두면
 # SQLite 가 타입을 컴파일하지 못해 이 테이블을 쓰는 테스트가 **전부** 수집 단계에서 죽는다
 # (receipt.data 는 raw JSONB 지만 그 테이블은 SQLite 테스트에서 생성되지 않아 안 걸렸다).
 GACHA_RESULT_TYPE = JSON().with_variant(JSONB(), "postgresql")
-from sqlalchemy.dialects.postgresql import ENUM
-from sqlalchemy.orm import Mapped, relationship
+
 
 
 class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
@@ -104,7 +104,7 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
     # DB 제약으로 강제되는 지점이다. 고정 상품 행은 둘 다 NULL 이다.
     gacha_entry_id = Column(
         Integer,
-        ForeignKey("product_gacha_entry.id"),
+        ForeignKey("product_gacha_entry.id", ondelete="SET NULL"),
         nullable=True,
         doc=(
             "뽑힌 풀 칸. **조회·집계 편의용이고 지급 근거가 아니다** —"
@@ -124,7 +124,10 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
     # ⚠️ 워커는 `gacha_entry_id` 로 풀을 **다시 읽지 않는다**. 읽으면 운영이 표를 고치는 것이
     #    곧 뒷문 재추첨이 된다(유저가 뽑은 것과 다른 게 지급된다). 지급 근거는 항상
     #    `gacha_result["claim"]` 이고, FK 는 "어느 칸이었나"를 나중에 조인해 보기 위한 것뿐이다.
-    #    같은 이유로 칸이 삭제돼도 지급은 영향받지 않아야 하므로 FK 에 CASCADE 를 걸지 않는다.
+    #    같은 이유로 FK 는 **ON DELETE SET NULL** 이다. CASCADE 면 칸을 지울 때 지급 이력까지
+    #    사라지고(감사 기록 소실), 기본(NO ACTION)이면 한 번이라도 뽑힌 칸을 지울 수 없어
+    #    라이브 풀이 append-only 가 된다(이벤트 로테이션이 막힌다). SET NULL 은 무손실이다 —
+    #    결과·수량·확률은 전부 gacha_result 에 남고 조인 링크만 끊긴다.
 
     __table_args__ = (
         # 미완료(PENDING) 폴링용 — voucher_grant_outbox 의 ix_..._status 선례와 같다.
@@ -141,4 +144,6 @@ class GrantOutbox(AutoIdMixin, TimeStampMixin, Base):
         #   product_id 를 넣지 않은 이유: 아바타 축(product 무관)이 이 인덱스를 그대로 쓰고,
         #   중복 감지는 "이 아바타의 창 안 행"이 이미 몇 건 수준이라 필터가 사실상 무료다.
         Index("ix_grant_outbox_avatar_addr_created_at", "avatar_addr", "created_at"),
+        # (PLD-1562) 감사 조인(어느 칸이 몇 번 나왔나) + 위 SET NULL 의 삭제 검사용.
+        Index("ix_grant_outbox_gacha_entry_id", "gacha_entry_id"),
     )

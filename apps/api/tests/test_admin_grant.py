@@ -64,6 +64,7 @@ from shared.models.product import (  # noqa: E402
     FungibleAssetProduct,
     FungibleItemProduct,
     Product,
+    ProductGachaEntry,
 )
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -1640,3 +1641,116 @@ class TestWhitelistCsvImport:
         ).all()
         assert len(created) == 2
         assert all(p.point_shop_grantable is True for p in created)
+
+
+# ── (PLD-1562) 뽑기 지급 요청 ─────────────────────────────────────────────────
+#
+# 이 클래스가 존재하는 이유는 리뷰의 뮤테이션 테스트다: `create_grant` 의 뽑기 배선을
+# 세 가지로 망가뜨려도(가드 인자 삭제 · 고정+풀 400 비활성화 · 동결 생략) 기존 281건이
+# **전부 통과**했다. 순수 함수(`grant_units`·`draw_entry`) 테스트만으로는 "그 함수를
+# 실제로 부르는가"가 하나도 안 잡힌다 — 민터 경로의 배선은 엔드포인트에서 못박아야 한다.
+def make_gacha_product(sess, *, entries, name="gacha", with_item=False, **kwargs):
+    """풀을 가진 상품. `entries` = [(이름, weight, 티커, amount), ...]"""
+    product = make_product(sess, with_item=with_item, name=name, **kwargs)
+    for entry_name, weight, ticker, amount in entries:
+        sess.add(
+            ProductGachaEntry(
+                product_id=product.id,
+                name=entry_name,
+                weight=weight,
+                sheet_item_id=400000,
+                fungible_item_id=ticker,
+                amount=amount,
+            )
+        )
+    sess.commit()
+    sess.refresh(product)
+    return product
+
+
+class TestGachaGrant:
+    def test_뽑기_요청은_결과를_동결해_돌려준다(self, client, sess):
+        product = make_gacha_product(
+            sess, entries=[("레어", 1, "Item_NT_400000", 3)]
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 201
+        result = resp.json()["drawResult"]
+        assert result is not None, "뽑기인데 결과가 비어 있으면 포탈이 받아 적을 게 없다"
+        assert result["entryName"] == "레어"
+        assert result["claim"] == [
+            {"ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}
+        ]
+        # 풀 스냅샷 — 표를 나중에 바꿔도 "그때 확률"을 재현할 수 있어야 한다.
+        assert result["totalWeight"] == 1
+        assert [p["weight"] for p in result["pool"]] == [1]
+        # 행에도 같은 값이 남아야 한다(워커가 읽는 건 응답이 아니라 이 행이다).
+        row = rows_of(sess)[0]
+        assert row.gacha_result == result
+        assert row.gacha_entry_id == result["entryId"]
+
+    def test_재요청은_같은_결과다_재추첨하지_않는다(self, client, sess):
+        # 불변식 ①. 균등 2칸 풀이라, 재추첨이 일어나면 절반 확률로 값이 갈린다 —
+        #   그걸 노리는 게 아니라 **행이 하나뿐**임을 보는 것이다(200 + 기존 행).
+        product = make_gacha_product(
+            sess,
+            entries=[("A", 1, "Item_NT_400001", 1), ("B", 1, "Item_NT_400002", 1)],
+        )
+
+        first = client.post(GRANT_URL, json=payload(product))
+        second = client.post(GRANT_URL, json=payload(product))
+
+        assert first.status_code == 201
+        assert second.status_code == 200, "재요청은 새 행을 만들지 않는다"
+        assert second.json()["drawResult"] == first.json()["drawResult"]
+        assert len(rows_of(sess)) == 1
+
+    def test_수량_상한이_뽑힌_칸에도_걸린다(self, client, sess, limits):
+        # 불변식 ②. 뽑기 상품은 fav_list/fungible_item_list 가 비어 있어, 배선이 빠지면
+        #   발행량이 (0,0) 으로 계산돼 **모든 수량 상한을 통과**한다.
+        limits(grant_max_item_units_per_request=5)
+        product = make_gacha_product(
+            sess, entries=[("잭팟", 1, "Item_NT_400000", 6)], name="gacha-big"
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400, "뽑기가 수량 상한을 우회하면 안 된다"
+        assert "아이템 발행량" in json.dumps(resp.json(), ensure_ascii=False)
+        # 가드 위반은 **행을 만들지 않는다** — 행이 남으면 포탈이 환급을 오판한다.
+        assert rows_of(sess) == []
+
+    def test_상한_안쪽_뽑기는_통과한다(self, client, sess, limits):
+        # 위 테스트만 있으면 "뽑기를 전부 거절" 하는 구현도 초록이 된다(풀 전체를 세는 버그).
+        limits(grant_max_item_units_per_request=5)
+        product = make_gacha_product(
+            sess,
+            entries=[("A", 1, "Item_NT_400001", 3), ("B", 1, "Item_NT_400002", 3)],
+            name="gacha-ok",
+        )
+
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+    def test_고정_구성품과_풀을_동시에_가지면_400(self, client, sess):
+        # "둘 다 주나 하나만 주나"가 정의되지 않는다. 지급은 되돌릴 수 없다.
+        product = make_gacha_product(
+            sess,
+            entries=[("레어", 1, "Item_NT_400000", 1)],
+            name="gacha-mixed",
+            with_item=True,
+        )
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "gacha pool" in json.dumps(resp.json(), ensure_ascii=False)
+        assert rows_of(sess) == []
+
+    def test_고정_상품은_결과가_없다(self, client, sess):
+        product = make_product(sess, name="fixed-no-draw")
+        resp = client.post(GRANT_URL, json=payload(product))
+        assert resp.status_code == 201
+        assert resp.json()["drawResult"] is None
+        assert rows_of(sess)[0].gacha_entry_id is None

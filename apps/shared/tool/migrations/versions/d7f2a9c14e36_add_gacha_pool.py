@@ -44,12 +44,9 @@ def upgrade() -> None:
         sa.Column("sheet_item_id", sa.Integer(), nullable=False),
         sa.Column("fungible_item_id", sa.Text(), nullable=False),
         sa.Column("amount", sa.Integer(), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
+        # TimeStampMixin·형제 마이그레이션(a7c31f5b9e02)과 **같은 모양**으로 둔다.
+        # NOT NULL + server_default 로 잡으면 autogenerate 가 영구 드리프트를 보고한다.
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         # 0 가중치를 허용하면 "넣었는데 절대 안 나오는 칸"이 조용히 생긴다. 0 수량은
         # "성공했는데 아무것도 안 준" 지급이 된다. 둘 다 앱이 아니라 DB 가 막는다.
@@ -87,16 +84,29 @@ def upgrade() -> None:
             comment="추첨 결과 동결본 + 풀 스냅샷. 워커는 이 값으로만 지급한다",
         ),
     )
+    # ⚠️ **SET NULL** 이다. 기본(NO ACTION)이면 한 번이라도 뽑힌 칸은 참조 행 때문에 삭제가
+    #    막혀 라이브 풀이 append-only 가 된다(이벤트 아이템 로테이션 첫 회차에 부딪힌다).
+    #    CASCADE 도 아니다 — 칸을 지웠다고 지급 이력을 지우면 감사 기록이 사라진다.
+    #    SET NULL 이면 지급은 무손실이다: 지급 근거는 `gacha_result` 동결본이고 이 FK 는
+    #    "어느 칸이었나"를 조인해 보기 위한 링크일 뿐이라, 끊겨도 결과·수량·확률이 다 남는다.
     op.create_foreign_key(
         "grant_outbox_gacha_entry_id_fkey",
         "grant_outbox",
         "product_gacha_entry",
         ["gacha_entry_id"],
         ["id"],
+        ondelete="SET NULL",
+    )
+    # 감사 조인(`어느 칸이 몇 번 나왔나`)과 위 SET NULL 의 삭제 검사가 풀스캔이 되지 않게.
+    op.create_index(
+        "ix_grant_outbox_gacha_entry_id", "grant_outbox", ["gacha_entry_id"]
     )
 
 
 def downgrade() -> None:
+    # ⚠️ `gacha_result` 를 지운다 = **확률 공시 분쟁의 유일한 증거를 지운다**(그때의 풀
+    #    스냅샷이 여기에만 있다). 롤백 전에 덤프를 뜰 것.
+    op.drop_index("ix_grant_outbox_gacha_entry_id", table_name="grant_outbox")
     op.drop_constraint(
         "grant_outbox_gacha_entry_id_fkey", "grant_outbox", type_="foreignkey"
     )

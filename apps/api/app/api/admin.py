@@ -37,6 +37,7 @@ from shared.utils.address import format_addr
 from shared.utils.gacha import (
     GachaPoolError,
     build_gacha_result,
+    claim_from_result,
     draw_entry,
 )
 from shared.utils.alert import send_slack_alert
@@ -539,8 +540,23 @@ def import_gacha_entries_endpoint(
 
         try:
             processed_count, changed_count = import_gacha_entries_from_csv(
-                sess, temp_path
+                sess, temp_path, limits_from_settings(config).max_item_units_per_request
             )
+            # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
+            #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
+            #   화이트리스트 플래그 하나 켜는 데도 알림을 남기는 선례와 맞춘다.
+            if changed_count:
+                logger.info(
+                    "gacha_pool_import",
+                    processed=processed_count,
+                    changed=changed_count,
+                )
+                send_slack_alert(
+                    config.iap_alert_webhook_url,
+                    f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
+                    f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
+                    f" ({config.stage})",
+                )
             return {
                 "message": "뽑기 풀 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,
@@ -1941,10 +1957,15 @@ def create_grant(
     #     새로 뽑는다. 아무것도 지급되지 않았으므로 그게 맞다.
     gacha_entry = None
     gacha_result = None
+    gacha_claim = None
     if product.is_gacha:
         try:
             gacha_entry = draw_entry(product.gacha_entry_list)
             gacha_result = build_gacha_result(product.gacha_entry_list, gacha_entry)
+            # 동결본을 **여기서 바로 되읽는다**. 아래 가드가 재는 값과 워커가 체인에 싣는
+            #   값이 같은 바이트여야 하고(가드 주석), 형식 검증도 이 시점에 끝나야 한다 —
+            #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
+            gacha_claim = claim_from_result(gacha_result)
         except GachaPoolError as e:
             # 풀 설정 오류(빈 풀·잘못된 가중치). 재시도해도 같으므로 400 이다.
             raise HTTPException(
@@ -1961,7 +1982,8 @@ def create_grant(
             avatar_addr=avatar_addr,
             limits=limits_from_settings(config),
             is_production=config.is_production,
-            gacha_entry=gacha_entry,
+            # 동결본의 claim 을 넘긴다 — **체인에 나갈 바로 그 값**을 재야 한다(가드 주석).
+            gacha_claim=gacha_claim,
             on_warning=pressure.append,
         )
     except GrantGuardViolation as violation:

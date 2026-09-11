@@ -131,7 +131,7 @@ class GachaEntrySchema(BaseSchema):
     entry_id: int
     name: str
     weight: int
-    #: weight / Σweight. 소수점 6자리 반올림(= 0.0001% 해상도).
+    #: weight / Σweight (10자리 반올림 — 6자리면 큰 풀에서 희귀 칸이 0.0 이 된다).
     rate: float
     sheet_item_id: int
     fungible_item_id: str

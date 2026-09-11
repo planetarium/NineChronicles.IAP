@@ -612,10 +612,19 @@ def import_fungible_items_from_csv(db: Session, csv_path: str) -> Tuple[int, int
     try:
         with open(csv_path, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
+            touched_products = set()
             for row in reader:
                 processed_count += 1
+                touched_products.add(parse_int(row["product_id"]))
                 if process_fungible_item_row(db, row):
                     changed_count += 1
+
+            # (PLD-1562) 반대 방향의 배타 검사. 이미 뽑기 풀이 있는 상품에 고정 구성품을
+            #   붙이면 그 상품은 등록 시점에 조용히 통과하고 **주문 시점에 400** 이 된다 —
+            #   등록 시점 검사를 만든 이유 그 자체다.
+            db.flush()
+            for product_id in touched_products:
+                assert_not_mixed_components(db, product_id)
 
             db.commit()
             print(
@@ -723,6 +732,54 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
 #    통째로 바뀌는 사고다(그리고 이미 뽑힌 주문은 동결돼 있어 대조로도 안 드러난다).
 
 
+def assert_not_mixed_components(db: Session, product_id: int) -> None:
+    """
+    한 상품이 **고정 구성품과 뽑기 풀을 동시에** 갖지 못하게 한다.
+
+    "둘 다 주나 하나만 주나"가 정의되지 않아 지급 API 가 400 으로 끊는 상태다. 그걸
+    **등록 시점에** 알려야 한다 — 지급 시점에만 걸리면 유저가 포인트를 쓴 뒤에 실패한다.
+
+    ⚠️ 양방향이어야 한다. 뽑기 import 만 검사하면 반대 경로(이미 풀이 있는 상품에
+       `fungible-items/import` 로 고정 구성품을 붙이는 것)가 조용히 통과한다.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise ValueError(f"product {product_id} 가 존재하지 않는다")
+    has_fixed = bool(product.fav_list or product.fungible_item_list)
+    has_pool = bool(product.gacha_entry_list)
+    if has_fixed and has_pool:
+        raise ValueError(
+            f"product {product_id} 는 고정 구성품과 뽑기 풀을 동시에 가질 수 없다"
+            " (지급 시점에 400 으로 끊긴다 — 한쪽을 비울 것)"
+        )
+
+
+def assert_gacha_entry_within_caps(db: Session, product_id: int, max_item_units) -> None:
+    """
+    풀의 **모든 칸**이 요청 단위 수량 상한 안인지. 상한이 미설정(None)이면 검사하지 않는다.
+
+    ⚠️ 이게 없으면 "임포트는 200 인데 **그 칸에 당첨된 유저만** 400" 이 된다. 확률이 낮은
+       칸일수록 늦게 발견되고, 운영에는 저빈도 거절 알림만 보여 공격처럼 읽힌다.
+       같은 함정을 FAV 티커에서 이미 겪고 선례를 만들어 뒀다(admin.py 의
+       "임포트는 200 인데 실주문이 전부 거절되는 상태를 만들지 않는다").
+    """
+    if max_item_units is None:
+        return
+    over = [
+        entry
+        for entry in db.query(ProductGachaEntry)
+        .filter(ProductGachaEntry.product_id == product_id)
+        .all()
+        if int(entry.amount) > max_item_units
+    ]
+    if over:
+        names = ", ".join(f"{e.name}(x{e.amount})" for e in over)
+        raise ValueError(
+            f"product {product_id} 뽑기 칸의 수량이 요청 단위 상한({max_item_units})을"
+            f" 넘는다: {names} — 그 칸에 당첨된 유저만 지급이 거절된다"
+        )
+
+
 def process_gacha_entry_row(db: Session, row: dict) -> bool:
     """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, fungible_item_id) — 테이블 UNIQUE 와 같다."""
     weight = parse_int((row.get("weight") or "").replace(",", ""))
@@ -784,14 +841,17 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
     return True
 
 
-def import_gacha_entries_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
+def import_gacha_entries_from_csv(
+    db: Session, csv_path: str, max_item_units=None
+) -> Tuple[int, int]:
     """
     뽑기 풀 CSV 임포트.
 
-    ⚠️ 임포트가 끝나고 **고정 구성품과 겹치지 않는지** 확인한다. 한 상품이 고정 구성품과
-       풀을 동시에 가지면 "둘 다 주나 하나만 주나"가 정의되지 않아 지급 API 가 400 으로
-       끊는다(admin.create_grant) — 그걸 지급 시점이 아니라 **등록 시점**에 알려준다.
-       지급 시점에만 걸리면 유저가 포인트를 쓴 뒤에 실패한다.
+    ⚠️ 임포트가 끝나고 **등록 시점 검증 2종**을 돈다(둘 다 지급 시점에만 걸리면 유저가
+       포인트를 쓴 뒤에 실패하는 것들이다):
+         · 고정 구성품과의 배타 — assert_not_mixed_components
+         · 요청 단위 수량 상한   — assert_gacha_entry_within_caps
+       실패는 전체 롤백이다(부분 반영된 풀은 확률이 기획과 다른 표가 된다).
     """
     processed_count = 0
     changed_count = 0
@@ -808,15 +868,8 @@ def import_gacha_entries_from_csv(db: Session, csv_path: str) -> Tuple[int, int]
 
             db.flush()
             for product_id in touched_products:
-                product = db.query(Product).filter(Product.id == product_id).first()
-                if product is None:
-                    raise ValueError(f"gacha 풀의 product {product_id} 가 존재하지 않는다")
-                if product.fav_list or product.fungible_item_list:
-                    raise ValueError(
-                        f"product {product_id} 는 고정 구성품을 가진 상품이다 —"
-                        " 뽑기 풀과 고정 구성품을 동시에 가질 수 없다"
-                        " (지급 시점에 400 으로 끊긴다)"
-                    )
+                assert_not_mixed_components(db, product_id)
+                assert_gacha_entry_within_caps(db, product_id, max_item_units)
 
             db.commit()
             print(

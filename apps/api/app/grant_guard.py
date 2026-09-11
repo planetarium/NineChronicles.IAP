@@ -393,15 +393,28 @@ def validate_point_shop_grantable_eligible(
         )
 
 
-def grant_units(product: Product, gacha_entry: Optional[Any] = None) -> Tuple[Decimal, int]:
+def grant_units(
+    product: Product, gacha_claim: Optional[List[dict]] = None
+) -> Tuple[Decimal, int]:
     """
     이 상품 1건 지급이 발행하는 총량 (FAV 합, 아이템 개수 합).
 
     ⚠️ (PLD-1562) **뽑기 상품은 `product.fav_list`/`fungible_item_list` 가 비어 있다** —
        상금이 풀(`product_gacha_entry`)에 있기 때문이다. 그래서 뽑기를 그냥 통과시키면
        발행량이 항상 `(0, 0)` 으로 계산돼 **모든 수량 상한을 무조건 통과**한다(가드가
-       뽑기에만 통째로 꺼지는 셈이다). 뽑힌 칸을 넘겨 그 칸의 실지급량으로 재야 한다.
-       v1 풀은 아이템 전용이라 FAV 는 0 이다(모델 주석 참고).
+       뽑기에만 통째로 꺼지는 셈이다).
+
+    ⚠️ 넘기는 값이 **풀 행이 아니라 동결된 `claim`** 인 이유: 워커가 체인에 실어 보내는 게
+       바로 그 claim 이다(`grant_task` 는 풀을 읽지 않는다). 풀 행을 재면 "가드가 검사한
+       바이트"와 "체인에 나가는 바이트"가 서로 다른 저장소가 되어, 둘이 어긋나는 순간
+       가드가 헛것을 재게 된다. 고정 상품은 양쪽이 같은 테이블을 읽어 이 갈라짐이 없다.
+       덤으로 `claim_from_result` 의 fail-closed 검증이 **요청 시점으로 앞당겨진다** —
+       형식 오류가 "유저가 포인트를 쓰고 결과까지 본 뒤 FAILED→환급" 이 아니라 400 이 된다.
+
+    ⚠️ claim 을 **전부 아이템으로 센다.** `claim_from_result` 가 `decimalPlaces == 0` 을
+       강제하므로 v1 에서 이건 참이다. v2 에서 풀에 FAV 상금을 넣으면 그 검증이 먼저
+       깨지므로(= 여기 오지 못한다) 조용히 틀리지 않는다 — 그때 이 함수와
+       `check_fav_tickers` 를 같이 고쳐야 한다.
 
     FAV(NCG·CRYSTAL 등)와 아이템을 **따로** 센다. 하나로 합치면 상한이 큰 쪽에 맞춰지고
     (예: 물약 1,000개를 허용하려고 올린 상한이 NCG 1,000 발행을 허용한다) 가드가 무의미해진다.
@@ -410,10 +423,10 @@ def grant_units(product: Product, gacha_entry: Optional[Any] = None) -> Tuple[De
     발행 한도가 된다(개당 가치가 자릿수로 다르다). 그래서 수량 상한만으로는 부족하고,
     티커 자체를 얼로우리스트로 막는다(`check_fav_tickers`). 수량 상한은 그 위의 2차 방어다.
     """
-    if gacha_entry is not None:
+    if gacha_claim is not None:
         # 뽑기는 **뽑힌 칸 하나**만 지급한다(풀 전체가 아니다). 풀 전체를 세면 상한이
         # 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
-        return Decimal(0), int(gacha_entry.amount)
+        return Decimal(0), sum(int(row["amount"]) for row in gacha_claim)
     fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
     items = sum((int(row.amount) for row in product.fungible_item_list), 0)
     return fav, items
@@ -541,7 +554,7 @@ def enforce_grant_guards(
     avatar_addr: str,
     limits: GrantLimits,
     is_production: bool,
-    gacha_entry: Optional[Any] = None,
+    gacha_claim: Optional[List[dict]] = None,
     now: Optional[datetime] = None,
     on_warning: Optional[Callable[["GrantWarning"], None]] = None,
 ) -> str:
@@ -614,7 +627,7 @@ def enforce_grant_guards(
     check_fav_tickers(product, limits.allowed_fav_tickers)
     # (PLD-1562) 뽑기는 **추첨을 먼저 끝내고** 여기 온다. 뽑힌 칸이 곧 실지급분이므로
     #   수량 상한이 그 칸을 기준으로 걸린다(그러지 않으면 뽑기가 상한을 통째로 우회한다).
-    fav_units, item_units = grant_units(product, gacha_entry)
+    fav_units, item_units = grant_units(product, gacha_claim)
     if (
         limits.max_fav_units_per_request is not None
         and fav_units > limits.max_fav_units_per_request

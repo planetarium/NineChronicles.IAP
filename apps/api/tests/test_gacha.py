@@ -130,6 +130,10 @@ class TestClaimFromResultFailsClosed:
             [{"ticker": "a", "decimalPlaces": 0, "amount": -1}],
             [{"ticker": "a", "decimalPlaces": 0, "amount": 1.5}],
             [{"ticker": "a", "decimalPlaces": -1, "amount": 1}],
+            # v1 풀은 아이템 전용이라 항상 0 이다. 0 이 아니면 amount * 10**places 로
+            # 부풀려 발행되고, 그건 사실상 FAV 발행인데 FAV 얼로우리스트가 풀을 안 본다.
+            [{"ticker": "a", "decimalPlaces": 18, "amount": 1}],
+            [{"ticker": "a", "decimalPlaces": 1, "amount": 1}],
             [{"amount": 1}],
             ["not-a-dict"],
         ],
@@ -156,14 +160,18 @@ class TestGrantUnitsCountsTheDrawnEntry:
         # 이게 위험의 근원이다: 그대로 세면 발행량 0 이라 모든 수량 상한을 통과한다.
         assert grant_units(FakeProduct()) == (Decimal(0), 0)
 
-    def test_뽑힌_칸의_수량으로_센다(self):
+    def test_동결된_claim_의_수량으로_센다(self):
+        # ⚠️ 넘기는 게 풀 행이 아니라 **동결된 claim** 이다 — 워커가 체인에 싣는 게 그 값이라
+        #    "가드가 검사한 바이트"와 "체인에 나가는 바이트"가 같아야 한다.
         picked = FakeEntry(1, 1, amount=250)
-        fav, items = grant_units(FakeProduct(), picked)
+        claim = build_gacha_result([picked], picked)["claim"]
+        fav, items = grant_units(FakeProduct(), claim)
         assert items == 250, "뽑기가 수량 상한을 우회하면 안 된다"
         assert fav == Decimal(0), "v1 풀은 아이템 전용이라 FAV 는 0 이다"
 
     def test_풀_전체가_아니라_뽑힌_칸만_센다(self):
         # 풀 전체를 세면 상한이 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
-        picked = FakeEntry(1, 1, amount=1)
-        _, items = grant_units(FakeProduct(), picked)
+        pool = [FakeEntry(1, 1, amount=1), FakeEntry(2, 1, amount=9999)]
+        claim = build_gacha_result(pool, pool[0])["claim"]
+        _, items = grant_units(FakeProduct(), claim)
         assert items == 1
