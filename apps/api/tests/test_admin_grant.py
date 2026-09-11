@@ -1686,7 +1686,8 @@ class TestGachaGrant:
         assert resp.status_code == 201
         result = resp.json()["drawResult"]
         assert result is not None, "뽑기인데 결과가 비어 있으면 포탈이 받아 적을 게 없다"
-        assert result["entryName"] == "레어"
+        assert result["drawCount"] == 1
+        assert result["draws"][0]["entryName"] == "레어"
         assert result["claim"] == [
             {"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 3}
         ]
@@ -1696,7 +1697,9 @@ class TestGachaGrant:
         # 행에도 같은 값이 남아야 한다(워커가 읽는 건 응답이 아니라 이 행이다).
         row = rows_of(sess)[0]
         assert row.gacha_result == result
-        assert row.gacha_entry_id == result["entryId"]
+        # 단연은 FK 를 채운다(조회 편의). 10연은 대표 칸을 박으면 나머지가 조인에서
+        #   사라져 집계가 거짓말을 하므로 비운다 — 아래 10연 테스트가 그걸 못박는다.
+        assert row.gacha_entry_id == result["draws"][0]["entryId"]
 
     def test_재요청은_같은_결과다_재추첨하지_않는다(self, client, sess):
         # 불변식 ①. 균등 2칸 풀이라, 재추첨이 일어나면 절반 확률로 값이 갈린다 —
@@ -1801,3 +1804,61 @@ class TestGachaGrant:
         assert resp.status_code == 400, "아이템 상한(1000)으로 통과시키면 안 된다"
         assert "FAV 발행량" in json.dumps(resp.json(), ensure_ascii=False)
         assert rows_of(sess) == []
+
+
+    def test_10연은_한_요청에_10회_지급한다(self, client, sess):
+        product = make_gacha_product(
+            sess,
+            entries=[("Hourglass", 1, "Item_NT_400000", 3)],
+            name="gacha-10x",
+        )
+        product.gacha_draw_count = 10
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 201
+        result = resp.json()["drawResult"]
+        assert result["drawCount"] == 10
+        assert len(result["draws"]) == 10, "회차별 원본이 남아야 한다"
+        # 같은 칸 10회 → claim 은 합산 1줄(tx 에 같은 통화가 10줄 들어가지 않게).
+        assert result["claim"] == [
+            {"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 30}
+        ]
+        # 아웃박스 행은 여전히 1건 = 온체인 tx 1건이다.
+        rows = rows_of(sess)
+        assert len(rows) == 1
+        # 10연은 대표 칸 FK 를 박지 않는다(나머지 9회가 조인에서 사라진다).
+        assert rows[0].gacha_entry_id is None
+
+    def test_10연_합계가_수량_상한에_걸린다(self, client, sess, limits):
+        # 상한은 1 요청 단위다. 회차당으로 재면 10연이 상한을 10배 우회한다.
+        limits(grant_max_item_units_per_request=100)
+        product = make_gacha_product(
+            sess,
+            entries=[("Hourglass", 1, "Item_NT_400000", 30)],
+            name="gacha-10x-cap",
+        )
+        product.gacha_draw_count = 10
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400, "10×30=300 > 100 이므로 거절돼야 한다"
+        assert rows_of(sess) == []
+
+    def test_10연_재요청도_같은_결과다(self, client, sess):
+        product = make_gacha_product(
+            sess,
+            entries=[("A", 1, "Item_NT_400001", 1), ("B", 1, "Item_NT_400002", 1)],
+            name="gacha-10x-idem",
+        )
+        product.gacha_draw_count = 10
+        sess.commit()
+
+        first = client.post(GRANT_URL, json=payload(product))
+        second = client.post(GRANT_URL, json=payload(product))
+
+        assert (first.status_code, second.status_code) == (201, 200)
+        assert second.json()["drawResult"] == first.json()["drawResult"]
+        assert len(rows_of(sess)) == 1

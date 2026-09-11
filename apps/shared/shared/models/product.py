@@ -188,6 +188,17 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         back_populates="product"
     )
 
+    gacha_draw_count = Column(
+        Integer,
+        CheckConstraint("gacha_draw_count >= 1"),
+        nullable=False,
+        server_default="1",
+        doc=(
+            "한 번 구매가 돌리는 추첨 횟수. 1=단연, 10=10연."
+            " **10연은 별도 SKU 다**(가격이 다르므로) — 이 상품은 자기 풀을 갖는다"
+        ),
+    )
+
     @property
     def is_gacha(self) -> bool:
         """
@@ -245,6 +256,14 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
 
     번들(한 칸이 여러 종)은 아직 아니다 — `gacha_result.claim` 이 이미 리스트라 스키마
     변경 없이 확장된다.
+
+    ## 10연과 풀
+    추첨 횟수는 **상품**(`Product.gacha_draw_count`)이 갖는다. 풀은 여전히 상품당이므로
+    "같은 표의 1연/10연" 은 상품 2개 + 풀 2벌이다. 중복처럼 보이지만 IAP 가 원래 그렇게
+    생겼다 — 고정 상품도 같은 구성품을 SKU 마다 따로 든다(`fungible_item_product`).
+    풀을 공유하는 포인터를 두면 "어느 상품의 표인가" 가 한 겹 더 생기고, 그 간접이
+    확률 공시·감사에서 그대로 비용이 된다. 운영은 같은 CSV 를 product_id 만 바꿔 두 번
+    올린다(표가 갈리면 1연과 10연의 확률이 달라지므로 **같이 올리는 게 규약**이다).
     """
 
     __tablename__ = "product_gacha_entry"

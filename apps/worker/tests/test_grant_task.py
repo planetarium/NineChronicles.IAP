@@ -632,9 +632,11 @@ def make_gacha_row(sess, product, claim, **kwargs):
     """추첨 결과가 동결된 아웃박스 행. 풀 테이블 없이 **동결본만으로** 지급되는지 본다."""
     row = make_outbox(sess, product, **kwargs)
     row.gacha_result = {
-        "version": 1,
-        "entryId": 42,
-        "entryName": "레어",
+        "version": 2,
+        "drawCount": len(claim),
+        "draws": [
+            {"entryId": 42, "entryName": "레어", **c} for c in claim
+        ],
         "claim": claim,
         "pool": [{"entryId": 42, "name": "레어", "weight": 1}],
         "totalWeight": 1,
@@ -752,3 +754,23 @@ class TestGachaGrantsFrozenResult:
         assert seen[0][0].currency.ticker == "FAV__CRYSTAL"
         assert seen[0][0].currency.decimal_places == 18
         assert seen[0][0].amount == 5
+
+    def test_10연의_합산_claim_을_그대로_싣는다(self, sess, monkeypatch):
+        # 워커는 회차 수를 모른다 — 합산된 claim 만 보고 tx 를 만든다.
+        product = make_product(sess, with_item=True)
+        row = make_gacha_row(
+            sess,
+            product,
+            [
+                {"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 30},
+                {"kind": "FAV", "ticker": "FAV__RUNESTONE_HP", "decimalPlaces": 0, "amount": 400},
+            ],
+        )
+        seen = capture_claim(monkeypatch)
+
+        gt.process_grant(
+            sess, row, account=FakeAccount(), next_nonce_fn=nonce_fn(), stage_fn=stage_ok()
+        )
+
+        got = {c.currency.ticker: c.amount for c in seen[0]}
+        assert got == {"Item_NT_400000": 30, "FAV__RUNESTONE_HP": 400}

@@ -22,6 +22,7 @@ from shared.utils.gacha import (
     GachaPoolError,
     build_gacha_result,
     claim_from_result,
+    draw_entries,
     draw_entry,
 )
 
@@ -109,7 +110,7 @@ class TestFrozenResult:
         result = build_gacha_result(pool, pool[0])
         assert result["totalWeight"] == 10
         assert [(p["entryId"], p["weight"]) for p in result["pool"]] == [(1, 1), (2, 9)]
-        assert result["entryId"] == 1
+        assert result["draws"][0]["entryId"] == 1
         assert result["version"] == GACHA_RESULT_VERSION
         assert result["drawnAt"]
 
@@ -119,6 +120,8 @@ class TestFrozenResult:
         assert result["claim"] == [
             {"kind": "ITEM", "ticker": "Item_NT_500000", "decimalPlaces": 0, "amount": 3}
         ]
+        assert result["drawCount"] == 1
+        assert [d["entryName"] for d in result["draws"]] == [picked.name]
         assert claim_from_result(result) == result["claim"]
 
 
@@ -273,3 +276,61 @@ class TestFavPrizes:
         item = FakeEntry(1, 1)
         claim = build_gacha_result([item], item)["claim"]
         check_fav_tickers(FakeProduct(), frozenset(), claim)  # 안 던진다
+
+
+# ── 10연뽑 ────────────────────────────────────────────────────────────────────
+class TestMultiDraw:
+    def test_N회_독립_추첨이다_복원추출(self):
+        # 비복원이면 10연이 "서로 다른 10종 보장" 이 되어 공시 확률과 실제 분포가 갈린다.
+        pool = [FakeEntry(1, 1), FakeEntry(2, 1)]
+        picks = draw_entries(pool, 4, rand_below=lambda _n: 0)  # 항상 첫 칸
+        assert [p.id for p in picks] == [1, 1, 1, 1]
+
+    def test_회차마다_난수를_새로_뽑는다(self):
+        # 한 번 뽑아 재사용하면 10연이 같은 칸 10개가 된다.
+        pool = [FakeEntry(1, 1), FakeEntry(2, 1)]
+        seq = iter([0, 1, 0, 1])
+        picks = draw_entries(pool, 4, rand_below=lambda _n: next(seq))
+        assert [p.id for p in picks] == [1, 2, 1, 2]
+
+    @pytest.mark.parametrize("count", [0, -1, 1.5, None, True])
+    def test_잘못된_횟수는_거부(self, count):
+        with pytest.raises(GachaPoolError, match="횟수"):
+            draw_entries([FakeEntry(1, 1)], count)
+
+    def test_같은_칸이_여러_번_나오면_claim_에서_합산된다(self):
+        # 합치지 않으면 같은 통화 항목이 tx 에 10줄 들어간다.
+        pool = [FakeEntry(1, 1, amount=3)]
+        result = build_gacha_result(pool, draw_entries(pool, 10))
+        assert result["claim"] == [
+            {"kind": "ITEM", "ticker": "Item_NT_400000", "decimalPlaces": 0, "amount": 30}
+        ]
+        assert result["drawCount"] == 10
+
+    def test_회차별_원본은_버리지_않는다(self):
+        # 합산본만 남기면 "10연에서 뭐가 몇 번 나왔나"를 화면도 감사도 재현할 수 없다.
+        a, b = FakeEntry(1, 1, ticker="Item_NT_400000"), FakeEntry(2, 1, ticker="Item_NT_500000")
+        seq = iter([0, 1, 0])
+        result = build_gacha_result([a, b], draw_entries([a, b], 3, rand_below=lambda _n: next(seq)))
+        assert [d["entryId"] for d in result["draws"]] == [1, 2, 1]
+        assert result["drawCount"] == 3
+
+    def test_서로_다른_칸은_합산되지_않는다(self):
+        a = FakeEntry(1, 1, ticker="Item_NT_400000", amount=3)
+        b = fav_entry(2, 1, ticker="FAV__RUNESTONE_HP", amount=200)
+        result = build_gacha_result([a, b], [a, b, a])
+        by_ticker = {c["ticker"]: c for c in result["claim"]}
+        assert by_ticker["Item_NT_400000"]["amount"] == 6
+        assert by_ticker["FAV__RUNESTONE_HP"]["amount"] == 200
+        assert by_ticker["FAV__RUNESTONE_HP"]["kind"] == "FAV"
+
+    def test_10연_합계가_수량_상한에_걸린다(self):
+        # 상한은 **1 요청** 단위다. 10연은 한 요청이 10회 지급이므로 합으로 재야 한다.
+        pool = [FakeEntry(1, 1, amount=30)]
+        claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]
+        assert grant_units(FakeProduct(), claim) == (Decimal(0), 300)
+
+    def test_10연_FAV_도_축별로_합산된다(self):
+        pool = [fav_entry(1, 1, amount=200)]
+        claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]
+        assert grant_units(FakeProduct(), claim) == (Decimal(2000), 0)

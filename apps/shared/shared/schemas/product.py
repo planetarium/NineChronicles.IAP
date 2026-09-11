@@ -167,6 +167,9 @@ class ProductSchema(SimpleProductSchema):
     #   클라와 고정 상품이 같은 모양이다). 채우는 주체는 상품 조회 API 뿐이다
     #   (ORM 관계명이 gacha_entry_list 로 달라 model_validate 만으로는 항상 []).
     gacha_pool: List[GachaEntrySchema] = Field(default_factory=list)
+    #: (PLD-1562) 한 번 구매가 돌리는 추첨 횟수. 1=단연, 10=10연.
+    #:   확률(`gacha_pool[].rate`)은 **회차당**이다 — 10연이라고 확률이 바뀌지 않는다.
+    gacha_draw_count: int = 1
 
     price_list: List[PriceSchema]
 

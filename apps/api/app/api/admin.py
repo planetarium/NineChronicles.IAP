@@ -38,7 +38,7 @@ from shared.utils.gacha import (
     GachaPoolError,
     build_gacha_result,
     claim_from_result,
-    draw_entry,
+    draw_entries,
 )
 from shared.utils.alert import send_slack_alert
 from sqlalchemy import Date, and_, desc, func, or_, select
@@ -1993,8 +1993,15 @@ def create_grant(
         #    분기와 INSERT 의 UNIQUE(external_ref) 다(행이 곧 추첨이고 행은 하나뿐).
         if product.is_gacha:
             try:
-                gacha_entry = draw_entry(product.gacha_entry_list)
-                gacha_result = build_gacha_result(product.gacha_entry_list, gacha_entry)
+                # 상품이 정한 횟수만큼 **독립** 추첨(10연 = 복원추출 10회).
+                picks = draw_entries(
+                    product.gacha_entry_list, int(product.gacha_draw_count or 1)
+                )
+                # FK 는 조회 편의용이라 **단연일 때만** 채운다 — 10연의 "어느 한 칸"을
+                #   대표로 박으면 나머지 9회가 조인에서 사라져 집계가 거짓말을 한다.
+                #   회차별 원본은 gacha_result["draws"] 가 전부 들고 있다.
+                gacha_entry = picks[0] if len(picks) == 1 else None
+                gacha_result = build_gacha_result(product.gacha_entry_list, picks)
                 # 동결본을 **여기서 바로 되읽는다**. 아래 가드가 재는 값과 워커가 체인에
                 #   싣는 값이 같은 바이트여야 하고, 형식 검증도 이 시점에 끝나야 한다 —
                 #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.

@@ -39,6 +39,8 @@ VOUCHER_SLOTS = 3
 POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
 # (PLD-1561) 포인트 판매가 컬럼. 헤더 없음=유지 / 빈칸=해제(NULL) / 값=양의 정수.
 POINT_PRICE_COLUMN = "point_price"
+# (PLD-1562) 10연뽑. 헤더 없음=유지 / 빈칸=유지 / 값=1 이상 정수.
+GACHA_DRAW_COUNT_COLUMN = "gacha_draw_count"
 
 
 def parse_boolean(value: str) -> bool:
@@ -112,6 +114,19 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
+
+    # (PLD-1562) 10연뽑. **선택 컬럼**이다 — 헤더가 없으면 건드리지 않는다(기존 시트가
+    #   전 상품의 추첨 횟수를 1 로 되돌리면 10연이 조용히 단연이 된다).
+    if GACHA_DRAW_COUNT_COLUMN in row:
+        raw = (row.get(GACHA_DRAW_COUNT_COLUMN) or "").strip()
+        if raw:
+            draws = parse_int(raw)
+            if draws is None or draws < 1:
+                raise ValueError(
+                    f"product {csv_data['id']}: {GACHA_DRAW_COUNT_COLUMN} 는 1 이상"
+                    f" 정수여야 한다 (got {raw!r})"
+                )
+            csv_data[GACHA_DRAW_COUNT_COLUMN] = draws
 
     # (PLD-1561) 포인트샵 판매가. **선택 컬럼**이다 — 헤더가 없으면 csv_data 에 넣지 않아
     #   compare_and_update_product 가 이 컬럼을 아예 건드리지 않는다(기존 값 유지).
@@ -773,8 +788,14 @@ def assert_gacha_entry_within_caps(
        칸일수록 늦게 발견되고, 운영에는 저빈도 거절 알림만 보여 공격처럼 읽힌다.
        같은 함정을 FAV 티커에서 이미 겪고 선례를 만들어 뒀다(admin.py 의
        "임포트는 200 인데 실주문이 전부 거절되는 상태를 만들지 않는다").
+
+    ⚠️ (10연) 상한은 **1 요청** 단위인데 10연은 한 요청이 10회 지급이다. 같은 칸이 10번
+       뽑히면 합산되므로 최악은 `amount x draw_count` — 그 배수로 재야 "운 좋은 10연만
+       400" 이 안 생긴다.
     """
     caps = {GACHA_KIND_ITEM: max_item_units, GACHA_KIND_FAV: max_fav_units}
+    product = db.query(Product).filter(Product.id == product_id).first()
+    draws = int(getattr(product, "gacha_draw_count", 1) or 1)
     over = []
     for entry in (
         db.query(ProductGachaEntry)
@@ -782,10 +803,15 @@ def assert_gacha_entry_within_caps(
         .all()
     ):
         cap = caps.get(entry.kind)
-        if cap is not None and int(entry.amount) > cap:
-            over.append((entry, cap))
+        # 10연은 한 요청이 10회 지급이라 최악의 경우 amount × draw_count 가 나간다.
+        worst = int(entry.amount) * draws
+        if cap is not None and worst > cap:
+            over.append((entry, cap, worst))
     if over:
-        names = ", ".join(f"{e.name}[{e.kind}](x{e.amount}>{cap})" for e, cap in over)
+        names = ", ".join(
+            f"{e.name}[{e.kind}](x{e.amount}*{draws}={worst}>{cap})"
+            for e, cap, worst in over
+        )
         raise ValueError(
             f"product {product_id} 뽑기 칸의 수량이 요청 단위 상한을 넘는다: {names}"
             " — 그 칸에 당첨된 유저만 지급이 거절된다"

@@ -20,13 +20,16 @@
 
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from shared.models.product import GACHA_KIND_FAV, GACHA_KIND_ITEM
 
 # 추첨 결과 JSON 의 버전. 형식을 바꾸면 올리고, 읽는 쪽이 모르는 버전을 만나면 **거절**한다
 # (모르는 형식을 추측해서 지급하면 안 된다 — 조용히 다른 걸 주는 것보다 멈추는 게 낫다).
-GACHA_RESULT_VERSION = 1
+#   v2: 10연뽑. `draws`(회차별) 추가, `claim` 은 티커별 **합산**본이 됐다.
+#       v1 을 읽는 경로는 두지 않는다 — v1 결과가 저장된 행이 **0건**임을 확인하고 올렸다
+#       (있었다면 마이그레이션이나 양쪽 리더가 필요했다).
+GACHA_RESULT_VERSION = 2
 
 #: FAV 자릿수 상한. 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데, 이 축을 재는
 #: 가드가 따로 없다(얼로우리스트=티커, 수량 상한=amount). lib9c 통화의 최대 자릿수가 18 이다.
@@ -82,6 +85,52 @@ def draw_entry(
     raise GachaPoolError(f"추첨이 칸을 고르지 못했습니다 (roll={roll}, total={total})")
 
 
+def draw_entries(
+    entries: Sequence[Any],
+    count: int,
+    *,
+    rand_below: Callable[[int], int] = secrets.randbelow,
+) -> List[Any]:
+    """
+    N 회 **독립** 추첨(복원추출). 같은 칸이 여러 번 나올 수 있다 — 그게 10연의 정의다.
+
+    비복원(뽑힌 칸 제외)으로 하면 10연이 "서로 다른 10종 보장" 이 되어 공시 확률과
+    실제 분포가 갈린다(그리고 풀이 10칸 미만이면 아예 성립하지 않는다).
+
+    ⚠️ 회차마다 `rand_below` 를 새로 부른다. 한 번 뽑아 재사용하면 10연이 같은 칸 10개가 된다.
+    """
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise GachaPoolError(f"추첨 횟수는 1 이상 정수여야 합니다: {count!r}")
+    return [draw_entry(entries, rand_below=rand_below) for _ in range(count)]
+
+
+def aggregate_claim(picked: Sequence[Any]) -> List[Dict[str, Any]]:
+    """
+    회차별 결과 → **티커별 합산** 지급 명령.
+
+    합치는 이유: 10연이 같은 칸을 여러 번 뽑으면 claim 행이 중복되고, 그대로 tx 에 실으면
+    같은 통화 항목이 10줄 들어간다. 합산이 온체인 페이로드를 줄이고 수량 상한 계산과도
+    같은 모양이 된다(가드는 어차피 합을 센다).
+
+    ⚠️ **회차별 원본은 버리지 않는다** — `gacha_result["draws"]` 가 들고 있다. 합산본만
+       남기면 "10연에서 뭐가 몇 번 나왔나"를 화면도 감사도 재현할 수 없다.
+    """
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    for e in picked:
+        key = (e.kind, e.ticker, int(e.decimal_places or 0))
+        row = merged.get(key)
+        if row is None:
+            merged[key] = {
+                "kind": e.kind,
+                "ticker": e.ticker,
+                "decimalPlaces": int(e.decimal_places or 0),
+                "amount": int(e.amount),
+            }
+        else:
+            row["amount"] += int(e.amount)
+    return list(merged.values())
+
+
 def pool_snapshot(entries: Sequence[Any]) -> List[Dict[str, Any]]:
     """확률 공시·감사용 풀 스냅샷. 지급 내용(티커)까지 포함해 그때의 표를 통째로 남긴다."""
     return [
@@ -101,32 +150,42 @@ def pool_snapshot(entries: Sequence[Any]) -> List[Dict[str, Any]]:
 
 def build_gacha_result(
     entries: Sequence[Any],
-    picked: Any,
+    picked: Union[Any, Sequence[Any]],
     *,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
-    아웃박스에 동결할 결과 JSON.
+    아웃박스에 동결할 결과 JSON. `picked` 는 한 칸이거나 회차별 리스트(10연)다.
 
     `claim` 은 **지급 명령**이다 — 워커가 이 값만 보고 tx 를 만든다. 그래서 여기서
-    `build_claim_data` 와 같은 모양(ticker/decimalPlaces/amount)으로 펼쳐 둔다.
+    `build_claim_data` 와 같은 모양(ticker/decimalPlaces/amount)으로 펼쳐 두고,
+    같은 티커는 합산한다(10연이 같은 칸을 여러 번 뽑으면 행이 중복된다).
+
+    `draws` 는 **회차별 원본**이다. 합산본만 남기면 "10연에서 뭐가 몇 번 나왔나"를 화면도
+    감사도 재현할 수 없다 — 확률 분쟁에서 풀 스냅샷과 함께 이게 증거다.
 
     `kind` 를 같이 싣는 이유: 머니 가드가 FAV 를 얼로우리스트와 **FAV 전용 수량 상한**으로
     따로 본다. 그 분기를 나중에 티커 접두어로 복원하면 접두어 관례 하나에 가드가 뚫린다 —
     뽑은 시점에 무엇이었는지를 결과에 못박아 둔다.
     """
+    picks = list(picked) if isinstance(picked, (list, tuple)) else [picked]
+    if not picks:
+        raise GachaPoolError("추첨 결과가 비어 있습니다")
     return {
         "version": GACHA_RESULT_VERSION,
-        "entryId": getattr(picked, "id", None),
-        "entryName": picked.name,
-        "claim": [
+        "drawCount": len(picks),
+        "draws": [
             {
-                "kind": picked.kind,
-                "ticker": picked.ticker,
-                "decimalPlaces": int(picked.decimal_places or 0),
-                "amount": picked.amount,
+                "entryId": getattr(e, "id", None),
+                "entryName": e.name,
+                "kind": e.kind,
+                "ticker": e.ticker,
+                "decimalPlaces": int(e.decimal_places or 0),
+                "amount": int(e.amount),
             }
+            for e in picks
         ],
+        "claim": aggregate_claim(picks),
         "pool": pool_snapshot(entries),
         "totalWeight": sum(_weight_of(e) for e in entries),
         "drawnAt": (now or datetime.now(tz=timezone.utc)).isoformat(),
