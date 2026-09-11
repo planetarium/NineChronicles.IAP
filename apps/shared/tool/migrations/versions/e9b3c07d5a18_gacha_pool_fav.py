@@ -86,6 +86,11 @@ def upgrade() -> None:
         "(kind = 'ITEM') = (sheet_item_id IS NOT NULL)",
     )
 
+    # ⑥ 백필이 끝났으므로 server_default 를 떨군다. 남겨 두면 "kind 를 빠뜨린 INSERT 가
+    #    조용히 ITEM 이 된다" 는 뜻이고, 그건 가드 기준 fail-open 방향이다(FAV 가 ITEM 으로
+    #    새면 얼로우리스트를 안 지난다). 빠뜨린 INSERT 는 시끄럽게 죽는 편이 맞다.
+    op.alter_column("product_gacha_entry", "kind", server_default=None)
+
 
 def downgrade() -> None:
     # ⚠️ FAV 칸이 있는 채로 내리면 되돌릴 곳이 없다(아이템 전용 스키마로 못 담는다).
@@ -102,14 +107,18 @@ def downgrade() -> None:
     op.drop_constraint(
         "uq_product_gacha_entry_ticker", "product_gacha_entry", type_="unique"
     )
+    # ⚠️ rename 이 UNIQUE 재생성보다 **먼저**여야 한다 — 아니면 아직 없는 컬럼명으로
+    #    제약을 걸어 `column "fungible_item_id" does not exist` 로 죽는다.
+    op.alter_column(
+        "product_gacha_entry", "ticker", new_column_name="fungible_item_id"
+    )
     op.create_unique_constraint(
         "uq_product_gacha_entry_item",
         "product_gacha_entry",
         ["product_id", "fungible_item_id"],
     )
+    # FAV 행이 남아 있으면 여기서 실패한다(sheet_item_id 가 NULL) — 도커스트링대로
+    #   FAV 칸을 먼저 지우고 내릴 것.
     op.alter_column("product_gacha_entry", "sheet_item_id", nullable=False)
-    op.alter_column(
-        "product_gacha_entry", "ticker", new_column_name="fungible_item_id"
-    )
     op.drop_column("product_gacha_entry", "decimal_places")
     op.drop_column("product_gacha_entry", "kind")

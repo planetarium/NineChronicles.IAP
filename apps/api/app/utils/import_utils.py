@@ -792,22 +792,86 @@ def assert_gacha_entry_within_caps(
         )
 
 
+def assert_gacha_fav_tickers_allowed(db: Session, product_id: int, allowed) -> None:
+    """
+    풀의 FAV 칸 티커가 **지급 허용목록 안**인지. 등록 시점에 막는다.
+
+    ⚠️ 이게 없으면 지급 시점에 `check_fav_tickers` 가 그 칸에 당첨된 주문만 거절하는데,
+       그 거절은 "그 주문만 멈춤"이 아니라 **조용한 재추첨**이다 — 추첨이 아웃박스 행보다
+       먼저라 거절 시 행이 없고, 포탈 재시도가 멱등에 안 걸려 다시 뽑는다. 공시 확률이
+       차단 칸을 빼고 재정규화되고(화면 99% 인데 실제 분포가 다르다) 로그도 안 남는다.
+       그래서 **닫힌 티커는 아예 등록되지 않게** 한다.
+
+    ⚠️ 허용목록이 비어 있으면 FAV 칸 등록 자체를 막는다(배선 실수일 수 있으니 메시지로
+       구분한다). 화폐 발행은 "실수로 열려 있는" 상태가 없어야 하고, 그 규칙은 등록에도
+       같이 적용된다.
+
+    ⚠️ 남는 리스크: 등록 뒤에 티커를 닫으면 다시 재추첨 경로가 열린다. 티커를 닫을 때는
+       그 상품을 `point_shop_grantable=false` 로 같이 내릴 것(런북).
+    """
+    fav_tickers = {
+        e.ticker
+        for e in db.query(ProductGachaEntry)
+        .filter(
+            ProductGachaEntry.product_id == product_id,
+            ProductGachaEntry.kind == GACHA_KIND_FAV,
+        )
+        .all()
+    }
+    if not fav_tickers:
+        return
+    if not allowed:
+        raise ValueError(
+            f"product {product_id} 뽑기 풀에 FAV 칸({sorted(fav_tickers)})이 있는데"
+            " 지급 허용 티커 목록(grant_allowed_fav_tickers)이 비어 있다"
+            " — 티커를 열거나 FAV 칸을 빼야 한다"
+        )
+    denied = sorted(fav_tickers - set(allowed))
+    if denied:
+        raise ValueError(
+            f"product {product_id} 뽑기 풀의 FAV 티커 {denied} 는 지급 허용목록 밖이다"
+            f" (허용: {sorted(allowed)}) — 그 칸에 당첨되면 지급이 거절되고 재추첨된다"
+        )
+
+
 def process_gacha_entry_row(db: Session, row: dict) -> bool:
     """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, ticker) — 테이블 UNIQUE 와 같다."""
     weight = parse_int((row.get("weight") or "").replace(",", ""))
     amount = parse_int((row.get("amount") or "").replace(",", ""))
     product_id = parse_int(row["product_id"])
-    # 컬럼이 없으면 ITEM(기존 시트 하위호환). **틀린 값은 거절한다** — 머니 가드의 FAV/아이템
-    #   분기가 이 값으로 갈리므로 "모르면 ITEM" 은 FAV 를 아이템 상한으로 재는 사고가 된다.
-    kind = (row.get("kind") or GACHA_KIND_ITEM).strip().upper() or GACHA_KIND_ITEM
-    if kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
+    # kind 는 **3상태**다 — 빈칸/컬럼 부재는 "변경 없음"이지 ITEM 이 아니다.
+    #   2상태로 읽으면 kind 컬럼 없는 옛 시트를 재임포트하는 순간 **기존 FAV 칸이 ITEM 으로
+    #   내려앉고**, 그 칸은 그 뒤로 얼로우리스트를 안 지나고 아이템 상한으로 재진다
+    #   (이 커밋이 닫은 구멍이 임포트로 다시 열린다).
+    #   같은 리포의 선례: parse_point_shop_grantable 의 "머니 플래그는 3상태여야 한다".
+    raw_kind = (row.get("kind") or "").strip().upper()
+    if raw_kind and raw_kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
         raise ValueError(
-            f"gacha product {product_id}: kind 는 ITEM 또는 FAV 여야 한다 (got {kind!r})"
+            f"gacha product {product_id}: kind 는 ITEM 또는 FAV 여야 한다 (got {raw_kind!r})"
         )
     # `ticker` 가 정본이고 `fungible_item_id` 는 옛 컬럼명이다(기존 시트가 그대로 돈다).
-    ticker = (row.get("ticker") or row.get("fungible_item_id") or "").strip()
+    #   둘 다 있고 값이 다르면 조용히 ticker 가 이기는 대신 끊는다(어느 쪽 의도인지 모른다).
+    ticker = (row.get("ticker") or "").strip()
+    legacy = (row.get("fungible_item_id") or "").strip()
+    if ticker and legacy and ticker != legacy:
+        raise ValueError(
+            f"gacha product {product_id}: ticker({ticker!r}) 와"
+            f" fungible_item_id({legacy!r}) 가 다르다 — 한쪽만 쓸 것"
+        )
+    ticker = ticker or legacy
     if not ticker:
         raise ValueError(f"gacha product {product_id}: ticker 가 비어 있다")
+
+    existing = (
+        db.query(ProductGachaEntry)
+        .filter(
+            ProductGachaEntry.product_id == product_id,
+            ProductGachaEntry.ticker == ticker,
+        )
+        .first()
+    )
+    # 빈칸이면 기존 행의 kind 유지, 신규면 ITEM(옛 시트 하위호환).
+    kind = raw_kind or (existing.kind if existing else GACHA_KIND_ITEM)
     sheet_item_id = parse_int((row.get("sheet_item_id") or "").strip() or "0") or None
     decimal_places = parse_int((row.get("decimal_places") or "").strip() or "0") or 0
 
@@ -856,15 +920,6 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
         "amount": amount,
     }
 
-    existing = (
-        db.query(ProductGachaEntry)
-        .filter(
-            ProductGachaEntry.product_id == csv_data["product_id"],
-            ProductGachaEntry.ticker == csv_data["ticker"],
-        )
-        .first()
-    )
-
     if existing:
         changes = {
             key: (getattr(existing, key), value)
@@ -892,7 +947,11 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
 
 
 def import_gacha_entries_from_csv(
-    db: Session, csv_path: str, max_item_units=None, max_fav_units=None
+    db: Session,
+    csv_path: str,
+    max_item_units=None,
+    max_fav_units=None,
+    allowed_fav_tickers=None,
 ) -> Tuple[int, int]:
     """
     뽑기 풀 CSV 임포트.
@@ -901,6 +960,7 @@ def import_gacha_entries_from_csv(
        포인트를 쓴 뒤에 실패하는 것들이다):
          · 고정 구성품과의 배타 — assert_not_mixed_components
          · 요청 단위 수량 상한   — assert_gacha_entry_within_caps
+         · FAV 지급 허용목록     — assert_gacha_fav_tickers_allowed (재추첨 차단)
        실패는 전체 롤백이다(부분 반영된 풀은 확률이 기획과 다른 표가 된다).
     """
     processed_count = 0
@@ -922,6 +982,7 @@ def import_gacha_entries_from_csv(
                 assert_gacha_entry_within_caps(
                     db, product_id, max_item_units, max_fav_units
                 )
+                assert_gacha_fav_tickers_allowed(db, product_id, allowed_fav_tickers)
 
             db.commit()
             print(

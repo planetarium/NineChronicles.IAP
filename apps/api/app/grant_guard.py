@@ -62,7 +62,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from fastapi import HTTPException
 from shared.enums import ProductType
 from shared.models.grant_outbox import GrantOutbox
-from shared.models.product import SEASON_PASS_SKU_TOKEN, Product
+from shared.models.product import (
+    GACHA_KIND_FAV,
+    GACHA_KIND_ITEM,
+    SEASON_PASS_SKU_TOKEN,
+    Product,
+)
 from shared.utils.address import format_addr
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -426,13 +431,22 @@ def grant_units(
     if gacha_claim is not None:
         # 뽑기는 **뽑힌 칸 하나**만 지급한다(풀 전체가 아니다). 풀 전체를 세면 상한이
         # 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
-        gacha_fav = sum(
-            (Decimal(str(row["amount"])) for row in gacha_claim if row.get("kind") == "FAV"),
-            Decimal(0),
-        )
-        gacha_items = sum(
-            int(row["amount"]) for row in gacha_claim if row.get("kind") == "ITEM"
-        )
+        gacha_fav = Decimal(0)
+        gacha_items = 0
+        for row in gacha_claim:
+            kind = row.get("kind")
+            if kind == GACHA_KIND_FAV:
+                gacha_fav += Decimal(str(row["amount"]))
+            elif kind == GACHA_KIND_ITEM:
+                gacha_items += int(row["amount"])
+            else:
+                # 모르는 kind 를 조용히 버리면 **양쪽 합계에서 다 빠져 (0,0) 이 되어 두
+                #   상한을 모두 통과한다**. 이 모듈은 "모르는 입력은 fail-closed" 가 원칙이다.
+                raise GrantGuardViolation(
+                    400,
+                    "gacha_claim_unknown_kind",
+                    f"product {product.id} 뽑기 결과의 kind 를 모릅니다: {kind!r}",
+                )
         return gacha_fav, gacha_items
     fav = sum((Decimal(str(row.amount)) for row in product.fav_list), Decimal(0))
     items = sum((int(row.amount) for row in product.fungible_item_list), 0)
@@ -477,7 +491,7 @@ def check_fav_tickers(
     tickers |= {
         row["ticker"]
         for row in (gacha_claim or [])
-        if row.get("kind") == "FAV"
+        if row.get("kind") == GACHA_KIND_FAV
     }
     if not tickers:
         return
@@ -564,6 +578,54 @@ def lock_grant_guard(sess: Session) -> None:
     )
 
 
+def enforce_claim_guards(
+    product: Product,
+    *,
+    limits: GrantLimits,
+    gacha_claim: Optional[List[dict]] = None,
+) -> None:
+    """
+    **지급 내용**에 걸리는 가드 — 구성품 티커 얼로우리스트 + 요청 단위 발행량 상한.
+
+    `enforce_grant_guards` 에서 떼어낸 이유(PLD-1562): 이 두 검사만 **뽑힌 칸을 알아야**
+    한다. 나머지(네임스페이스·상품 화이트리스트·레이트리밋)는 추첨과 무관하다.
+
+    ⚠️ 이 분리가 **조용한 재추첨**을 막는다. 추첨은 아웃박스 행을 만들기 전에 일어나므로,
+       가드가 거절하면 행이 없고 → 포탈 재시도가 멱등에 안 걸려 **다시 뽑는다**.
+       레이트리밋처럼 *일시적인* 거절이 추첨 뒤에 있으면 재시도마다 결과가 갈리고, 공시
+       확률이 차단 칸을 제외하고 조용히 재정규화된다(화면엔 99% 인데 실제로는 다른 값이
+       나온다 — 확률형 아이템에서 가장 피해야 할 모양이고, 아무 로그도 안 남는다).
+       그래서 **추첨과 무관한 가드를 전부 앞으로** 보냈다. 여기 남는 거절(수량 상한·티커
+       얼로우리스트)은 **영구 오류**라 재시도해도 같은 결과이고, 애초에 CSV 임포트가 등록
+       시점에 막는다(import_utils 의 assert_gacha_* 두 개).
+
+    ⚠️ 거절 사유의 우선순위가 바뀌었다 — 예전엔 수량 상한이 레이트리밋보다 먼저 나왔다.
+       두 축이 동시에 초과면 이제 레이트리밋 토큰이 보인다(둘 다 400 이라 포탈 분기는 동일).
+    """
+    fav_units, item_units = grant_units(product, gacha_claim)
+    if (
+        limits.max_fav_units_per_request is not None
+        and fav_units > limits.max_fav_units_per_request
+    ):
+        raise GrantGuardViolation(
+            400,
+            "fav_units_exceeded",
+            f"product {product.id} FAV 발행량 {fav_units} > 상한"
+            f" {limits.max_fav_units_per_request}",
+        )
+    if (
+        limits.max_item_units_per_request is not None
+        and item_units > limits.max_item_units_per_request
+    ):
+        raise GrantGuardViolation(
+            400,
+            "item_units_exceeded",
+            f"product {product.id} 아이템 발행량 {item_units} > 상한"
+            f" {limits.max_item_units_per_request}",
+        )
+    check_fav_tickers(product, limits.allowed_fav_tickers, gacha_claim)
+
+
 def enforce_grant_guards(
     sess: Session,
     *,
@@ -572,7 +634,6 @@ def enforce_grant_guards(
     avatar_addr: str,
     limits: GrantLimits,
     is_production: bool,
-    gacha_claim: Optional[List[dict]] = None,
     now: Optional[datetime] = None,
     on_warning: Optional[Callable[["GrantWarning"], None]] = None,
 ) -> str:
@@ -585,9 +646,8 @@ def enforce_grant_guards(
          깨지고(계약: 재요청 = 200) 지급/환급 판정이 뒤집힌다.
       2. 값이 싼 검사(설정·네임스페이스·상품·수량)를 먼저, DB 카운트를 마지막에.
       3. 이 함수가 성공하면 **같은 트랜잭션에서** INSERT+commit 해야 한다(잠금 유효 구간).
-      3-1. (PLD-1562) 뽑기는 **추첨이 이 함수보다 먼저**다 — 수량 상한을 뽑힌 칸으로 재기
-         때문이다. 가드가 거절하면 행이 생기지 않으므로 그 추첨은 없던 일이 되고(포탈이
-         환급한다) 재시도는 새로 뽑는다. 아무것도 지급되지 않았으므로 그게 맞다.
+      3-1. (PLD-1562) 이 함수는 **추첨과 무관한 가드만** 본다. 지급 내용 가드는
+         `enforce_claim_guards` 이고, 순서는 **이 함수 → 추첨 → 그 함수** 다.
       4. 위반(예외)으로 빠졌으면 호출부가 **먼저 rollback** 해서 잠금·트랜잭션을 놓고 나서
          알림 같은 외부 I/O 를 해야 한다(안 그러면 Slack 지연이 전 지급 요청을 줄 세운다).
 
@@ -641,31 +701,8 @@ def enforce_grant_guards(
         product.id, product.product_type, product.google_sku
     )
 
-    # ── 3) 구성품 티커 얼로우리스트 + 요청 단위 발행량 상한 ──────────────────
-    check_fav_tickers(product, limits.allowed_fav_tickers, gacha_claim)
-    # (PLD-1562) 뽑기는 **추첨을 먼저 끝내고** 여기 온다. 뽑힌 칸이 곧 실지급분이므로
-    #   수량 상한이 그 칸을 기준으로 걸린다(그러지 않으면 뽑기가 상한을 통째로 우회한다).
-    fav_units, item_units = grant_units(product, gacha_claim)
-    if (
-        limits.max_fav_units_per_request is not None
-        and fav_units > limits.max_fav_units_per_request
-    ):
-        raise GrantGuardViolation(
-            400,
-            "fav_units_exceeded",
-            f"product {product.id} FAV 발행량 {fav_units} > 상한"
-            f" {limits.max_fav_units_per_request}",
-        )
-    if (
-        limits.max_item_units_per_request is not None
-        and item_units > limits.max_item_units_per_request
-    ):
-        raise GrantGuardViolation(
-            400,
-            "item_units_exceeded",
-            f"product {product.id} 아이템 발행량 {item_units} > 상한"
-            f" {limits.max_item_units_per_request}",
-        )
+    # ── 3) 지급 내용 가드는 `enforce_claim_guards` 로 떼어냈다(PLD-1562).
+    #      호출 순서는 **이 함수 → 추첨 → enforce_claim_guards** 다. 근거는 그쪽 도커스트링.
 
     # ── 4) 시간창 총량 + 네임스페이스/아바타 레이트리밋 (경합 안전) ──────────
     #   축 순서 = 거절 사유의 우선순위다. 기존 축(분·시·일 전역)을 앞에 두는 이유: 여러 축이

@@ -28,6 +28,10 @@ from shared.models.product import GACHA_KIND_FAV, GACHA_KIND_ITEM
 # (모르는 형식을 추측해서 지급하면 안 된다 — 조용히 다른 걸 주는 것보다 멈추는 게 낫다).
 GACHA_RESULT_VERSION = 1
 
+#: FAV 자릿수 상한. 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데, 이 축을 재는
+#: 가드가 따로 없다(얼로우리스트=티커, 수량 상한=amount). lib9c 통화의 최대 자릿수가 18 이다.
+MAX_DECIMAL_PLACES = 18
+
 
 class GachaPoolError(ValueError):
     """풀이 추첨 가능한 상태가 아니다(빈 풀·비정수/0 이하 가중치). 설정 오류."""
@@ -161,9 +165,22 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # kind 가 없거나 모르는 값이면 **멈춘다**. 여기서 접두어로 추측해 채우면
             # 머니 가드의 FAV/아이템 분기가 추측 위에 서게 된다.
             raise GachaPoolError(f"claim kind 가 ITEM/FAV 가 아닙니다: {row!r}")
-        # ⚠️ 아이템의 자릿수는 **항상 0** 이다. 0 이 아닌 값을 통과시키면
-        #    `FungibleAssetValue.plain_value` 가 `amount * 10**places` 로 부풀려 발행한다
-        #    (18 이면 10^18 배). 아이템 축에서 그건 순수한 발행 사고다.
+        # ⚠️ FAV 축이 열리면서 자릿수를 재는 가드가 **어디에도 없게 됐다** — 얼로우리스트는
+        #    티커만 보고, FAV 수량 상한은 amount 만 센다. 그런데 실발행량은
+        #    `int(amount * 10**decimalPlaces)` 라 자릿수가 곧 배율이다(180 이면 10^180 배).
+        #    CSV 오타 하나가 임포트 검증·CHECK·얼로우리스트·수량 상한을 전부 통과해 그대로
+        #    체인에 나간다. 그래서 여기가 유일한 방어선이고, 여기서 막는다.
+        #    상한 18 = lib9c 통화의 최대 자릿수(그 이상은 통화 정의가 성립하지 않는다).
+        if (
+            not isinstance(places, int)
+            or isinstance(places, bool)
+            or not 0 <= places <= MAX_DECIMAL_PLACES
+        ):
+            raise GachaPoolError(
+                f"claim decimalPlaces 는 0~{MAX_DECIMAL_PLACES} 정수여야 합니다: {row!r}"
+            )
+        # 아이템의 자릿수는 **항상 0** 이다(아이템엔 소수 자릿수가 없다). 0 이 아니면
+        #    위와 같은 이유로 순수한 발행 사고다.
         if kind == GACHA_KIND_ITEM and places != 0:
             raise GachaPoolError(
                 f"ITEM claim 의 decimalPlaces 는 0 이어야 합니다: {row!r}"

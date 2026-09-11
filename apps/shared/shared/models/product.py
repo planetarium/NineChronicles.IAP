@@ -272,7 +272,8 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
     kind = Column(
         Text,
         nullable=False,
-        server_default=GACHA_KIND_ITEM,
+        # server_default 를 두지 않는다 — 빠뜨린 INSERT 가 조용히 ITEM 이 되면 FAV 가
+        # 얼로우리스트를 안 지나고 새 나간다(가드 기준 fail-open). 시끄럽게 죽는 게 맞다.
         doc=(
             "'ITEM' | 'FAV'. **머니 가드의 분기가 이 값으로 갈린다** —"
             " FAV 는 얼로우리스트(check_fav_tickers)와 FAV 전용 수량 상한을 지난다."

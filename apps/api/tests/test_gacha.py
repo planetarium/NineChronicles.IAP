@@ -205,6 +205,30 @@ class TestFavPrizes:
         ]
         assert claim_from_result(result) == result["claim"]
 
+    @pytest.mark.parametrize("places", [19, 180, -1, None, "18", True])
+    def test_FAV_자릿수는_0에서_18_사이_정수여야_한다(self, places):
+        # 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데(180 이면 10^180 배),
+        #   이 축을 재는 가드가 **어디에도 없다** — 얼로우리스트는 티커만, FAV 수량 상한은
+        #   amount 만 본다. CSV 오타 하나가 그대로 체인에 나가므로 여기가 유일한 방어선이다.
+        with pytest.raises(GachaPoolError, match="decimalPlaces"):
+            claim_from_result({
+                "version": GACHA_RESULT_VERSION,
+                "claim": [{
+                    "kind": "FAV", "ticker": "FAV__CRYSTAL",
+                    "decimalPlaces": places, "amount": 1,
+                }],
+            })
+
+    def test_FAV_자릿수_18_은_통과한다(self):
+        # lib9c 통화의 최대 자릿수. 경계를 막아 버리면 CRYSTAL 을 못 넣는다.
+        assert claim_from_result({
+            "version": GACHA_RESULT_VERSION,
+            "claim": [{
+                "kind": "FAV", "ticker": "FAV__CRYSTAL",
+                "decimalPlaces": 18, "amount": 1,
+            }],
+        })
+
     def test_룬스톤_칸이_통과한다(self):
         picked = fav_entry(1, 1, ticker="FAV__RUNESTONE_GOLDENTHOR", amount=100)
         result = build_gacha_result([picked], picked)

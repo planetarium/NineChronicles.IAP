@@ -53,6 +53,7 @@ from app.grant_guard import (
     GrantWarning,
     alert_key,
     check_fav_tickers,
+    enforce_claim_guards,
     enforce_grant_guards,
     limits_from_settings,
     namespace_of,
@@ -552,6 +553,7 @@ def import_gacha_entries_endpoint(
                 temp_path,
                 _limits.max_item_units_per_request,
                 _limits.max_fav_units_per_request,
+                _limits.allowed_fav_tickers,
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
@@ -1969,34 +1971,45 @@ def create_grant(
     gacha_entry = None
     gacha_result = None
     gacha_claim = None
-    if product.is_gacha:
-        try:
-            gacha_entry = draw_entry(product.gacha_entry_list)
-            gacha_result = build_gacha_result(product.gacha_entry_list, gacha_entry)
-            # 동결본을 **여기서 바로 되읽는다**. 아래 가드가 재는 값과 워커가 체인에 싣는
-            #   값이 같은 바이트여야 하고(가드 주석), 형식 검증도 이 시점에 끝나야 한다 —
-            #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
-            gacha_claim = claim_from_result(gacha_result)
-        except GachaPoolError as e:
-            # 풀 설정 오류(빈 풀·잘못된 가중치). 재시도해도 같으므로 400 이다.
-            raise HTTPException(
-                status_code=400,
-                detail=f"product {request.product_id} gacha pool is unusable: {e}",
-            )
+    limits = limits_from_settings(config)
 
     pressure: List[GrantWarning] = []
     try:
+        # ① 추첨과 무관한 가드 먼저(네임스페이스·화이트리스트·레이트리밋).
+        #    ⚠️ 이 순서가 **조용한 재추첨**을 막는다 — 추첨 뒤에 일시적 거절(레이트리밋)이
+        #       있으면, 행이 안 생긴 채 포탈이 재시도하면서 매번 다시 뽑힌다. 그러면 공시
+        #       확률이 차단 칸을 빼고 조용히 재정규화된다(grant_guard.enforce_claim_guards).
         namespace = enforce_grant_guards(
             sess,
             external_ref=request.external_ref,
             product=product,
             avatar_addr=avatar_addr,
-            limits=limits_from_settings(config),
+            limits=limits,
             is_production=config.is_production,
-            # 동결본의 claim 을 넘긴다 — **체인에 나갈 바로 그 값**을 재야 한다(가드 주석).
-            gacha_claim=gacha_claim,
             on_warning=pressure.append,
         )
+
+        # ② 추첨 — 아래 INSERT 와 **같은 트랜잭션**이다. 재추첨이 안 되는 근거는 위 멱등
+        #    분기와 INSERT 의 UNIQUE(external_ref) 다(행이 곧 추첨이고 행은 하나뿐).
+        if product.is_gacha:
+            try:
+                gacha_entry = draw_entry(product.gacha_entry_list)
+                gacha_result = build_gacha_result(product.gacha_entry_list, gacha_entry)
+                # 동결본을 **여기서 바로 되읽는다**. 아래 가드가 재는 값과 워커가 체인에
+                #   싣는 값이 같은 바이트여야 하고, 형식 검증도 이 시점에 끝나야 한다 —
+                #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
+                gacha_claim = claim_from_result(gacha_result)
+            except GachaPoolError as e:
+                # 풀 설정 오류(빈 풀·잘못된 가중치·형식). 재시도해도 같으므로 400 이다.
+                raise GrantGuardViolation(
+                    400,
+                    "gacha_pool_unusable",
+                    f"product {request.product_id} gacha pool is unusable: {e}",
+                )
+
+        # ③ 지급 내용 가드 — **뽑힌 칸**의 티커·수량을 잰다(뽑기 상품은 구성품이 비어 있어
+        #    이걸 안 하면 얼로우리스트와 수량 상한을 통째로 우회한다).
+        enforce_claim_guards(product, limits=limits, gacha_claim=gacha_claim)
     except GrantGuardViolation as violation:
         # 먼저 트랜잭션을 놓는다(= advisory lock 해제). 아직 아무것도 쓰지 않았으므로 rollback 은
         #   무손실이고, 알림 webhook 이 느려도 다른 지급 요청을 막지 않는다.
