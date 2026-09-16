@@ -4,7 +4,9 @@ version = "1.0.8"
 description = "Shared library for iap service"
 authors = ["Planetarium <engineering@planetariumhq.com>"]
 readme = "README.md"
-include = ["shared/*"]
+# 템플릿 xlsx 는 파이썬 파일이 아니라 명시해야 패키지에 들어간다. 빠지면
+# 원스토어 추출이 런타임에 FileNotFoundError 로 죽는다(로컬에선 소스 트리라 안 보인다).
+include = ["shared/*", "shared/utils/onestore_inapp_template.xlsx"]
 exclude = [".env.sample", "tests/*", "tool/*"]
 
 [build-system]
@@ -26,6 +28,8 @@ google-auth-oauthlib = "^1.2.0"
 google-api-python-client = "^2.122.0"
 boto3 = "^1.28.46"
 stripe = "^13.0.1"
+# 원스토어 일괄등록 파일 읽기/쓰기 (shared/utils/onestore_export.py)
+openpyxl = "^3.1.5"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0,<7.2"

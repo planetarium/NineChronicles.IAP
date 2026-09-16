@@ -1,6 +1,7 @@
+import base64
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Dict, List, Optional
@@ -8,17 +9,27 @@ from typing import Annotated, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Security, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
-from shared.enums import PlanetID, ReceiptStatus, Store
+from shared.enums import PackageName, PlanetID, ProductType, ReceiptStatus, Store
 from shared.models.product import (
+    Category,
     FungibleAssetProduct,
     FungibleItemProduct,
     Price,
     Product,
+    category_product_table,
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
 from shared.schemas.product import ProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
+from shared.utils.onestore_export import (
+    build_rows,
+    fetch_l10n_titles,
+    fetch_play_onetime_products,
+    parse_onestore_export,
+    validate_rows,
+    write_workbook,
+)
 from sqlalchemy import Date, and_, desc, func, or_, select
 from sqlalchemy.orm import joinedload
 
@@ -1422,3 +1433,100 @@ def delete_product_voucher_grant(grant_id: int, sess=Depends(session)):
     sess.delete(row)
     sess.commit()
     return {"deleted": True, "id": grant_id}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 원스토어 일괄등록 파일 추출
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class OneStoreSkippedSchema(BaseModel):
+    sku: str
+    reason: str
+
+
+class OneStoreExportResponse(BaseModel):
+    filename: str
+    #: xlsx 바이트의 base64. 바이너리 대신 JSON 으로 싸는 이유는 **무엇이 왜 빠졌는지를
+    #: 같이 실어야 하기 때문**이다 — 상품이 조용히 빠지는 것이 이 기능이 막으려는 사고다
+    #: (레거시 Play API 가 42건을 말없이 누락한 적, 국가 한 곳 때문에 36개가 통째로
+    #: 빠진 적이 각각 있었다). 34행×125개국이 13KB 라 base64 로도 20KB 남짓이다.
+    content_base64: str
+    row_count: int
+    country_count: int
+    already_registered: List[str]
+    skipped: List[OneStoreSkippedSchema]
+    #: 배포 국가인데 Play 에 값이 없어 행에서 빠진 횟수. 비어 있어야 정상이다.
+    uncovered_countries: Dict[str, int]
+
+
+def _on_sale_skus(sess) -> set:
+    """지금 게임에서 실제로 파는 IAP 상품의 google_sku.
+
+    `GET /api/product` 의 필터와 같은 뜻이다(app/api/product.py) — 카테고리 active,
+    상품 active, 오픈/마감 기간 안. 자기 자신을 HTTP 로 부르지 않으려고 쿼리로 옮겼다.
+    """
+    now = datetime.now(timezone.utc)
+    rows = sess.scalars(
+        select(Product.google_sku)
+        .join(category_product_table, category_product_table.c.product_id == Product.id)
+        .join(Category, Category.id == category_product_table.c.category_id)
+        .where(
+            Category.active.is_(True),
+            Product.active.is_(True),
+            Product.product_type == ProductType.IAP,
+            Product.google_sku.isnot(None),
+            or_(Product.open_timestamp.is_(None), Product.open_timestamp <= now),
+            or_(Product.close_timestamp.is_(None), Product.close_timestamp > now),
+        )
+    ).all()
+    return {sku for sku in rows if sku}
+
+
+@router.post("/onestore/export", response_model=OneStoreExportResponse)
+async def onestore_export(
+    file: UploadFile = File(
+        ...,
+        description="개발자센터 [인앱 상품 > 상품 일괄 등록하기 > 내보내기] 로 받은 xlsx",
+    ),
+    sess=Depends(session),
+):
+    """
+    # 원스토어 일괄등록 파일 만들기
+    ---
+    Play 상품 정보를 원스토어 In-App 일괄등록 양식으로 변환한다. **읽기 전용** —
+    Play 도 원스토어도 건드리지 않는다.
+
+    업로드 파일이 배포 국가·국가별 통화·기본가격 통화·기등록 SKU 의 **유일한 진실
+    소스**다. 이 값들은 문서에 없고 Play 와도 다르다(가봉은 Play=EUR / 원스토어=USD).
+    """
+    try:
+        catalog = parse_onestore_export(await file.read())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"내보내기 파일(xlsx)을 읽지 못했다: {e}"
+        )
+
+    package_name = PackageName.NINE_CHRONICLES_M.value
+    products = fetch_play_onetime_products(config.google_credential, package_name)
+    cdn_host = config.cdn_host_map.get(package_name, "").rstrip("/")
+    l10n = fetch_l10n_titles(f"{cdn_host}/shop/l10n/product.csv") if cdn_host else {}
+
+    result = build_rows(products, catalog, _on_sale_skus(sess), l10n)
+
+    violations = validate_rows(result.rows, catalog)
+    if violations:
+        # 여기서 막지 않으면 개발자센터가 막는다. 사유를 아는 쪽은 이쪽이다.
+        raise HTTPException(status_code=400, detail="; ".join(violations[:20]))
+
+    return OneStoreExportResponse(
+        filename=f"9c-onestore-inapp-{datetime.now(timezone.utc):%Y%m%d}.xlsx",
+        content_base64=base64.b64encode(write_workbook(result.rows)).decode(),
+        row_count=len(result.rows),
+        country_count=len(catalog.currency_by_country),
+        already_registered=result.already_registered,
+        skipped=[OneStoreSkippedSchema(sku=s, reason=r) for s, r in result.skipped],
+        uncovered_countries=result.uncovered_countries,
+    )
