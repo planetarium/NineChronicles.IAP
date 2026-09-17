@@ -2176,6 +2176,8 @@ class OneStoreExportResponse(BaseModel):
     skipped: List[OneStoreSkippedSchema]
     #: 배포 국가인데 Play 에 값이 없어 행에서 빠진 횟수. 비어 있어야 정상이다.
     uncovered_countries: Dict[str, int]
+    #: 파일은 만들었지만 품질이 떨어진 지점. 실패가 아니라 **열화**를 알리는 자리다.
+    warnings: List[str] = []
 
 
 def _on_sale_skus(sess) -> set:
@@ -2233,8 +2235,27 @@ async def onestore_export(
 
     package_name = PackageName.NINE_CHRONICLES_M.value
     products = fetch_play_onetime_products(config.google_credential, package_name)
+
+    # CDN L10N 은 한국어 제목의 **폴백**이지 필수 입력이 아니다. 없으면 한국어가
+    # 영어로 채워질 뿐이라, 여기서 터지면 추출 자체를 못 하는 게 손해다.
+    #   (인터널 CDN assets-internal 에는 이 파일이 없어 403 이 온다.)
+    # 다만 조용히 넘어가면 제목이 바뀐 걸 아무도 모르므로 warnings 로 드러낸다.
+    warnings: List[str] = []
+    l10n: dict = {}
     cdn_host = config.cdn_host_map.get(package_name, "").rstrip("/")
-    l10n = fetch_l10n_titles(f"{cdn_host}/shop/l10n/product.csv") if cdn_host else {}
+    if cdn_host:
+        try:
+            l10n = fetch_l10n_titles(f"{cdn_host}/shop/l10n/product.csv")
+        except Exception as e:
+            warnings.append(
+                f"CDN 상품명 L10N 을 읽지 못했다({cdn_host}): {e}. "
+                f"한국어 제목이 없는 상품은 영어 제목으로 채워진다."
+            )
+    else:
+        warnings.append(
+            f"{package_name} 의 CDN 호스트 설정이 없다. "
+            f"한국어 제목이 없는 상품은 영어 제목으로 채워진다."
+        )
 
     result = build_rows(products, catalog, _on_sale_skus(sess), l10n)
 
@@ -2251,4 +2272,5 @@ async def onestore_export(
         already_registered=result.already_registered,
         skipped=[OneStoreSkippedSchema(sku=s, reason=r) for s, r in result.skipped],
         uncovered_countries=result.uncovered_countries,
+        warnings=warnings,
     )
