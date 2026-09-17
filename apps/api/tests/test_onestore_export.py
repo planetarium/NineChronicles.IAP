@@ -14,6 +14,7 @@ DB 는 in-memory SQLite. Play API 와 CDN L10N 은 네트워크라 대역으로 
 """
 import base64
 import io
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import openpyxl
@@ -218,6 +219,27 @@ def test_rejects_non_xlsx_upload(client, db, stub_network):
     response = post(client, b"not an excel file")
 
     assert response.status_code == 400
+
+
+def test_l10n_fetch_failure_degrades_instead_of_failing(client, db, stub_network,
+                                                       monkeypatch):
+    """CDN L10N 은 한국어 제목의 **폴백**일 뿐이라 실패해도 추출은 되어야 한다.
+
+    인터널 CDN(assets-internal)에는 shop/l10n/product.csv 가 없어 403 이 온다.
+    이걸 그대로 터뜨리면 인터널에서는 기능 자체를 못 쓴다. 다만 조용히 넘어가면
+    한국어 제목이 영어로 바뀐 걸 아무도 모르므로 `warnings` 로 드러낸다.
+    """
+    add_product(db, "g_pkg_a")
+
+    def _boom(url):
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(admin_api, "fetch_l10n_titles", _boom)
+
+    body = post(client).json()
+
+    assert body["row_count"] == 1
+    assert any("L10N" in w for w in body["warnings"])
 
 
 def test_rejects_when_self_validation_fails(client, db, stub_network, monkeypatch):
