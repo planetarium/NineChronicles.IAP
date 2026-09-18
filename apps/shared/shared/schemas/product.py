@@ -72,6 +72,10 @@ class SimpleProductSchema(BaseSchema):
     #: (PLD-1561) 포탈 포인트샵 판매가(표시 포인트). NULL = 포인트로 팔지 않는다.
     #:   포탈은 이 값으로 차감액을 정한다(원장은 포탈 소유). `mileage_price` 와 같은 축.
     point_price: Optional[int] = None
+    #: (PLD-1564) 결제 가능 포인트 종류. 'ANY' = 무상 포인트(PP_S)로도 / 'NCG' = 현금화
+    #:   가능 포인트로만. 기획의 "PP-X 전용"(가챠·확정교환)이 'NCG' 다.
+    #:   **강제는 포탈**이 한다(차감이 포탈 원장) — IAP 는 값만 실어 보낸다.
+    point_payable_kinds: str = "ANY"
     # (PLD-1472) 복권 티켓. 마일리지(mileage)와 같은 결로 "이 상품을 사면 뭘 받는지"를 상품에 실어 보낸다.
     #   기본값 빈 리스트 = **하위호환**. 필드를 모르는 구버전 클라와, 매핑이 없는 상품(메인넷은 현재
     #   product_voucher_grant 0행이라 전부 여기 해당)이 같은 모양으로 보인다.
