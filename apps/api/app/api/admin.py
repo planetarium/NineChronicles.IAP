@@ -49,16 +49,8 @@ from app.celery import send_to_worker
 from app.config import config
 from app.dependencies import session
 from app.grant_guard import (
-    GrantGuardViolation,
-    GrantWarning,
-    alert_key,
-    check_fav_tickers,
-    enforce_claim_guards,
-    enforce_grant_guards,
-    limits_from_settings,
+    assert_product_grantable,
     namespace_of,
-    should_alert,
-    should_warn,
     validate_point_shop_grantable_eligible,
 )
 from app.utils import verify_token
@@ -359,13 +351,6 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
                 interactive=False,
                 voucher_tables=voucher_tables,
                 voucher_cap=voucher_cap,
-                # (PLD-1562) gacha_draw_count 를 바꾸는 행의 풀 상한 재검증용.
-                max_item_units=limits_from_settings(config).max_item_units_per_request,
-                max_fav_units=limits_from_settings(config).max_fav_units_per_request,
-                # (PLD-1575) `point_shop_grantable` 을 켜는 행의 FAV 티커 선검증에 쓴다.
-                #   가드가 **지급 시점에 보는 값과 같아야** 한다 — 임포트는 200 인데 실주문이
-                #   전부 거절되는 상태를 만들지 않는다(미주입 503 / 목록 밖 400).
-                allowed_fav_tickers=limits_from_settings(config).allowed_fav_tickers,
             )
 
             return {
@@ -377,16 +362,6 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             # 임시 파일 삭제
             os.unlink(temp_path)
 
-    except GrantGuardViolation as e:
-        # (PLD-1575) 백오피스 임포트 화면은 응답 **본문을 읽지 않는다**(IAPRepository 의
-        #   EnsureSuccessStatusCode) → 운영자에게는 "503" 만 보이고 `[fav_tickers_unset] …` 이
-        #   사라진다. 유일한 진단 문자열이므로 서버 로그에는 반드시 남긴다.
-        logger.error(
-            "product csv import rejected by grant guard",
-            reason=e.reason,
-            detail=e.detail,
-        )
-        raise
     except HTTPException:
         raise  # fetch(502/409/503)·prod게이트(400)·grant 가드(503/400) 등 명시 상태코드 보존
     except Exception as e:
@@ -570,15 +545,9 @@ def import_gacha_entries_endpoint(
             temp_path = temp_file.name
 
         try:
-            _limits = limits_from_settings(config)
             pool_summaries: list = []
             processed_count, changed_count = import_gacha_entries_from_csv(
-                sess,
-                temp_path,
-                _limits.max_item_units_per_request,
-                _limits.max_fav_units_per_request,
-                _limits.allowed_fav_tickers,
-                summary_out=pool_summaries,
+                sess, temp_path, summary_out=pool_summaries
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
@@ -1663,13 +1632,6 @@ def upsert_point_shop_grantable(
 
     - `grantable=true` 는 현금 상품(IAP)·시즌패스 SKU 에 걸 수 없다(400) — 무상 발행 대상이
       아니다. 같은 검사가 CSV import 와 지급 시점에도 있다(플래그 스테일 방어).
-    - FAV 구성품이 있으면 허용 티커 목록 안이어야 한다. 상태코드는 **지급 시점과 같다** —
-      목록 미주입 503(`fav_tickers_unset`, 운영 실수) / 목록 밖 400(`fav_ticker_not_allowed`).
-    - prod 에서 상한(`API_GRANT_MAX_*`)이 미주입이면 켜는 것 자체를 막는다 — 켜자마자
-      상한 없는 발행 창이 열리는 fail-open 을 만들지 않는다(voucher C3-lite 게이트와 같은 규칙).
-      ⚠️ 이 게이트는 **400** 인데 바로 위 FAV 티커 미주입은 503 이다. 둘 다 "설정 미주입"이지만
-      후자는 지급 시점 함수(`check_fav_tickers`)를 그대로 재사용한 결과다 — 두 경로가 같은
-      사유에 같은 코드를 주는 편이 낫다고 봤다(여기서 400 으로 바꾸면 계약 v1.2 와 갈라진다).
     - `grantable=false`(끄기)는 언제나 허용한다. 킬스위치를 게이트 뒤에 두면 안 된다.
     """
     product = sess.get(Product, request.product_id)
@@ -1681,19 +1643,6 @@ def upsert_point_shop_grantable(
         validate_point_shop_grantable_eligible(
             product.id, product.product_type, product.google_sku
         )
-        # FAV 티커도 **켜는 시점에** 본다. 지급 시점만 보면 운영자는 200 을 받고 켠 줄 알지만
-        #   실주문이 들어오는 순간 전부 막힌다 — 그때는 이미 주문이 쌓인 뒤다.
-        check_fav_tickers(product, limits_from_settings(config).allowed_fav_tickers)
-        missing = limits_from_settings(config).missing()
-        if missing and config.is_production:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"prod 에선 지급 상한 미주입 상태로 화이트리스트를 켤 수 없습니다: {missing}."
-                    " (상품 CSV import 경로엔 이 게이트가 없다 — 그쪽으로 켜도 지급 시점에"
-                    " 503 으로 막히므로 발행은 안 열리지만, 상한을 먼저 주입하는 게 정상 순서다)"
-                ),
-            )
     was_grantable = bool(product.point_shop_grantable)
     product.point_shop_grantable = request.grantable
     sess.commit()
@@ -1850,69 +1799,6 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     return serialized
 
 
-def warn_grant_pressure(warning: GrantWarning) -> None:
-    """
-    (PLD-1575) 거절하지 않는 가드 경고 — 시간창 상한 **임박** · 의미적 **중복 의심**.
-
-    위반 알림만 있으면 첫 초과 주문이 이미 400(포탈 기준 영구 실패)이다. 상한을 올릴 시간을
-    벌어주는 게 임박 경고의 목적이다(사유가 `*_warn`).
-
-    스로틀 **키는 가드가 만들어 준다**(`GrantWarning.throttle_key`) — 축마다 접는 단위가
-    다르기 때문이다(임박 경고는 아바타를 접고, 중복 경고는 사건이 (아바타, 상품) 단위라
-    접지 않는다 — `GrantScope.key` / `coarse_key`). 저장소도 위반 알림과 **분리돼 있다**
-    (`should_warn`): 카디널리티가 큰 경고 키가 위반 알림의 스로틀을 지우면 거절 알림 도배가
-    다시 열린다.
-
-    호출 시점은 **commit·큐 발행 뒤**다(잠금 밖). 이건 정상 응답 경로라 알림이 실패해도 지급을
-    깨서는 안 되고, `send_slack_alert` 가 예외를 올리지 않는 것에 의존한다. 큐 발행보다도 뒤인
-    이유: webhook 은 동기 호출(타임아웃 3초)이라 앞에 두면 Slack 지연이 워커 착수를 늦춘다.
-    """
-    logger.warning("grant guard warning", reason=warning.reason, detail=warning.message)
-    if not should_warn(warning.throttle_key):
-        return
-    send_slack_alert(
-        config.iap_alert_webhook_url,
-        f":warning: [IAP grant guard] {warning.reason} ({config.stage})\n"
-        f"{warning.message}",
-    )
-
-
-def report_grant_violation(
-    violation: GrantGuardViolation, request: GrantRequestSchema
-) -> None:
-    """
-    (PLD-1575) 가드 위반 감사 로그 + Slack 알림.
-
-    로그는 **항상** 남기고(who/what/when 감사 근거) Slack 만 사유별로 스로틀한다 —
-    도배 방지가 목적이지 은폐가 아니다. 알림 실패는 무시한다(거절 판정은 이미 정해졌다).
-
-    ⚠️ 호출부는 이 함수 **전에 rollback** 해야 한다. 시간창 위반은 advisory lock 을 잡은 채로
-    던져지므로, 여기서 webhook POST(수 초 타임아웃)를 하는 동안 잠금을 들고 있으면 하필
-    호출자가 몰아치는 순간에 모든 지급 요청이 그 뒤에 줄을 선다.
-    """
-    namespace = namespace_of(request.external_ref)
-    logger.warning(
-        "grant rejected by guard",
-        reason=violation.reason,
-        status_code=violation.status_code,
-        detail=violation.detail,
-        namespace=namespace,
-        external_ref=request.external_ref,
-        product_id=request.product_id,
-        avatar_addr=request.avatar_address,
-        planet_id=request.planet_id,
-    )
-    allowed = limits_from_settings(config).allowed_namespaces
-    if not should_alert(alert_key(violation.reason, namespace, allowed)):
-        return
-    send_slack_alert(
-        config.iap_alert_webhook_url,
-        f":no_entry: [IAP grant guard] {violation.reason} ({config.stage})\n"
-        f"externalRef=`{request.external_ref}` productId={request.product_id}"
-        f" avatar=`{request.avatar_address}`\n{violation.detail}",
-    )
-
-
 @router.post("/grant", response_model=GrantSchema, status_code=201)
 def create_grant(
     request: GrantRequestSchema, response: Response, sess=Depends(session)
@@ -1984,80 +1870,45 @@ def create_grant(
     #   오류로 빠지면 잠금을 요청 종료까지 들고 있게 된다. 형식 검증은 형식 검증끼리 모은다.
     memo = build_grant_memo(request.external_ref, request.memo)
 
-    # (PLD-1575) 머니 가드 — 화이트리스트·발행량·빈도·네임스페이스. **INSERT 전에** 끝난다
-    #   (위반 시 행이 없어야 포탈이 환급을 오판하지 않는다). 멱등 재요청은 위(200)에서 이미
-    #   빠져나갔으므로, 상한을 나중에 낮춰도 진행 중인 주문의 폴링이 깨지지 않는다.
-    #   시간창 카운트는 아래 commit 과 **같은 트랜잭션**이어야 유효하다(advisory lock 구간).
-    #   임박 경고는 **모아 두고 commit 뒤에** 보낸다 — 가드는 잠금을 잡은 상태로 콜백을
-    #   부르므로 거기서 webhook 을 때리면 위반 알림과 같은 문제(잠금 뒤 줄서기)가 생긴다.
-    #   아래 INSERT 와 아바타 축 카운트가 **같은 문자열**을 봐야 한다(가드도 안에서 같은
-    #   `format_addr` 로 정규화한다 — 멱등이므로 여기서 미리 맞춰 두는 게 안전하다).
     avatar_addr = format_addr(request.avatar_address)
 
-    # (PLD-1562) 추첨 — **가드보다 먼저, INSERT 와 같은 트랜잭션에서** 한 번.
-    #   · 가드보다 먼저인 이유: 수량 상한을 뽑힌 칸으로 재야 한다(뽑기 상품 자체는 구성품이
-    #     없어 발행량 0 으로 계산되므로, 순서가 반대면 뽑기가 상한을 통째로 우회한다).
-    #   · 여기서 뽑아도 **재추첨이 안 되는 이유**는 위 멱등 분기다. 같은 external_ref 재요청은
-    #     이 지점에 도달하지 않고 기존 행을 200 으로 돌려준다. 동시 요청으로 둘 다 여기까지
-    #     와도 INSERT 의 UNIQUE(external_ref) 가 하나만 남기고, 진 쪽은 이긴 행을 반환한다
-    #     (아래 IntegrityError 분기) — 즉 **행이 곧 추첨이고 행은 하나뿐**이다.
-    #   · 가드가 거절하면 행이 없으므로 이 추첨은 없던 일이다. 포탈이 환급하고, 재시도는
-    #     새로 뽑는다. 아무것도 지급되지 않았으므로 그게 맞다.
+    # 요청 시점 가드는 **상품 화이트리스트 하나**다(grant_guard.py 도커스트링에 제거 근거).
+    #   INSERT 전에 끝낸다 — 아웃박스에 FAILED 를 남기면 포탈이 환급을 트리거하는데,
+    #   지급이 시작되지도 않았기 때문이다(계약 v1.1).
+    assert_product_grantable(product)
+
+    # (PLD-1562) 추첨 — **INSERT 와 같은 트랜잭션에서 한 번**.
+    #   재추첨이 안 되는 근거는 위 멱등 분기와 INSERT 의 UNIQUE(external_ref) 다. 같은
+    #   external_ref 재요청은 이 지점에 도달하지 않고 기존 행을 200 으로 돌려주고, 동시
+    #   요청으로 둘 다 와도 UNIQUE 가 하나만 남긴다 — **행이 곧 추첨이고 행은 하나뿐**이다.
+    #   추첨 **뒤에** 거절할 수 있는 검사를 두지 않는 것도 같은 이유다(그런 검사는 행을
+    #   안 만든 채 포탈 재시도를 부르고, 그 재시도가 곧 재추첨이다).
     gacha_entry = None
     gacha_result = None
     gacha_claim = None
-    limits = limits_from_settings(config)
+    if product.is_gacha:
+        try:
+            # 상품이 정한 횟수만큼 **독립** 추첨(10연 = 복원추출 10회).
+            picks = draw_entries(
+                product.gacha_entry_list, int(product.gacha_draw_count or 1)
+            )
+            # FK 는 조회 편의용이라 **단연일 때만** 채운다 — 10연의 "어느 한 칸"을 대표로
+            #   박으면 나머지 9회가 조인에서 사라져 집계가 거짓말을 한다. 회차별 원본은
+            #   gacha_result["draws"] 가 전부 들고 있다.
+            gacha_entry = picks[0] if len(picks) == 1 else None
+            gacha_result = build_gacha_result(product.gacha_entry_list, picks)
+            # 동결본을 **여기서 바로 되읽는다** — 형식 검증이 이 시점에 끝나야 한다.
+            #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
+            gacha_claim = claim_from_result(gacha_result)
+        except GachaPoolError as e:
+            # 풀 설정 오류(빈 풀·잘못된 가중치·형식). 재시도해도 같으므로 400 이다.
+            sess.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=f"product {request.product_id} gacha pool is unusable: {e}",
+            )
 
-    pressure: List[GrantWarning] = []
-    try:
-        # ① 추첨과 무관한 가드 먼저(네임스페이스·화이트리스트·레이트리밋).
-        #    ⚠️ 이 순서가 **조용한 재추첨**을 막는다 — 추첨 뒤에 일시적 거절(레이트리밋)이
-        #       있으면, 행이 안 생긴 채 포탈이 재시도하면서 매번 다시 뽑힌다. 그러면 공시
-        #       확률이 차단 칸을 빼고 조용히 재정규화된다(grant_guard.enforce_claim_guards).
-        namespace = enforce_grant_guards(
-            sess,
-            external_ref=request.external_ref,
-            product=product,
-            avatar_addr=avatar_addr,
-            limits=limits,
-            is_production=config.is_production,
-            on_warning=pressure.append,
-        )
-
-        # ② 추첨 — 아래 INSERT 와 **같은 트랜잭션**이다. 재추첨이 안 되는 근거는 위 멱등
-        #    분기와 INSERT 의 UNIQUE(external_ref) 다(행이 곧 추첨이고 행은 하나뿐).
-        if product.is_gacha:
-            try:
-                # 상품이 정한 횟수만큼 **독립** 추첨(10연 = 복원추출 10회).
-                picks = draw_entries(
-                    product.gacha_entry_list, int(product.gacha_draw_count or 1)
-                )
-                # FK 는 조회 편의용이라 **단연일 때만** 채운다 — 10연의 "어느 한 칸"을
-                #   대표로 박으면 나머지 9회가 조인에서 사라져 집계가 거짓말을 한다.
-                #   회차별 원본은 gacha_result["draws"] 가 전부 들고 있다.
-                gacha_entry = picks[0] if len(picks) == 1 else None
-                gacha_result = build_gacha_result(product.gacha_entry_list, picks)
-                # 동결본을 **여기서 바로 되읽는다**. 아래 가드가 재는 값과 워커가 체인에
-                #   싣는 값이 같은 바이트여야 하고, 형식 검증도 이 시점에 끝나야 한다 —
-                #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
-                gacha_claim = claim_from_result(gacha_result)
-            except GachaPoolError as e:
-                # 풀 설정 오류(빈 풀·잘못된 가중치·형식). 재시도해도 같으므로 400 이다.
-                raise GrantGuardViolation(
-                    400,
-                    "gacha_pool_unusable",
-                    f"product {request.product_id} gacha pool is unusable: {e}",
-                )
-
-        # ③ 지급 내용 가드 — **뽑힌 칸**의 티커·수량을 잰다(뽑기 상품은 구성품이 비어 있어
-        #    이걸 안 하면 얼로우리스트와 수량 상한을 통째로 우회한다).
-        enforce_claim_guards(product, limits=limits, gacha_claim=gacha_claim)
-    except GrantGuardViolation as violation:
-        # 먼저 트랜잭션을 놓는다(= advisory lock 해제). 아직 아무것도 쓰지 않았으므로 rollback 은
-        #   무손실이고, 알림 webhook 이 느려도 다른 지급 요청을 막지 않는다.
-        sess.rollback()
-        report_grant_violation(violation, request)
-        raise
+    namespace = namespace_of(request.external_ref)
 
     row = GrantOutbox(
         external_ref=request.external_ref,
@@ -2114,10 +1965,6 @@ def create_grant(
             external_ref=row.external_ref,
             error=str(e),
         )
-    # 경고 알림은 **큐 발행 뒤**에 보낸다 — webhook 은 동기 호출(타임아웃 3초)이라 앞에 두면
-    #   Slack 지연이 워커 착수까지 늦춘다. 이 시점엔 행도 커밋됐고 잠금도 없다.
-    for warning in pressure:
-        warn_grant_pressure(warning)
     return _grant_schema(row)
 
 

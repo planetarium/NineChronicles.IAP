@@ -13,9 +13,9 @@
 4. **풀 스냅샷을 같이 남긴다**. 표를 바꾸면 "그때 확률이 얼마였나"를 재현할 수 없고,
    확률 공시 분쟁에서 그게 유일한 증거다.
 5. **상금은 아이템과 FAV 둘 다**다(룬스톤·소울스톤·크리스탈이 FAV 축이다). 온체인에선
-   둘 다 FungibleAssetValue 라 티커 하나로 합치되, `kind` 를 결과에 못박는다 — 머니 가드가
-   FAV 를 얼로우리스트와 별도 상한으로 보기 때문이고, 그 분기를 티커 접두어로 복원하면
-   접두어 관례 하나에 가드가 뚫린다.
+   둘 다 FungibleAssetValue 라 티커 하나로 합치되, `kind` 를 결과에 못박는다 — 지급 tx 의
+   분기(FAV=MintAsset / 아이템=인벤토리 민팅)와 자릿수 해석이 여기서 갈리고, 그 분기를
+   나중에 티커 접두어로 복원하면 접두어 관례 하나에 어긋난다.
 """
 
 import secrets
@@ -38,7 +38,8 @@ GACHA_RESULT_VERSION = 2
 READABLE_RESULT_VERSIONS = frozenset({1, 2})
 
 #: FAV 자릿수 상한. 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데, 이 축을 재는
-#: 가드가 따로 없다(얼로우리스트=티커, 수량 상한=amount). lib9c 통화의 최대 자릿수가 18 이다.
+#: 검사가 여기 말고는 없다(CSV·CHECK 제약 어디도 자릿수를 재지 않는다).
+#: lib9c 통화의 최대 자릿수가 18 이다.
 MAX_DECIMAL_PLACES = 18
 
 
@@ -175,8 +176,8 @@ def build_gacha_result(
     `draws` 는 **회차별 원본**이다. 합산본만 남기면 "10연에서 뭐가 몇 번 나왔나"를 화면도
     감사도 재현할 수 없다 — 확률 분쟁에서 풀 스냅샷과 함께 이게 증거다.
 
-    `kind` 를 같이 싣는 이유: 머니 가드가 FAV 를 얼로우리스트와 **FAV 전용 수량 상한**으로
-    따로 본다. 그 분기를 나중에 티커 접두어로 복원하면 접두어 관례 하나에 가드가 뚫린다 —
+    `kind` 를 같이 싣는 이유: 워커가 tx 를 만들 때 **FAV 와 아이템의 분기가 이 값으로**
+    갈린다. 그 분기를 나중에 티커 접두어로 복원하면 접두어 관례 하나에 어긋난다 —
     뽑은 시점에 무엇이었는지를 결과에 못박아 둔다.
     """
     picks = list(picked) if isinstance(picked, (list, tuple)) else [picked]
@@ -233,13 +234,12 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         kind = row.get("kind")
         if kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
             # kind 가 없거나 모르는 값이면 **멈춘다**. 여기서 접두어로 추측해 채우면
-            # 머니 가드의 FAV/아이템 분기가 추측 위에 서게 된다.
+            # 지급 tx 의 FAV/아이템 분기가 추측 위에 서게 된다.
             raise GachaPoolError(f"claim kind 가 ITEM/FAV 가 아닙니다: {row!r}")
-        # ⚠️ FAV 축이 열리면서 자릿수를 재는 가드가 **어디에도 없게 됐다** — 얼로우리스트는
-        #    티커만 보고, FAV 수량 상한은 amount 만 센다. 그런데 실발행량은
-        #    `int(amount * 10**decimalPlaces)` 라 자릿수가 곧 배율이다(180 이면 10^180 배).
-        #    CSV 오타 하나가 임포트 검증·CHECK·얼로우리스트·수량 상한을 전부 통과해 그대로
-        #    체인에 나간다. 그래서 여기가 유일한 방어선이고, 여기서 막는다.
+        # ⚠️ 자릿수를 재는 검사가 **여기 말고는 없다.** 실발행량이
+        #    `int(amount * 10**decimalPlaces)` 라 자릿수가 곧 배율인데(180 이면 10^180 배),
+        #    CSV 오타 하나가 임포트 검증과 CHECK 제약을 전부 통과해 그대로 체인에 나간다.
+        #    그래서 여기가 유일한 방어선이고, 여기서 막는다.
         #    상한 18 = lib9c 통화의 최대 자릿수(그 이상은 통화 정의가 성립하지 않는다).
         if (
             not isinstance(places, int)

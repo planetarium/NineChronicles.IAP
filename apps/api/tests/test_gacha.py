@@ -16,7 +16,6 @@ from decimal import Decimal
 
 import pytest
 
-from app.grant_guard import GrantGuardViolation, check_fav_tickers, grant_units
 from shared.utils.gacha import (
     GACHA_RESULT_VERSION,
     GachaPoolError,
@@ -171,33 +170,11 @@ class FakeProduct:
         self.fungible_item_list = fungible_item_list or []
 
 
-class TestGrantUnitsCountsTheDrawnEntry:
-    def test_뽑기_상품은_구성품이_비어_있다(self):
-        # 이게 위험의 근원이다: 그대로 세면 발행량 0 이라 모든 수량 상한을 통과한다.
-        assert grant_units(FakeProduct()) == (Decimal(0), 0)
-
-    def test_동결된_claim_의_수량으로_센다(self):
-        # ⚠️ 넘기는 게 풀 행이 아니라 **동결된 claim** 이다 — 워커가 체인에 싣는 게 그 값이라
-        #    "가드가 검사한 바이트"와 "체인에 나가는 바이트"가 같아야 한다.
-        picked = FakeEntry(1, 1, amount=250)
-        claim = build_gacha_result([picked], picked)["claim"]
-        fav, items = grant_units(FakeProduct(), claim)
-        assert items == 250, "뽑기가 수량 상한을 우회하면 안 된다"
-        assert fav == Decimal(0), "v1 풀은 아이템 전용이라 FAV 는 0 이다"
-
-    def test_풀_전체가_아니라_뽑힌_칸만_센다(self):
-        # 풀 전체를 세면 상한이 사실상 0 이 되어 정상 뽑기가 전부 거절된다.
-        pool = [FakeEntry(1, 1, amount=1), FakeEntry(2, 1, amount=9999)]
-        claim = build_gacha_result(pool, pool[0])["claim"]
-        _, items = grant_units(FakeProduct(), claim)
-        assert items == 1
-
-
 # ── 룬스톤·소울스톤·크리스탈 = FAV 축 ─────────────────────────────────────────
 #
 # v1 을 아이템 전용으로 좁힌 건 잘못된 범위였다. 고정 상품은 `fav_list` 로 이미 FAV 를
-# 주고, 뽑기라고 상금 종류가 좁을 이유가 없다. 다만 FAV 는 **얼로우리스트와 별도 수량
-# 상한**을 지나야 하므로, 그 두 가드가 풀을 실제로 본다는 걸 여기서 못박는다.
+# 주고, 뽑기라고 상금 종류가 좁을 이유가 없다. 풀이 FAV 를 담고 추첨·동결까지 가는지를
+# 여기서 못박는다(수량 상한·티커 얼로우리스트는 제거됐다 — grant_guard.py 도커스트링).
 class TestFavPrizes:
     def test_FAV_칸은_자릿수를_그대로_싣는다(self):
         # 아이템과 달리 FAV 는 0 이 아닌 자릿수를 가질 수 있다(CRYSTAL dp=18).
@@ -241,41 +218,6 @@ class TestFavPrizes:
         pool = [FakeEntry(1, 1), fav_entry(2, 1)]
         picked = {draw_entry(pool, rand_below=lambda _n, r=r: r).kind for r in range(2)}
         assert picked == {"ITEM", "FAV"}
-
-    def test_수량은_축별로_따로_센다(self):
-        # 합치면 FAV 상한이 아이템 상한에 흡수된다 — "물약 1,000개 상한이 곧 NCG 1,000
-        #   발행 상한" 이 되는 자리다(grant_units 도커스트링).
-        item = FakeEntry(1, 1, amount=500)
-        fav = fav_entry(2, 1, amount=7)
-        item_claim = build_gacha_result([item], item)["claim"]
-        fav_claim = build_gacha_result([fav], fav)["claim"]
-
-        assert grant_units(FakeProduct(), item_claim) == (Decimal(0), 500)
-        assert grant_units(FakeProduct(), fav_claim) == (Decimal(7), 0)
-
-    def test_뽑힌_FAV_티커가_얼로우리스트를_지난다(self):
-        # 뽑기 상품은 product.fav_list 가 비어 있다. product 만 보면 룬스톤 뽑기가
-        #   화폐 얼로우리스트를 통째로 우회한다.
-        fav = fav_entry(1, 1, ticker="FAV__RUNESTONE_HP")
-        claim = build_gacha_result([fav], fav)["claim"]
-
-        # 허용목록 밖 → 400
-        with pytest.raises(GrantGuardViolation) as denied:
-            check_fav_tickers(FakeProduct(), frozenset({"FAV__CRYSTAL"}), claim)
-        assert denied.value.status_code == 400
-
-        # 허용목록이 비어 있음 → 503(배선 실수일 수 있어 재시도 가능해야 한다)
-        with pytest.raises(GrantGuardViolation) as unset:
-            check_fav_tickers(FakeProduct(), frozenset(), claim)
-        assert unset.value.status_code == 503
-
-        # 열려 있으면 통과
-        check_fav_tickers(FakeProduct(), frozenset({"FAV__RUNESTONE_HP"}), claim)
-
-    def test_아이템_칸은_얼로우리스트와_무관하다(self):
-        item = FakeEntry(1, 1)
-        claim = build_gacha_result([item], item)["claim"]
-        check_fav_tickers(FakeProduct(), frozenset(), claim)  # 안 던진다
 
 
 # ── 10연뽑 ────────────────────────────────────────────────────────────────────
@@ -324,21 +266,5 @@ class TestMultiDraw:
         assert by_ticker["FAV__RUNESTONE_HP"]["amount"] == 200
         assert by_ticker["FAV__RUNESTONE_HP"]["kind"] == "FAV"
 
-    def test_10연_합계가_수량_상한에_걸린다(self):
-        # 상한은 **1 요청** 단위다. 10연은 한 요청이 10회 지급이므로 합으로 재야 한다.
-        pool = [FakeEntry(1, 1, amount=30)]
-        claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]
-        assert grant_units(FakeProduct(), claim) == (Decimal(0), 300)
 
-    def test_여러_칸이_섞인_10연도_합계로_잰다(self):
-        # 1칸 풀이면 claim 이 1줄이라 "합계를 세는가"가 실제로는 미검증이다.
-        a = FakeEntry(1, 1, ticker="Item_NT_400000", amount=30)
-        b = FakeEntry(2, 1, ticker="Item_NT_500000", amount=20)
-        claim = build_gacha_result([a, b], [a] * 6 + [b] * 4)["claim"]
-        assert len(claim) == 2, "서로 다른 티커는 합쳐지지 않는다"
-        assert grant_units(FakeProduct(), claim) == (Decimal(0), 6 * 30 + 4 * 20)
 
-    def test_10연_FAV_도_축별로_합산된다(self):
-        pool = [fav_entry(1, 1, amount=200)]
-        claim = build_gacha_result(pool, draw_entries(pool, 10))["claim"]
-        assert grant_units(FakeProduct(), claim) == (Decimal(2000), 0)

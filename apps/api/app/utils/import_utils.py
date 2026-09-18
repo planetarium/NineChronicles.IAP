@@ -24,7 +24,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.grant_guard import (
-    check_fav_tickers,
     parse_point_shop_grantable,
     validate_point_shop_grantable_eligible,
 )
@@ -330,75 +329,6 @@ def _apply_voucher_row(
             )
 
 
-def _check_grantable_fav_row(
-    db: Session, csv_data: dict, allowed_fav_tickers: frozenset
-) -> None:
-    """
-    (PLD-1575) 이 행이 화이트리스트를 **켜려 할 때** FAV 티커 얼로우리스트를 선검증한다.
-
-    왜 켜는 시점에 보나: 지급 시점(`enforce_grant_guards`)만 보면 임포트는 200 으로 끝나고
-    운영자는 켠 줄 알지만, 실주문이 들어오는 순간 전부 거절된다(그때는 이미 주문이 쌓인 뒤다).
-    백오피스 CRUD(`PUT /admin/point-shop-products`)도 같은 이유로 같은 검사를 한다.
-
-    셀이 TRUE 면 **현재 DB 값과 무관하게** 검사한다(전이 False→True 만 보지 않는다) — 같은 행의
-    `validate_point_shop_grantable_eligible` 과 같은 규칙이고, 시트가 진실 소스라 TRUE 는 "지금
-    켜져 있어야 한다"는 선언이기 때문이다. ⚠️ 운영상 결과: 시트에 TRUE 가 박힌 FAV 상품이 하나라도
-    있으면 그 뒤 **모든** 상품 CSV 임포트(가격·오픈시각 변경 포함)가 허용 티커 설정에 묶인다.
-    그래서 `API_GRANT_ALLOWED_FAV_TICKERS` 주입이 화이트리스트를 켜기 전 배포 순서에 들어간다.
-
-    `process_csv_row`(순수 행 파서) 가 아니라 여기 있는 이유: FAV 구성품은 상품 CSV 행에 없다
-    (`fungible_asset_product` = `fungible-assets/import` 소관) → 세션 없이는 볼 수 없다.
-    세션이 필요한 행 단위 검증은 `_apply_voucher_row` 와 같은 자리에 둔다.
-
-    ⚠️ `GrantGuardViolation`(HTTPException)을 **ValueError 로 감싸지 않는다.** 이 파일의 다른 행
-    검증은 `raise ValueError(f"product {id}: {e.detail}")` 관례를 쓰지만, 그러면 엔드포인트의
-    catch-all 이 전부 400 으로 눌러 버린다 — 허용목록 **미주입은 503**(호출자 잘못이 아니라
-    운영 실수)이라는 지급 시점 규약(계약 v1.2)이 켜는 경로에서도 같아야 한다. `check_fav_tickers`
-    의 detail 에 이미 product id 가 들어 있어 컨텍스트도 잃지 않는다. 예외가 위로 나가면
-    `import_products_from_csv` 가 rollback 하므로 임포트는 통째로 거부된다(voucher 행과 같은 원자성).
-    """
-    if not csv_data.get(POINT_SHOP_GRANTABLE_COLUMN):
-        # 빈칸(=유지)·False(=끄기)는 검사하지 않는다 — 킬스위치를 게이트 뒤에 두면 안 된다.
-        return
-    product_id = csv_data.get("id")
-    if product_id is None:
-        # id 빈칸(신규 autoincrement) — 구성품이 있을 수 없다.
-        return
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if product is None:
-        # 신규 상품(명시 id) — 아직 구성품이 없다(FK 때문에 FAV 행이 먼저 있을 수도 없다).
-        #   FAV 는 뒤이은 fungible-assets 임포트로 붙고, 실주문은 지급 시점 가드가 막는다.
-        # TODO(PLD-1575 후속): `import_fungible_assets_from_csv` 에 대칭 게이트가 없다 —
-        #   **이미 켜진** 상품에 NCG 를 붙이거나 CRYSTAL→NCG 로 갈아치우는 경로가 그대로 열려
-        #   있다(`check_fav_tickers` 도커스트링이 지목한 바로 그 경로). 손대려면 그 엔드포인트
-        #   (`POST /admin/products/fungible-assets/import`)에 `except HTTPException: raise` 가
-        #   없어 503 이 400 문자열로 붕괴하는 것부터 같이 고쳐야 한다.
-        return
-    check_fav_tickers(product, allowed_fav_tickers)
-
-
-def _check_gacha_draw_count_row(db: Session, csv_data: dict, max_item_units, max_fav_units):
-    """
-    이 행이 `gacha_draw_count` 를 실었고 그 상품이 풀을 갖고 있으면 상한을 다시 잰다.
-
-    컬럼이 없는 행(= 추첨 횟수 미변경)은 건너뛴다 — 뽑기와 무관한 상품 임포트마다 풀을
-    조회할 이유가 없다.
-    """
-    if GACHA_DRAW_COUNT_COLUMN not in csv_data:
-        return
-    db.flush()  # 위 update 가 아직 세션에만 있을 수 있다(상한은 **새 값**으로 재야 한다)
-    if (
-        db.query(ProductGachaEntry)
-        .filter(ProductGachaEntry.product_id == csv_data["id"])
-        .first()
-        is None
-    ):
-        return
-    assert_gacha_entry_within_caps(
-        db, csv_data["id"], max_item_units, max_fav_units
-    )
-
-
 def import_products_from_csv(
     db: Session,
     csv_path: str,
@@ -406,9 +336,6 @@ def import_products_from_csv(
     interactive: bool = True,
     voucher_tables: Optional[dict] = None,
     voucher_cap: Optional[int] = None,
-    allowed_fav_tickers: frozenset = frozenset(),
-    max_item_units=None,
-    max_fav_units=None,
 ) -> tuple[int, int]:
     """
     CSV 파일에서 상품 데이터를 가져와 데이터베이스에 임포트합니다.
@@ -418,16 +345,6 @@ def import_products_from_csv(
         csv_path: CSV 파일 경로
         environment: 'internal' 또는 'mainnet'
         interactive: 사용자 입력을 받을지 여부
-        allowed_fav_tickers: (PLD-1575) 지급 허용 FAV 티커. `point_shop_grantable` 을 켜는 행에만
-            쓴다. **미전달 = 빈 집합 = FAV 구성품이 있는 상품은 켤 수 없다**(fail-closed —
-            `grant_guard.parse_fav_tickers` 와 같은 의미). 값의 출처는 설정이고 호출부가 넣는다
-            (voucher_cap 과 같은 규칙 — 이 모듈은 `app.config` 를 임포트하지 않는다).
-        max_item_units / max_fav_units: (PLD-1562) 요청 단위 발행량 상한. `gacha_draw_count`
-            를 바꾸는 행에서 **풀의 수량 상한을 다시 재는 데** 쓴다(그 경로가 없으면
-            1→10 변경이 상한 검사를 통째로 건너뛴다 — 조용한 재추첨의 입구).
-
-    Returns:
-        tuple[int, int]: (처리된 상품 수, 업데이트된 상품 수)
     """
     if environment not in ["internal", "mainnet"]:
         raise ValueError("environment must be either 'internal' or 'mainnet'")
@@ -444,7 +361,6 @@ def import_products_from_csv(
                 csv_data = process_csv_row(row, is_internal)
                 # (PLD-1575) 화이트리스트를 **켜는** 행이면 FAV 티커를 선검증한다 — 켜는 순간
                 #   거절(미주입 503 / 목록 밖 400)이라야 운영자가 그 자리에서 안다.
-                _check_grantable_fav_row(db, csv_data, allowed_fav_tickers)
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
                 # (PLD-1562) 🔴 `gacha_draw_count` 가 바뀌면 **풀의 수량 상한을 다시 잰다.**
@@ -453,9 +369,6 @@ def import_products_from_csv(
                 #   이 경로는 **한 번도 안 돌고**, 그 뒤 `amount × 10 > cap` 인 칸이 뽑힌
                 #   10연만 지급 시점에 400 이 된다 — 그 400 이 곧 조용한 재추첨이다
                 #   (행이 안 생겨 포탈 재시도가 멱등에 안 걸리고 다시 뽑는다).
-                _check_gacha_draw_count_row(
-                    db, csv_data, max_item_units, max_fav_units
-                )
                 # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).
                 _apply_voucher_row(
                     db,
@@ -854,91 +767,6 @@ def assert_not_mixed_components(db: Session, product_id: int) -> None:
         )
 
 
-def assert_gacha_entry_within_caps(
-    db: Session, product_id: int, max_item_units, max_fav_units=None
-) -> None:
-    """
-    풀의 **모든 칸**이 요청 단위 수량 상한 안인지. 상한이 미설정(None)이면 검사하지 않는다.
-
-    ⚠️ FAV 칸은 **FAV 상한**으로 잰다. 아이템 상한으로 재면 "물약 1,000개를 허용하려고
-       올린 상한이 NCG 1,000 발행을 허용한다"가 등록 시점에 그대로 재현된다.
-
-    ⚠️ 이게 없으면 "임포트는 200 인데 **그 칸에 당첨된 유저만** 400" 이 된다. 확률이 낮은
-       칸일수록 늦게 발견되고, 운영에는 저빈도 거절 알림만 보여 공격처럼 읽힌다.
-       같은 함정을 FAV 티커에서 이미 겪고 선례를 만들어 뒀다(admin.py 의
-       "임포트는 200 인데 실주문이 전부 거절되는 상태를 만들지 않는다").
-
-    ⚠️ (10연) 상한은 **1 요청** 단위인데 10연은 한 요청이 10회 지급이다. 같은 칸이 10번
-       뽑히면 합산되므로 최악은 `amount x draw_count` — 그 배수로 재야 "운 좋은 10연만
-       400" 이 안 생긴다.
-    """
-    caps = {GACHA_KIND_ITEM: max_item_units, GACHA_KIND_FAV: max_fav_units}
-    product = db.query(Product).filter(Product.id == product_id).first()
-    draws = int(getattr(product, "gacha_draw_count", 1) or 1)
-    over = []
-    for entry in (
-        db.query(ProductGachaEntry)
-        .filter(ProductGachaEntry.product_id == product_id)
-        .all()
-    ):
-        cap = caps.get(entry.kind)
-        # 10연은 한 요청이 10회 지급이라 최악의 경우 amount × draw_count 가 나간다.
-        worst = int(entry.amount) * draws
-        if cap is not None and worst > cap:
-            over.append((entry, cap, worst))
-    if over:
-        names = ", ".join(
-            f"{e.name}[{e.kind}](x{e.amount}*{draws}={worst}>{cap})"
-            for e, cap, worst in over
-        )
-        raise ValueError(
-            f"product {product_id} 뽑기 칸의 수량이 요청 단위 상한을 넘는다: {names}"
-            " — 그 칸에 당첨된 유저만 지급이 거절된다"
-        )
-
-
-def assert_gacha_fav_tickers_allowed(db: Session, product_id: int, allowed) -> None:
-    """
-    풀의 FAV 칸 티커가 **지급 허용목록 안**인지. 등록 시점에 막는다.
-
-    ⚠️ 이게 없으면 지급 시점에 `check_fav_tickers` 가 그 칸에 당첨된 주문만 거절하는데,
-       그 거절은 "그 주문만 멈춤"이 아니라 **조용한 재추첨**이다 — 추첨이 아웃박스 행보다
-       먼저라 거절 시 행이 없고, 포탈 재시도가 멱등에 안 걸려 다시 뽑는다. 공시 확률이
-       차단 칸을 빼고 재정규화되고(화면 99% 인데 실제 분포가 다르다) 로그도 안 남는다.
-       그래서 **닫힌 티커는 아예 등록되지 않게** 한다.
-
-    ⚠️ 허용목록이 비어 있으면 FAV 칸 등록 자체를 막는다(배선 실수일 수 있으니 메시지로
-       구분한다). 화폐 발행은 "실수로 열려 있는" 상태가 없어야 하고, 그 규칙은 등록에도
-       같이 적용된다.
-
-    ⚠️ 남는 리스크: 등록 뒤에 티커를 닫으면 다시 재추첨 경로가 열린다. 티커를 닫을 때는
-       그 상품을 `point_shop_grantable=false` 로 같이 내릴 것(런북).
-    """
-    fav_tickers = {
-        e.ticker
-        for e in db.query(ProductGachaEntry)
-        .filter(
-            ProductGachaEntry.product_id == product_id,
-            ProductGachaEntry.kind == GACHA_KIND_FAV,
-        )
-        .all()
-    }
-    if not fav_tickers:
-        return
-    if not allowed:
-        raise ValueError(
-            f"product {product_id} 뽑기 풀에 FAV 칸({sorted(fav_tickers)})이 있는데"
-            " 지급 허용 티커 목록(grant_allowed_fav_tickers)이 비어 있다"
-            " — 티커를 열거나 FAV 칸을 빼야 한다"
-        )
-    denied = sorted(fav_tickers - set(allowed))
-    if denied:
-        raise ValueError(
-            f"product {product_id} 뽑기 풀의 FAV 티커 {denied} 는 지급 허용목록 밖이다"
-            f" (허용: {sorted(allowed)}) — 그 칸에 당첨되면 지급이 거절되고 재추첨된다"
-        )
-
-
 def _row_ticker(row: dict) -> str:
     """CSV 행의 티커. `fungible_item_id` 는 옛 컬럼명이다(불일치는 행 단위 검사가 끊는다)."""
     return (row.get("ticker") or row.get("fungible_item_id") or "").strip()
@@ -1242,9 +1070,6 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
 def import_gacha_entries_from_csv(
     db: Session,
     csv_path: str,
-    max_item_units=None,
-    max_fav_units=None,
-    allowed_fav_tickers=None,
     summary_out: Optional[list] = None,
 ) -> Tuple[int, int]:
     """
@@ -1253,8 +1078,6 @@ def import_gacha_entries_from_csv(
     ⚠️ 임포트가 끝나고 **등록 시점 검증 2종**을 돈다(둘 다 지급 시점에만 걸리면 유저가
        포인트를 쓴 뒤에 실패하는 것들이다):
          · 고정 구성품과의 배타 — assert_not_mixed_components
-         · 요청 단위 수량 상한   — assert_gacha_entry_within_caps
-         · FAV 지급 허용목록     — assert_gacha_fav_tickers_allowed (재추첨 차단)
        실패는 전체 롤백이다(부분 반영된 풀은 확률이 기획과 다른 표가 된다).
     """
     processed_count = 0
@@ -1282,10 +1105,6 @@ def import_gacha_entries_from_csv(
         db.flush()
         for product_id in touched_products:
             assert_not_mixed_components(db, product_id)
-            assert_gacha_entry_within_caps(
-                db, product_id, max_item_units, max_fav_units
-            )
-            assert_gacha_fav_tickers_allowed(db, product_id, allowed_fav_tickers)
 
         db.commit()
         print(
