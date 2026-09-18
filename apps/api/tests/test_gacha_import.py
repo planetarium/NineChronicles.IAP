@@ -469,3 +469,113 @@ class TestPointPayableKinds:
             os.unlink(path)
         sess.refresh(product)
         assert product.point_payable_kinds == 'NCG'
+
+
+class TestSlotKey:
+    """
+    칸의 정체성은 **표에서의 자리**(`slot_key`)지 산출물(`ticker`)이 아니다.
+
+    상품표 v0.9 §1.1 의 재료 티어가 "아이템 5종 × 수량 2단계 = 9칸"이라, 티커를 축으로
+    두면 두 번째 행이 첫 번째를 **조용히 덮어써** 9칸 표가 5칸이 된다. 임포트는 성공하고
+    확률만 기획과 달라지므로, 표현 자체가 되는지를 여기서 못 박는다.
+    """
+
+    def test_같은_아이템을_수량만_다르게_두_칸(self, sess, product):
+        # 상품표의 모래시계 두 칸(8,000개 21% / 25,000개 6%) 그대로.
+        header = HEADER + ",slot_key\n"
+        content = header + "\n".join(
+            [
+                "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,mat_hourglass_s",
+                "900,Hourglass,600,ITEM,Item_NT_400000,25000,400000,0,mat_hourglass_l",
+            ]
+        ) + "\n"
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+            f.write(content)
+            path = f.name
+        try:
+            processed, changed = import_gacha_entries_from_csv(sess, path)
+        finally:
+            os.unlink(path)
+
+        assert (processed, changed) == (2, 2)
+        rows = sorted(entries(sess), key=lambda e: e.weight)
+        assert [(e.slot_key, e.amount, e.weight) for e in rows] == [
+            ("mat_hourglass_l", 25000, 600),
+            ("mat_hourglass_s", 8000, 2100),
+        ]
+
+    def test_slot_key_없는_시트는_티커가_키다(self, sess, product):
+        run_import(sess, [ITEM_ROW])
+        assert entries(sess)[0].slot_key == "Item_NT_400000"
+        # 멱등 — 옛 시트를 다시 올려도 칸이 늘지 않는다.
+        run_import(sess, [ITEM_ROW])
+        assert len(entries(sess)) == 1
+
+    def test_slot_key_를_처음_붙이면_기존_칸을_입양한다(self, sess, product):
+        """옛 시트에 이름표를 붙이는 첫 재임포트가 **칸을 복제하면 안 된다.**
+
+        그냥 INSERT 하면 22칸 표가 44칸이 되고 확률이 절반으로 어긋난다 — 이 변경이
+        만들 수 있는 가장 흔한 사고라 여기서 막는다.
+        """
+        run_import(sess, [ITEM_ROW])  # slot_key = ticker 로 들어간다
+        before = entries(sess)[0].id
+
+        header = HEADER + ",slot_key\n"
+        content = header + "900,Hourglass,100,ITEM,Item_NT_400000,30,400000,0,mat_hourglass_s\n"
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_gacha_entries_from_csv(sess, path)
+        finally:
+            os.unlink(path)
+
+        rows = entries(sess)
+        assert len(rows) == 1, "칸이 복제됐다 — 확률이 절반으로 어긋난다"
+        assert rows[0].id == before  # 같은 칸 그대로, 이름표만 바뀜
+        assert rows[0].slot_key == "mat_hourglass_s"
+
+    def test_입양은_한_번뿐이다(self, sess, product):
+        """입양이 무제한이면 같은 티커의 **두 번째 칸을 영원히 못 만든다.**"""
+        run_import(sess, [ITEM_ROW])
+
+        header = HEADER + ",slot_key\n"
+        content = header + "\n".join(
+            [
+                "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,mat_hourglass_s",
+                "900,Hourglass,600,ITEM,Item_NT_400000,25000,400000,0,mat_hourglass_l",
+            ]
+        ) + "\n"
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_gacha_entries_from_csv(sess, path)
+        finally:
+            os.unlink(path)
+
+        rows = sorted(entries(sess), key=lambda e: e.weight)
+        assert len(rows) == 2
+        assert [e.slot_key for e in rows] == ["mat_hourglass_l", "mat_hourglass_s"]
+
+    def test_같은_칸의_산출물_교체는_갱신이다(self, sess, product):
+        """수량·티커를 바꿔도 **칸은 그대로** — 이게 안 A(UNIQUE 에 amount 추가)와의 차이다."""
+        header = HEADER + ",slot_key\n"
+
+        def run(row):
+            with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+                f.write(header + row + "\n")
+                path = f.name
+            try:
+                return import_gacha_entries_from_csv(sess, path)
+            finally:
+                os.unlink(path)
+
+        run("900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,mat_slot_1")
+        before = entries(sess)[0].id
+        run("900,AP Stone,2100,ITEM,Item_NT_500000,25,500000,0,mat_slot_1")
+
+        rows = entries(sess)
+        assert len(rows) == 1
+        assert rows[0].id == before
+        assert (rows[0].ticker, rows[0].amount) == ("Item_NT_500000", 25)
