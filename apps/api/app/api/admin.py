@@ -517,19 +517,6 @@ def import_fungible_items_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _touched_gacha_products(csv_content: str) -> set:
-    """CSV 가 건드린 product_id. 임포트 후 풀 요약을 남기는 데만 쓴다(검증은 임포터가 한다)."""
-    import csv as _csv
-    import io as _io
-
-    ids = set()
-    for row in _csv.DictReader(_io.StringIO(csv_content or "")):
-        raw = (row.get("product_id") or "").strip()
-        if raw.isdigit():
-            ids.add(int(raw))
-    return ids
-
-
 @router.post("/products/gacha/import")
 def import_gacha_entries_endpoint(
     request: ImportGachaEntriesRequest, sess=Depends(session)
@@ -555,6 +542,14 @@ def import_gacha_entries_endpoint(
         말 것** — 거절된다. 그대로 들어가면 칸이 복제돼 공시 확률이 절반이 된다
       · 칸 이름을 티커(`Item_...`/`FAV__...`)로 짓지 말 것 — 다른 칸을 덮어쓴다
 
+    ### 칸을 빼거나 산출물을 바꾸려면
+      · **빼기**: 이 API 에는 삭제가 없다. DB 에서 먼저 지우고 나머지를 올린다.
+        (전환 중인 상품에 "빼려는 칸을 뺀 시트" 를 올리면 위 커버 규칙이 거절한다)
+      · **산출물 교체**: 칸 이름을 유지한 채 `ticker`/`amount` 만 바꾸면 **갱신**이다.
+        임시 아이템으로 열어 둔 칸을 진짜 ID 로 바꿀 때가 이 경우다
+      · 커버 규칙은 **아직 칸 이름이 없는 칸이 남아 있는 동안만** 문다. 전환이 끝난 뒤에는
+        일부 칸만 담은 시트가 그냥 통과한다(그 칸들만 갱신, 나머지는 그대로)
+
     ⚠️ FAV 칸을 넣으려면 `grant_allowed_fav_tickers` 에 그 티커가 열려 있어야 한다.
        닫혀 있으면 그 칸에 당첨된 주문이 **503** 으로 멈춘다(화폐 발행은 명시적으로만 연다).
 
@@ -577,36 +572,42 @@ def import_gacha_entries_endpoint(
 
         try:
             _limits = limits_from_settings(config)
+            touched: set = set()
             processed_count, changed_count = import_gacha_entries_from_csv(
                 sess,
                 temp_path,
                 _limits.max_item_units_per_request,
                 _limits.max_fav_units_per_request,
                 _limits.allowed_fav_tickers,
+                touched_out=touched,
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
             #   화이트리스트 플래그 하나 켜는 데도 알림을 남기는 선례와 맞춘다.
             if changed_count:
-                # 변경 건수만으로는 사고(칸 복제·칸 합쳐짐)를 알아챌 수 없다 — 그때도
-                #   건수는 정상값이다. **칸 수와 Σweight** 가 확률을 바꾸는 사고를 한 줄로
-                #   드러내므로 같이 싣는다.
-                pools = "; ".join(
-                    gacha_pool_summary(sess, pid)
-                    for pid in sorted(_touched_gacha_products(request.csv_content))
-                )
-                logger.info(
-                    "gacha_pool_import",
-                    processed=processed_count,
-                    changed=changed_count,
-                    pools=pools,
-                )
-                send_slack_alert(
-                    config.iap_alert_webhook_url,
-                    f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
-                    f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
-                    f"\n{pools} ({config.stage})",
-                )
+                # ⚠️ 임포트는 **이미 커밋됐다.** 감사용 코드가 본작업을 실패로 만들면 안 되므로
+                #   여기서 나는 예외는 삼킨다(로그만 남긴다).
+                try:
+                    # 변경 건수만으로는 사고(칸 복제·칸 합쳐짐)를 알아챌 수 없다 — 그때도
+                    #   건수는 정상값이다. **칸 수와 Σweight** 가 확률을 바꾸는 사고를 한 줄로
+                    #   드러내므로 같이 싣는다.
+                    pools = "; ".join(
+                        gacha_pool_summary(sess, pid) for pid in sorted(touched)
+                    )
+                    logger.info(
+                        "gacha_pool_import",
+                        processed=processed_count,
+                        changed=changed_count,
+                        pools=pools,
+                    )
+                    send_slack_alert(
+                        config.iap_alert_webhook_url,
+                        f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
+                        f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
+                        f"\n{pools} ({config.stage})",
+                    )
+                except Exception:
+                    logger.exception("gacha_pool_import_alert_failed")
             return {
                 "message": "뽑기 풀 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,

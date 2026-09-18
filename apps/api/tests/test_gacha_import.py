@@ -692,3 +692,44 @@ class TestSlotKeyGuards:
             ("mat_hourglass_s", 8000, 2100),
             ("mat_hourglass_l", 25000, 600),
         }
+
+    def test_무키_시트의_중복_티커도_거절(self, sess, product):
+        """이 티켓의 **원래 사고** — 재료 9행을 쓰면서 slot_key 컬럼을 깜빡한 경우다.
+
+        실효 키(티커 폴백) 기준으로 안 보면 3행이 2칸이 되고, 임포트는 (3, 3) 으로
+        성공을 돌려준다.
+        """
+        with pytest.raises(ValueError, match="두 번"):
+            run_import(
+                sess,
+                [
+                    "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0",
+                    "900,Hourglass,600,ITEM,Item_NT_400000,25000,400000,0",
+                    "900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0",
+                ],
+            )
+        assert entries(sess) == []
+
+    def test_이번_임포트가_만든_칸은_입양당하지_않는다(self, sess, product):
+        """"기존 칸은 이름을 티커 그대로 두고 새 칸만 이름 붙인다" 가 주 경로다.
+
+        새로 INSERT 된 칸(slot_key == ticker)을 뒤 행이 입양하면 두 행이 한 칸으로
+        합쳐진다 — 행 순서만 바꿔도 결과가 달라지는 종류의 버그다.
+        """
+        run_import(sess, ["900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0"])
+        run_keyed(
+            sess,
+            [
+                "900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0,mat_ap",
+                # 칸 이름을 자기 티커로 둔 신규 행 — 폴백과 구분되지 않는다
+                "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,Item_NT_400000",
+                "900,Hourglass,600,ITEM,Item_NT_400000,25000,400000,0,mat_hourglass_l",
+            ],
+        )
+        rows = sorted(entries(sess), key=lambda e: e.slot_key)
+        assert [(e.slot_key, e.amount) for e in rows] == [
+            ("Item_NT_400000", 8000),
+            ("mat_ap", 25),
+            ("mat_hourglass_l", 25000),
+        ], "칸이 합쳐졌다 — Σweight 가 줄어 확률이 통째로 바뀐다"
+        assert sum(e.weight for e in rows) == 4500
