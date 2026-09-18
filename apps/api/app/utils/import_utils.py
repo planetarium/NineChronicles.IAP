@@ -9,6 +9,8 @@ from shared.models.product import (
     Price,
     GACHA_KIND_FAV,
     GACHA_KIND_ITEM,
+    PAYABLE_ANY,
+    PAYABLE_NCG,
     Product,
     ProductAssetUISize,
     ProductGachaEntry,
@@ -41,6 +43,17 @@ POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
 POINT_PRICE_COLUMN = "point_price"
 # (PLD-1562) 10연뽑. 헤더 없음=유지 / 빈칸=유지 / 값=1 이상 정수.
 GACHA_DRAW_COUNT_COLUMN = "gacha_draw_count"
+# (PLD-1564) 결제 가능 포인트 종류. 헤더 없음/빈칸=유지 / 'ANY'|'NCG'.
+POINT_PAYABLE_KINDS_COLUMN = "point_payable_kinds"
+#: CSV 입력 → 저장값. 문서 어휘(PP-X)와 코드 어휘(NCG)를 **둘 다 받고 하나로 저장**한다.
+PAYABLE_ALIASES = {
+    PAYABLE_ANY: PAYABLE_ANY,
+    "BOTH": PAYABLE_ANY,  # "PP-S·PP-X 모두" 를 그대로 옮겨 적는 경우
+    PAYABLE_NCG: PAYABLE_NCG,
+    "PP_X": PAYABLE_NCG,
+    "PP-X": PAYABLE_NCG,
+    "PPX": PAYABLE_NCG,
+}
 # 추첨은 전역 advisory lock 안에서 돈다 — 큰 값은 그 구간을 늘려 모든 지급 요청을 줄 세우고
 # 결과 JSON 도 주문마다 영구 저장된다. 실무상 10연이 최대이므로 넉넉히 100.
 MAX_GACHA_DRAW_COUNT = 100
@@ -117,6 +130,24 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
+
+    # (PLD-1564) 결제 가능 포인트 종류. **선택 컬럼 + 3상태**다 — 헤더 없음/빈칸은 유지.
+    #   2상태로 읽으면 이 컬럼 없는 기존 시트를 재임포트하는 순간 가챠의 'NCG' 제약이
+    #   조용히 'ANY' 로 풀린다. 그건 봇이 무상 포인트로 가챠를 도는 문이 열리는 것이다.
+    if POINT_PAYABLE_KINDS_COLUMN in row:
+        raw = (row.get(POINT_PAYABLE_KINDS_COLUMN) or "").strip().upper()
+        if raw:
+            # 기획 문서는 PP-S / **PP-X** 로 말하고 값을 넣는 사람은 그 문서를 본다.
+            #   저장은 `NCG` 하나로 하되(코드의 RewardKind 와 같은 이름) **입력은 문서 어휘도
+            #   받는다** — 번역이 필요한 경계가 곧 실수가 나는 자리다.
+            #   반대 방향(PP_S)은 별칭을 두지 않는다: 'PP_S 전용' 값 자체가 없다.
+            canonical = PAYABLE_ALIASES.get(raw)
+            if canonical is None:
+                raise ValueError(
+                    f"product {csv_data['id']}: {POINT_PAYABLE_KINDS_COLUMN} 는"
+                    f" {sorted(PAYABLE_ALIASES)} 중 하나여야 한다 (got {raw!r})"
+                )
+            csv_data[POINT_PAYABLE_KINDS_COLUMN] = canonical
 
     # (PLD-1562) 10연뽑. **선택 컬럼**이다 — 헤더가 없으면 건드리지 않는다(기존 시트가
     #   전 상품의 추첨 횟수를 1 로 되돌리면 10연이 조용히 단연이 된다).

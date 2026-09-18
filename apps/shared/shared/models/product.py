@@ -28,6 +28,11 @@ category_product_table = Table(
 )
 
 
+#: 포인트샵 결제 가능 포인트 종류(product.point_payable_kinds).
+#:   ANY = 무상 포인트(PP_S)로도 결제 가능 / NCG = 현금화 가능 포인트로만.
+PAYABLE_ANY = "ANY"
+PAYABLE_NCG = "NCG"
+
 class Category(AutoIdMixin, TimeStampMixin, Base):
     """
     Category is opened when all following conditions are met:
@@ -142,6 +147,24 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
             " ⚠️ 포인트 차감·환급은 여전히 **포탈**이 한다(포인트 원장은 포탈 소유). IAP 는 값만 안다."
             " ⚠️ 뽑기(PLD-1562)의 풀·확률도 상품 정의라 IAP 에 둔다 — 상금표는 **지급하는 쪽**에"
             "    둔다는 원칙이다(복권 상금은 NCG 라 포탈이 지급하므로 표가 포탈에 있다)."
+        ),
+    )
+    point_payable_kinds = Column(
+        Text,
+        CheckConstraint(f"point_payable_kinds in ('{PAYABLE_ANY}', '{PAYABLE_NCG}')"),
+        nullable=False,
+        server_default=PAYABLE_ANY,
+        doc=(
+            "이 상품을 **어떤 포인트로 살 수 있는가**."
+            " 'ANY' = 무상 포인트(PP_S)도 가능 / 'NCG' = 현금화 가능 포인트로만."
+            " 기획 문서의 'PP-X 전용'(가챠·확정교환)이 'NCG', 'PP-S·PP-X 모두'(주간·아카이브)가"
+            " 'ANY' 다(PP-X = 기존 포탈 포인트 = 우리 NCG)."
+            " ⚠️ 이건 **확률보다 강한 가드**다 — 가챠를 NCG 전용으로 두면 체크인 적립만 하는"
+            "    층(봇 주 서식지)이 가챠에 아예 못 닿는다. 무상 포인트로 살 수 있게 두는 순간"
+            "    그 방어가 통째로 사라진다."
+            " ⚠️ 'PP_S 전용' 값은 **두지 않는다**. 필요한 적이 없고, 있으면 '현금화 가능 포인트를"
+            "    가진 유저가 못 사는 상품'이라는 설정 실수의 자리만 생긴다."
+            " ⚠️ 강제는 **포탈**이 한다(차감이 포탈 원장이라). IAP 는 값만 안다 — point_price 와 같다."
         ),
     )
     point_shop_grantable = Column(

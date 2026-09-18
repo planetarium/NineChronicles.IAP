@@ -372,3 +372,100 @@ class TestDrawCountColumn:
             run_product_import(sess, [product_row(draws)])
             sess.refresh(product)
             assert product.gacha_draw_count == draws
+
+
+# ── (PLD-1564) 결제 가능 포인트 종류 ─────────────────────────────────────────
+#
+# 기획이 "가챠·확정교환 = PP-X 전용" 을 **확률보다 강한 가드**로 쓴다(상품표 v0.9 부록 C.5):
+# 가챠를 현금화 가능 포인트로만 살 수 있게 두면 체크인 적립만 하는 층(봇 주 서식지)이
+# 가챠에 아예 못 닿는다. 그래서 이 값이 조용히 풀리는 경로가 없어야 한다.
+class TestPointPayableKinds:
+    def test_기본은_ANY_다(self, sess, product):
+        run_product_import(sess, [product_row(1)])
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'ANY'
+
+    def test_NCG_전용으로_켤_수_있다(self, sess, product):
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + ',NCG\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'NCG'
+
+    def test_헤더가_없으면_기존_값을_유지한다(self, sess, product):
+        # ⚠️ 2상태로 읽으면 이 컬럼 없는 기존 시트 재임포트가 가챠의 NCG 제약을 조용히
+        #    'ANY' 로 푼다 — 봇이 무상 포인트로 가챠를 도는 문이 열린다.
+        product.point_payable_kinds = 'NCG'
+        sess.commit()
+        run_product_import(sess, [product_row(1)])  # 컬럼 없는 시트
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'NCG'
+
+    def test_빈칸도_기존_값을_유지한다(self, sess, product):
+        product.point_payable_kinds = 'NCG'
+        sess.commit()
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + ',\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'NCG'
+
+    @pytest.mark.parametrize('alias', ['PP_X', 'PP-X', 'PPX', 'pp_x'])
+    def test_문서_어휘_PP_X_도_받는다(self, sess, product, alias):
+        # 값을 넣는 사람은 기획 문서(PP-S/PP-X)를 본다. 번역이 필요한 경계가 실수의 자리다.
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + f',{alias}\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'NCG', '저장은 코드 어휘 하나로'
+
+    def test_BOTH_은_ANY_로_저장된다(self, sess, product):
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + ',BOTH\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'ANY'
+
+    @pytest.mark.parametrize('bad', ['PP_S', 'ncg2', 'X', 'CASH'])
+    def test_모르는_값은_거절(self, sess, product, bad):
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + f',{bad}\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            with pytest.raises(ValueError, match='point_payable_kinds'):
+                import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+
+    def test_소문자도_받는다(self, sess, product):
+        content = PRODUCT_HEADER + ',point_payable_kinds\n' + product_row(1) + ',ncg\n'
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.csv') as f:
+            f.write(content)
+            path = f.name
+        try:
+            import_products_from_csv(sess, path, 'internal', interactive=False)
+        finally:
+            os.unlink(path)
+        sess.refresh(product)
+        assert product.point_payable_kinds == 'NCG'
