@@ -1651,18 +1651,24 @@ class TestWhitelistCsvImport:
 # 실제로 부르는가"가 하나도 안 잡힌다 — 민터 경로의 배선은 엔드포인트에서 못박아야 한다.
 def make_gacha_product(sess, *, entries, name="gacha", with_item=False, **kwargs):
     """
-    풀을 가진 상품. `entries` = [(이름, weight, 티커, amount), ...]
+    풀을 가진 상품. `entries` = [(이름, weight, 티커, amount), ...] 또는
+    [(이름, weight, 티커, amount, slot_key), ...].
     티커가 `FAV__` 로 시작하면 FAV 칸으로 만든다(**테스트 편의일 뿐** — 실제 kind 는
     CSV/DB 의 명시 값이고, 코드가 접두어로 추론하지 않는다).
+
+    slot_key 를 생략하면 티커를 쓴다. **명시할 수 있어야 하는 이유**: 상품표의 재료 티어는
+    같은 아이템을 수량만 다르게 여러 칸 두므로(모래시계 8,000/25,000), 티커로 고정하면
+    그 구성을 테스트로 표현조차 못 한다.
     """
     product = make_product(sess, with_item=with_item, name=name, **kwargs)
-    for entry_name, weight, ticker, amount in entries:
+    for entry in entries:
+        entry_name, weight, ticker, amount = entry[:4]
+        slot_key = entry[4] if len(entry) > 4 else ticker
         is_fav = ticker.startswith("FAV__")
         sess.add(
             ProductGachaEntry(
                 product_id=product.id,
-                # 칸 키는 운영이 정하는 값이지만 테스트는 티커로 충분하다(한 티커 한 칸).
-                slot_key=ticker,
+                slot_key=slot_key,
                 name=entry_name,
                 weight=weight,
                 kind="FAV" if is_fav else "ITEM",
@@ -1678,6 +1684,39 @@ def make_gacha_product(sess, *, entries, name="gacha", with_item=False, **kwargs
 
 
 class TestGachaGrant:
+    def test_같은_아이템의_수량_2단계_칸이_지급까지_간다(self, client, sess):
+        """
+        상품표 v0.9 재료 티어의 실제 모양 — 같은 티커, 다른 수량, 다른 칸.
+
+        추첨 후 `aggregate_claim` 이 **티커로 합산**하므로 claim 은 한 줄이 되고, 수량
+        상한(`assert_gacha_entry_within_caps`)은 칸별 최대 수량으로 재므로 합산이 상한을
+        넘지 않는다. 이 불변식이 깨지면 10연에서 상한을 조용히 넘는 지급이 생긴다.
+        """
+        product = make_gacha_product(
+            sess,
+            entries=[
+                ("모래시계", 2100, "Item_NT_400000", 8000, "mat_hourglass_s"),
+                ("모래시계", 600, "Item_NT_400000", 25000, "mat_hourglass_l"),
+            ],
+        )
+        product.gacha_draw_count = 10
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 201
+        result = resp.json()["drawResult"]
+        assert result["drawCount"] == 10
+        # 풀 스냅샷은 **두 칸 그대로** — 한 칸으로 합쳐지면 확률 공시가 틀린다.
+        assert sorted(s["slotKey"] for s in result["pool"]) == [
+            "mat_hourglass_l",
+            "mat_hourglass_s",
+        ]
+        assert {s["amount"] for s in result["pool"]} == {8000, 25000}
+        # claim 은 티커 단위라 한 줄로 합산된다.
+        assert [c["ticker"] for c in result["claim"]] == ["Item_NT_400000"]
+        assert result["claim"][0]["amount"] == sum(d["amount"] for d in result["draws"])
+
     def test_뽑기_요청은_결과를_동결해_돌려준다(self, client, sess):
         product = make_gacha_product(
             sess, entries=[("레어", 1, "Item_NT_400000", 3)]
