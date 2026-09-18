@@ -1661,6 +1661,8 @@ def make_gacha_product(sess, *, entries, name="gacha", with_item=False, **kwargs
         sess.add(
             ProductGachaEntry(
                 product_id=product.id,
+                # 칸 키는 운영이 정하는 값이지만 테스트는 티커로 충분하다(한 티커 한 칸).
+                slot_key=ticker,
                 name=entry_name,
                 weight=weight,
                 kind="FAV" if is_fav else "ITEM",

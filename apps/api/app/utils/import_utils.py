@@ -43,6 +43,9 @@ POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
 POINT_PRICE_COLUMN = "point_price"
 # (PLD-1562) 10연뽑. 헤더 없음=유지 / 빈칸=유지 / 값=1 이상 정수.
 GACHA_DRAW_COUNT_COLUMN = "gacha_draw_count"
+# (PLD-1562) 뽑기 풀 칸의 정체성. 헤더 없음/빈칸=티커를 키로(옛 시트 호환).
+#   값을 주면 **같은 티커를 수량만 다르게 여러 칸** 둘 수 있다(상품표 v0.9 재료 티어).
+GACHA_SLOT_KEY_COLUMN = "slot_key"
 # (PLD-1564) 결제 가능 포인트 종류. 헤더 없음/빈칸=유지 / 'ANY'|'NCG'.
 POINT_PAYABLE_KINDS_COLUMN = "point_payable_kinds"
 #: CSV 입력 → 저장값. 문서 어휘(PP-X)와 코드 어휘(NCG)를 **둘 다 받고 하나로 저장**한다.
@@ -934,7 +937,7 @@ def assert_gacha_fav_tickers_allowed(db: Session, product_id: int, allowed) -> N
 
 
 def process_gacha_entry_row(db: Session, row: dict) -> bool:
-    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, ticker) — 테이블 UNIQUE 와 같다."""
+    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, slot_key) — 테이블 UNIQUE 와 같다."""
     weight = parse_int((row.get("weight") or "").replace(",", ""))
     amount = parse_int((row.get("amount") or "").replace(",", ""))
     product_id = parse_int(row["product_id"])
@@ -961,14 +964,33 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
     if not ticker:
         raise ValueError(f"gacha product {product_id}: ticker 가 비어 있다")
 
+    # `slot_key` 는 **칸의 정체성**이고 티커는 산출물이다. 컬럼이 없거나 빈칸이면 티커를
+    #   키로 쓴다 — 옛 시트가 그대로 돌아야 하고, 마이그레이션이 기존 행을 정확히 그 값
+    #   (slot_key = ticker)으로 백필해 뒀다.
+    slot_key = (row.get(GACHA_SLOT_KEY_COLUMN) or "").strip() or ticker
     existing = (
         db.query(ProductGachaEntry)
         .filter(
             ProductGachaEntry.product_id == product_id,
-            ProductGachaEntry.ticker == ticker,
+            ProductGachaEntry.slot_key == slot_key,
         )
         .first()
     )
+    if existing is None and slot_key != ticker:
+        # 옛 시트에 slot_key 를 **처음 붙이는** 재임포트. 그냥 INSERT 하면 22칸 표가 44칸이
+        #   되고 확률이 절반으로 어긋난다(가장 흔한 사고 경로다). 아직 아무도 이름표를 붙이지
+        #   않은 칸(slot_key == ticker)이 있으면 그 칸을 **입양**해 이름표만 갈아 끼운다.
+        #   한 번 입양되면 slot_key != ticker 라 다음 행이 같은 칸을 또 집을 수 없다 —
+        #   그래서 같은 티커의 두 번째 칸은 정상적으로 새로 생긴다.
+        existing = (
+            db.query(ProductGachaEntry)
+            .filter(
+                ProductGachaEntry.product_id == product_id,
+                ProductGachaEntry.ticker == ticker,
+                ProductGachaEntry.slot_key == ProductGachaEntry.ticker,
+            )
+            .first()
+        )
     # 빈칸이면 기존 행의 kind 유지, 신규면 ITEM(옛 시트 하위호환).
     kind = raw_kind or (existing.kind if existing else GACHA_KIND_ITEM)
     sheet_item_id = parse_int((row.get("sheet_item_id") or "").strip() or "0") or None
@@ -1010,6 +1032,7 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
 
     csv_data = {
         "product_id": product_id,
+        "slot_key": slot_key,
         "name": row["name"],
         "weight": weight,
         "kind": kind,
@@ -1029,7 +1052,7 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
             return False
         print(
             f"\n🔍 Gacha entry (product {csv_data['product_id']} /"
-            f" {csv_data['ticker']}) 변경:"
+            f" 칸 {csv_data['slot_key']}) 변경:"
         )
         for field, (old, new) in changes.items():
             print(f"  - {field}: 기존({old}) → 변경({new})")
@@ -1039,7 +1062,8 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
     db.add(ProductGachaEntry(**csv_data))
     print(
         f"🆕 Gacha entry 추가: product {csv_data['product_id']} /"
-        f" [{csv_data['kind']}] {csv_data['ticker']} x{csv_data['amount']}"
+        f" 칸 {csv_data['slot_key']} = [{csv_data['kind']}] {csv_data['ticker']}"
+        f" x{csv_data['amount']}"
         f" (weight {csv_data['weight']})"
     )
     return True
