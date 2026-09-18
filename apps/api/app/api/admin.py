@@ -64,7 +64,6 @@ from app.grant_guard import (
 from app.utils import verify_token
 from app.utils.apple import get_tx_ids
 from app.utils.import_utils import (
-    gacha_pool_summary,
     import_category_products_from_csv,
     import_fungible_assets_from_csv,
     import_fungible_items_from_csv,
@@ -572,14 +571,14 @@ def import_gacha_entries_endpoint(
 
         try:
             _limits = limits_from_settings(config)
-            touched: set = set()
+            pool_summaries: list = []
             processed_count, changed_count = import_gacha_entries_from_csv(
                 sess,
                 temp_path,
                 _limits.max_item_units_per_request,
                 _limits.max_fav_units_per_request,
                 _limits.allowed_fav_tickers,
-                touched_out=touched,
+                summary_out=pool_summaries,
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
@@ -591,9 +590,7 @@ def import_gacha_entries_endpoint(
                     # 변경 건수만으로는 사고(칸 복제·칸 합쳐짐)를 알아챌 수 없다 — 그때도
                     #   건수는 정상값이다. **칸 수와 Σweight** 가 확률을 바꾸는 사고를 한 줄로
                     #   드러내므로 같이 싣는다.
-                    pools = "; ".join(
-                        gacha_pool_summary(sess, pid) for pid in sorted(touched)
-                    )
+                    pools = "; ".join(pool_summaries)
                     logger.info(
                         "gacha_pool_import",
                         processed=processed_count,

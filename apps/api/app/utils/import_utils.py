@@ -964,11 +964,18 @@ def _claim_id(entry: ProductGachaEntry) -> int:
     return entry.id
 
 
-def gacha_pool_summary(db: Session, product_id: int) -> str:
-    """풀 한 줄 요약 — **칸 수와 Σweight**.
+def gacha_pool_summary(
+    db: Session, product_id: int, file_keys: Optional[set] = None
+) -> str:
+    """풀 한 줄 요약 — **칸 수와 Σweight**, 그리고 파일에 없던 기존 칸.
 
     확률을 바꾸는 사고(칸 복제·칸 합쳐짐)는 전부 이 두 숫자로 드러난다. "변경 N건" 만으로는
     운영이 알아챌 수 없다 — 사고 났을 때도 변경 건수는 정상값이기 때문이다.
+
+    `file_keys` 를 주면 **이번 파일에 없던 기존 칸**도 적는다. 전환이 끝난 뒤에는 "부분
+    시트 = 담긴 칸만 갱신" 이 정상 동작이라 칸 이름 오타·리네임과 구분할 방법이 없다 —
+    막을 게 아니라 **보이게** 할 문제다(`mat_s` 를 `mat_hourglass_s` 로 고쳐 올리면
+    옛 칸이 그대로 남아 표가 한 칸 늘어난다).
     """
     rows = (
         db.query(ProductGachaEntry)
@@ -976,7 +983,12 @@ def gacha_pool_summary(db: Session, product_id: int) -> str:
         .all()
     )
     total = sum(r.weight for r in rows)
-    return f"product {product_id}: {len(rows)}칸 / Σweight {total}"
+    line = f"product {product_id}: {len(rows)}칸 / Σweight {total}"
+    if file_keys is not None:
+        absent = sorted({r.slot_key for r in rows} - file_keys)
+        if absent:
+            line += f" / 파일에 없는 기존 칸: {absent}"
+    return line
 
 
 def assert_slot_keys_consistent(db: Session, rows: list) -> None:
@@ -1042,7 +1054,11 @@ def assert_slot_keys_consistent(db: Session, rows: list) -> None:
             .filter(ProductGachaEntry.product_id == product_id)
             .all()
         )
-        legacy = {e.ticker for e in existing if e.slot_key == e.ticker}
+        # ⚠️ 커버는 티커가 아니라 **(티커, 수량)** 으로 잰다. 이 티켓의 전제가 "티커 하나가
+        #   수량별로 여러 칸" 이라, 티커로 재면 **티커는 전부 덮으면서 칸은 절반만 담은**
+        #   시트가 통과한다(작은 수량 칸들이 통째로 큰 수량으로 재정의된다).
+        #   정상 전환 행은 레거시 칸과 수량이 같으므로 오탐이 없다.
+        legacy = {(e.ticker, e.amount) for e in existing if e.slot_key == e.ticker}
 
         if not keyed:
             if len(legacy) < len(existing):
@@ -1054,11 +1070,15 @@ def assert_slot_keys_consistent(db: Session, rows: list) -> None:
             continue
 
         # 전환 임포트(레거시 칸이 남아 있는데 키를 붙이는 중)는 **풀 전체**여야 한다.
-        csv_tickers = {_row_ticker(r) for r in product_rows}
-        missing = sorted(legacy - csv_tickers)
+        csv_slots = {
+            (_row_ticker(r), parse_int((r.get("amount") or "").replace(",", "")))
+            for r in product_rows
+        }
+        missing = sorted(legacy - csv_slots)
         if missing:
+            shown = ", ".join(f"{t} x{a}" for t, a in missing)
             raise ValueError(
-                f"gacha product {product_id}: 아직 칸 이름이 없는 기존 칸 {missing} 이"
+                f"gacha product {product_id}: 아직 칸 이름이 없는 기존 칸 [{shown}] 이"
                 " 이 파일에 없다 — 전환 임포트는 풀 전체를 한 번에 올려야 한다"
                 " (빠진 칸이 이 파일의 다른 행으로 변신한다)"
             )
@@ -1225,7 +1245,7 @@ def import_gacha_entries_from_csv(
     max_item_units=None,
     max_fav_units=None,
     allowed_fav_tickers=None,
-    touched_out: Optional[set] = None,
+    summary_out: Optional[list] = None,
 ) -> Tuple[int, int]:
     """
     뽑기 풀 CSV 임포트.
@@ -1271,13 +1291,19 @@ def import_gacha_entries_from_csv(
         print(
             f"\n✅ Gacha 풀 동기화 완료! (처리: {processed_count}, 변경: {changed_count})"
         )
+        # 요약은 **임포터가 만든다.** 호출부가 CSV 를 다시 파싱하면 파서가 갈리고
+        #   (예: 콤마 낀 product_id) 그 상품이 요약에서 조용히 빠지는데, 지금은 이 요약이
+        #   사고를 잡는 유일한 신호다.
+        keys_by_product: dict = {}
+        for row in rows:
+            keys_by_product.setdefault(parse_int(row["product_id"]), set()).add(
+                _effective_slot_key(row)
+            )
         for product_id in sorted(touched_products):
-            print(f"   {gacha_pool_summary(db, product_id)}")
-        # 호출부가 CSV 를 **다시 파싱하지 않도록** 임포터가 본 그대로 내보낸다. 파서가
-        #   갈리면(예: 콤마 낀 product_id) 요약에서 그 상품이 조용히 빠지는데, 지금은 그
-        #   요약이 사고를 잡는 유일한 신호다.
-        if touched_out is not None:
-            touched_out.update(touched_products)
+            line = gacha_pool_summary(db, product_id, keys_by_product.get(product_id))
+            print(f"   {line}")
+            if summary_out is not None:
+                summary_out.append(line)
         return processed_count, changed_count
 
     except Exception as e:

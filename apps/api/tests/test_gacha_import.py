@@ -92,6 +92,9 @@ def entries(sess):
 
 
 ITEM_ROW = "900,Hourglass,100,ITEM,Item_NT_400000,30,400000,0"
+# 전환 테스트용 — 키 시트의 `mat_hourglass_s`(8,000) 와 **같은 수량**이라 그 행에 입양된다.
+#   (수량이 다르면 "기존 칸이 이 파일에 없다" 로 거절된다 — 의도된 fail-closed)
+ITEM_ROW_8000 = "900,Hourglass,100,ITEM,Item_NT_400000,8000,400000,0"
 FAV_ROW = "900,HP Rune,100,FAV,FAV__RUNESTONE_HP,200,,0"
 ALLOW_HP = frozenset({"FAV__RUNESTONE_HP"})
 
@@ -537,7 +540,7 @@ class TestSlotKey:
 
     def test_입양은_한_번뿐이다(self, sess, product):
         """입양이 무제한이면 같은 티커의 **두 번째 칸을 영원히 못 만든다.**"""
-        run_import(sess, [ITEM_ROW])
+        run_import(sess, [ITEM_ROW_8000])
 
         header = HEADER + ",slot_key\n"
         content = header + "\n".join(
@@ -672,7 +675,7 @@ class TestSlotKeyGuards:
         )
         sess.add(other)
         sess.commit()
-        run_import(sess, [ITEM_ROW, ITEM_ROW.replace("900,", "901,", 1)])
+        run_import(sess, [ITEM_ROW_8000, ITEM_ROW_8000.replace("900,", "901,", 1)])
         assert len(entries(sess)) == 2
 
         run_keyed(
@@ -686,7 +689,7 @@ class TestSlotKeyGuards:
         assert sorted(by_product[901]) == ["mat_hourglass_l", "mat_hourglass_s"]
 
     def test_행_순서를_뒤집어도_최종_풀은_같다(self, sess, product):
-        run_import(sess, [ITEM_ROW])
+        run_import(sess, [ITEM_ROW_8000])
         run_keyed(sess, [HG_L, HG_S])  # 큰 칸 먼저
         assert {(e.slot_key, e.amount, e.weight) for e in entries(sess)} == {
             ("mat_hourglass_s", 8000, 2100),
@@ -733,3 +736,56 @@ class TestSlotKeyGuards:
             ("mat_hourglass_l", 25000),
         ], "칸이 합쳐졌다 — Σweight 가 줄어 확률이 통째로 바뀐다"
         assert sum(e.weight for e in rows) == 4500
+
+    def test_티커는_다_덮지만_칸은_절반인_시트는_거절(self, sess, product):
+        """커버를 티커로 재면 뚫린다 — 이 티켓의 전제가 "티커 하나가 수량별로 여러 칸" 이다.
+
+        티커별 '큰 수량' 행만 담은 시트는 티커를 전부 덮지만, 작은 수량 칸들이 통째로
+        큰 수량으로 **재정의**된다(10칸이 될 표가 5칸으로, Σweight 도 같이 줄어든다).
+        """
+        run_import(
+            sess,
+            [
+                "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0",
+                "900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0",
+            ],
+        )
+        with pytest.raises(ValueError, match=r"Item_NT_400000 x8000"):
+            run_keyed(
+                sess,
+                [
+                    HG_L,
+                    "900,AP Stone,500,ITEM,Item_NT_500000,80,500000,0,mat_ap_l",
+                ],
+            )
+        assert {(e.ticker, e.amount) for e in entries(sess)} == {
+            ("Item_NT_400000", 8000),
+            ("Item_NT_500000", 25),
+        }
+
+    def test_작은_칸까지_담은_전체_시트는_통과(self, sess, product):
+        """위와 **같은 상태에서 행만 온전하면** 정상적으로 4칸이 된다."""
+        run_import(
+            sess,
+            [
+                "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0",
+                "900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0",
+            ],
+        )
+        run_keyed(
+            sess,
+            [
+                HG_S,
+                HG_L,
+                "900,AP Stone,1800,ITEM,Item_NT_500000,25,500000,0,mat_ap_s",
+                "900,AP Stone,500,ITEM,Item_NT_500000,80,500000,0,mat_ap_l",
+            ],
+        )
+        rows = sorted(entries(sess), key=lambda e: e.slot_key)
+        assert [(e.slot_key, e.amount) for e in rows] == [
+            ("mat_ap_l", 80),
+            ("mat_ap_s", 25),
+            ("mat_hourglass_l", 25000),
+            ("mat_hourglass_s", 8000),
+        ]
+        assert sum(e.weight for e in rows) == 5000  # 2100+600+1800+500
