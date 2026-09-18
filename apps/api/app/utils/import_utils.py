@@ -815,11 +815,14 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
 
 
 # ── (PLD-1562) 뽑기 풀 CSV ────────────────────────────────────────────────────
-# 컬럼: product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places
+# 컬럼: product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places,
+#       slot_key
 #   · kind           = ITEM | FAV (생략 시 ITEM — 기존 시트 하위호환)
 #   · ticker         = Item_NT_400000 / FAV__RUNESTONE_HP
 #   · sheet_item_id  = 아이템 아이콘용(ITEM 필수 / FAV 는 비워 둘 것)
 #   · decimal_places = FAV 자릿수(생략 시 0). 아이템은 항상 0
+#   · slot_key       = **칸의 정체성**(생략 시 티커). 같은 아이템을 수량만 다르게 여러 칸
+#                      두려면 필요하다. 한 상품 안에서는 **전부 쓰거나 전부 안 쓴다**
 #
 # `fungible-items/import` 와 같은 모양(상품당 여러 행)을 따른다. voucher 처럼 고정 슬롯을
 # 쓰지 않는 이유: 풀은 수십 칸이 될 수 있어 `gacha_item_1..N` 으로는 표가 못 넘어간다.
@@ -936,7 +939,103 @@ def assert_gacha_fav_tickers_allowed(db: Session, product_id: int, allowed) -> N
         )
 
 
-def process_gacha_entry_row(db: Session, row: dict) -> bool:
+def _claim_id(entry: ProductGachaEntry):
+    """이번 임포트에서 이 칸을 이미 썼는지 가리는 키. 아직 flush 안 된 신규 행은 PK 가 없다."""
+    return entry.id if entry.id is not None else id(entry)
+
+
+def gacha_pool_summary(db: Session, product_id: int) -> str:
+    """풀 한 줄 요약 — **칸 수와 Σweight**.
+
+    확률을 바꾸는 사고(칸 복제·칸 합쳐짐)는 전부 이 두 숫자로 드러난다. "변경 N건" 만으로는
+    운영이 알아챌 수 없다 — 사고 났을 때도 변경 건수는 정상값이기 때문이다.
+    """
+    rows = (
+        db.query(ProductGachaEntry)
+        .filter(ProductGachaEntry.product_id == product_id)
+        .all()
+    )
+    total = sum(r.weight for r in rows)
+    return f"product {product_id}: {len(rows)}칸 / Σweight {total}"
+
+
+def assert_slot_keys_consistent(db: Session, rows: list) -> None:
+    """
+    (PLD-1562) `slot_key` 파일 단위 선행 검사. 전부 **확률을 조용히 바꾸는** 사고들이다.
+
+    풀 CSV 는 upsert-only(삭제가 없다)라 잘못 들어간 칸은 DB 를 직접 고쳐야 없어진다.
+    그래서 "틀린 채로 성공" 을 한 줄도 허용하지 않는다.
+
+    막는 것 넷:
+      1. **한 상품 안에서 slot_key 전부/전무** — 섞이면 무키 행이 레거시 칸을 갱신하고,
+         뒤 행이 그 칸을 또 입양해 두 행이 한 칸으로 합쳐진다(9칸 표가 5칸).
+      2. **파일 안 중복 키** — 오타·복붙. 두 번째 행이 첫 번째를 조용히 덮어쓴다.
+      3. **이미 키잉된 상품에 무키 시트** — 옛 시트 탭이 남아 있는 전환 직후가 제일 위험하다.
+         티커로 폴백해 INSERT 되고, 칸이 복제돼 공시 확률이 절반이 된다.
+      4. **레거시 칸을 덮지 않는 부분 시트** — 새 행만 올리면 남은 레거시 칸이 그 행으로
+         **변신**한다(추가가 아니라 재정의). 전환 임포트는 풀 전체를 한 번에 올려야 한다.
+    """
+    by_product: dict = {}
+    for row in rows:
+        by_product.setdefault(parse_int(row["product_id"]), []).append(row)
+
+    for product_id, product_rows in by_product.items():
+        keyed = [r for r in product_rows if (r.get(GACHA_SLOT_KEY_COLUMN) or "").strip()]
+        if keyed and len(keyed) != len(product_rows):
+            raise ValueError(
+                f"gacha product {product_id}: {GACHA_SLOT_KEY_COLUMN} 는 그 상품의 행"
+                " **전부**에 있거나 전부 없어야 한다 — 섞이면 두 행이 한 칸으로 합쳐진다"
+            )
+
+        if keyed:
+            keys = [(r.get(GACHA_SLOT_KEY_COLUMN) or "").strip() for r in keyed]
+            dups = sorted({k for k in keys if keys.count(k) > 1})
+            if dups:
+                raise ValueError(
+                    f"gacha product {product_id}: 같은 {GACHA_SLOT_KEY_COLUMN} 가 파일에"
+                    f" 두 번 있다 {dups} — 뒤 행이 앞 행을 덮어써 칸이 사라진다"
+                )
+            # 칸 이름을 남의 티커로 지으면 그 칸을 집는다(백필 때문에 레거시 칸의 키가
+            #   곧 티커다). 자기 티커와 같은 건 폴백과 구분이 안 되므로 허용한다.
+            for r, key in zip(keyed, keys):
+                ticker = (r.get("ticker") or r.get("fungible_item_id") or "").strip()
+                if key != ticker and (key.startswith("Item_") or key.startswith("FAV__")):
+                    raise ValueError(
+                        f"gacha product {product_id}: {GACHA_SLOT_KEY_COLUMN}={key!r} 는"
+                        " 티커 형태다 — 다른 칸을 덮어쓴다. 칸 이름은 티커로 짓지 말 것"
+                    )
+
+        existing = (
+            db.query(ProductGachaEntry)
+            .filter(ProductGachaEntry.product_id == product_id)
+            .all()
+        )
+        legacy = {e.ticker for e in existing if e.slot_key == e.ticker}
+
+        if not keyed:
+            if len(legacy) < len(existing):
+                raise ValueError(
+                    f"gacha product {product_id}: 이 상품은 이미"
+                    f" {GACHA_SLOT_KEY_COLUMN} 로 관리된다 — 칸 이름 없는 옛 시트로"
+                    " 덮어쓸 수 없다(칸이 복제돼 확률이 어긋난다)"
+                )
+            continue
+
+        # 전환 임포트(레거시 칸이 남아 있는데 키를 붙이는 중)는 **풀 전체**여야 한다.
+        csv_tickers = {
+            ((r.get("ticker") or r.get("fungible_item_id") or "").strip())
+            for r in product_rows
+        }
+        missing = sorted(legacy - csv_tickers)
+        if missing:
+            raise ValueError(
+                f"gacha product {product_id}: 아직 칸 이름이 없는 기존 칸 {missing} 이"
+                " 이 파일에 없다 — 전환 임포트는 풀 전체를 한 번에 올려야 한다"
+                " (빠진 칸이 이 파일의 다른 행으로 변신한다)"
+            )
+
+
+def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = None) -> bool:
     """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, slot_key) — 테이블 UNIQUE 와 같다."""
     weight = parse_int((row.get("weight") or "").replace(",", ""))
     amount = parse_int((row.get("amount") or "").replace(",", ""))
@@ -968,6 +1067,7 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
     #   키로 쓴다 — 옛 시트가 그대로 돌아야 하고, 마이그레이션이 기존 행을 정확히 그 값
     #   (slot_key = ticker)으로 백필해 뒀다.
     slot_key = (row.get(GACHA_SLOT_KEY_COLUMN) or "").strip() or ticker
+    claimed_ids = claimed if claimed is not None else set()
     existing = (
         db.query(ProductGachaEntry)
         .filter(
@@ -980,17 +1080,31 @@ def process_gacha_entry_row(db: Session, row: dict) -> bool:
         # 옛 시트에 slot_key 를 **처음 붙이는** 재임포트. 그냥 INSERT 하면 22칸 표가 44칸이
         #   되고 확률이 절반으로 어긋난다(가장 흔한 사고 경로다). 아직 아무도 이름표를 붙이지
         #   않은 칸(slot_key == ticker)이 있으면 그 칸을 **입양**해 이름표만 갈아 끼운다.
-        #   한 번 입양되면 slot_key != ticker 라 다음 행이 같은 칸을 또 집을 수 없다 —
-        #   그래서 같은 티커의 두 번째 칸은 정상적으로 새로 생긴다.
-        existing = (
-            db.query(ProductGachaEntry)
-            .filter(
-                ProductGachaEntry.product_id == product_id,
-                ProductGachaEntry.ticker == ticker,
-                ProductGachaEntry.slot_key == ProductGachaEntry.ticker,
-            )
-            .first()
+        #   이번 임포트가 이미 쓴 칸은 제외한다 — 그래야 같은 티커의 두 번째 행이 첫 번째
+        #   행의 칸을 다시 집지 않고 새 칸이 된다(둘이 한 칸으로 합쳐지면 표가 줄어든다).
+        existing = next(
+            (
+                e
+                for e in db.query(ProductGachaEntry)
+                .filter(
+                    ProductGachaEntry.product_id == product_id,
+                    ProductGachaEntry.ticker == ticker,
+                    ProductGachaEntry.slot_key == ProductGachaEntry.ticker,
+                )
+                .order_by(ProductGachaEntry.id)
+                .all()
+                if _claim_id(e) not in claimed_ids
+            ),
+            None,
         )
+    if existing is not None:
+        if _claim_id(existing) in claimed_ids:
+            # 선행 검사가 파일 안 중복 키를 이미 막지만, 이 함수를 직접 부르는 경로
+            #   (스크립트·테스트)까지 같은 보장을 준다.
+            raise ValueError(
+                f"gacha product {product_id}: 칸 {slot_key} 를 이번 임포트에서 두 번 쓴다"
+            )
+        claimed_ids.add(_claim_id(existing))
     # 빈칸이면 기존 행의 kind 유지, 신규면 ITEM(옛 시트 하위호환).
     kind = raw_kind or (existing.kind if existing else GACHA_KIND_ITEM)
     sheet_item_id = parse_int((row.get("sheet_item_id") or "").strip() or "0") or None
@@ -1089,29 +1203,40 @@ def import_gacha_entries_from_csv(
     processed_count = 0
     changed_count = 0
     touched_products = set()
+    # 이번 임포트가 이미 쓴 칸. 입양 후보에서 빼고, 같은 칸을 두 번 쓰는 것도 여기서 잡는다.
+    #   (autoflush 에 기대지 않는다 — 배치화·autoflush=False 한 번에 조용히 깨진다)
+    claimed: set = set()
 
     try:
         with open(csv_path, mode="r", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                processed_count += 1
-                touched_products.add(parse_int(row["product_id"]))
-                if process_gacha_entry_row(db, row):
-                    changed_count += 1
+            rows = list(csv.DictReader(file))
 
-            db.flush()
-            for product_id in touched_products:
-                assert_not_mixed_components(db, product_id)
-                assert_gacha_entry_within_caps(
-                    db, product_id, max_item_units, max_fav_units
-                )
-                assert_gacha_fav_tickers_allowed(db, product_id, allowed_fav_tickers)
+        # 행을 하나라도 쓰기 전에 **파일 전체**를 본다. 아래 규칙들은 행 단위로는 판정이
+        #   불가능하고(앞뒤 행과 DB 상태를 같이 봐야 한다), 반쯤 반영된 풀은 확률이 기획과
+        #   다른 표다.
+        assert_slot_keys_consistent(db, rows)
 
-            db.commit()
-            print(
-                f"\n✅ Gacha 풀 동기화 완료! (처리: {processed_count}, 변경: {changed_count})"
+        for row in rows:
+            processed_count += 1
+            touched_products.add(parse_int(row["product_id"]))
+            if process_gacha_entry_row(db, row, claimed=claimed):
+                changed_count += 1
+
+        db.flush()
+        for product_id in touched_products:
+            assert_not_mixed_components(db, product_id)
+            assert_gacha_entry_within_caps(
+                db, product_id, max_item_units, max_fav_units
             )
-            return processed_count, changed_count
+            assert_gacha_fav_tickers_allowed(db, product_id, allowed_fav_tickers)
+
+        db.commit()
+        print(
+            f"\n✅ Gacha 풀 동기화 완료! (처리: {processed_count}, 변경: {changed_count})"
+        )
+        for product_id in sorted(touched_products):
+            print(f"   {gacha_pool_summary(db, product_id)}")
+        return processed_count, changed_count
 
     except Exception as e:
         db.rollback()

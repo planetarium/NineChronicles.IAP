@@ -579,3 +579,116 @@ class TestSlotKey:
         assert len(rows) == 1
         assert rows[0].id == before
         assert (rows[0].ticker, rows[0].amount) == ("Item_NT_500000", 25)
+
+
+def run_keyed(sess, rows, **kwargs):
+    """`slot_key` 컬럼이 있는 CSV. rows 는 HEADER + ',slot_key' 순서의 문자열."""
+    content = HEADER + ",slot_key\n" + "\n".join(rows) + "\n"
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".csv") as f:
+        f.write(content)
+        path = f.name
+    try:
+        return import_gacha_entries_from_csv(sess, path, **kwargs)
+    finally:
+        os.unlink(path)
+
+
+HG_S = "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,mat_hourglass_s"
+HG_L = "900,Hourglass,600,ITEM,Item_NT_400000,25000,400000,0,mat_hourglass_l"
+
+
+class TestSlotKeyGuards:
+    """
+    선행 검사가 막는 것들. 전부 **임포트는 성공하고 확률만 틀어지는** 종류라, 하나라도
+    빠지면 사고가 인터널이 아니라 유저 화면에서 처음 드러난다.
+
+    풀 CSV 는 upsert-only(삭제가 없다)라 잘못 들어간 칸은 DB 를 직접 고쳐야 없어진다.
+    """
+
+    def test_이미_키잉된_상품에_옛_시트는_거절(self, sess, product):
+        """전환 직후가 제일 위험하다 — 옛 시트 탭이 그대로 남아 있다."""
+        run_keyed(sess, [HG_S, HG_L])
+        before = {(e.slot_key, e.amount, e.weight) for e in entries(sess)}
+
+        with pytest.raises(ValueError, match="옛 시트"):
+            run_import(sess, [ITEM_ROW])
+
+        assert {(e.slot_key, e.amount, e.weight) for e in entries(sess)} == before
+
+    def test_한_상품_안에서_키가_섞이면_거절(self, sess, product):
+        """무키 행이 레거시 칸을 갱신하고, 뒤 행이 그 칸을 또 입양해 둘이 한 칸이 된다."""
+        run_import(sess, [ITEM_ROW])
+        with pytest.raises(ValueError, match="전부"):
+            run_keyed(
+                sess,
+                ["900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,", HG_L],
+            )
+        assert len(entries(sess)) == 1
+
+    def test_파일_안_중복_키는_거절(self, sess, product):
+        with pytest.raises(ValueError, match="두 번"):
+            run_keyed(
+                sess,
+                [
+                    "900,Hourglass,2100,ITEM,Item_NT_400000,8000,400000,0,dup",
+                    "900,AP Stone,600,ITEM,Item_NT_500000,25,500000,0,dup",
+                ],
+            )
+        assert entries(sess) == []
+
+    def test_레거시_칸을_덮지_않는_부분_시트는_거절(self, sess, product):
+        """새 행만 올리면 남은 레거시 칸이 그 행으로 **변신**한다 — 추가가 아니다."""
+        run_import(sess, [ITEM_ROW])  # Item_NT_400000 x30
+        with pytest.raises(ValueError, match="전체"):
+            run_keyed(sess, ["900,AP Stone,600,ITEM,Item_NT_500000,25,500000,0,mat_ap"])
+        assert [(e.ticker, e.amount) for e in entries(sess)] == [
+            ("Item_NT_400000", 30)
+        ]
+
+    def test_칸_이름을_남의_티커로_지으면_거절(self, sess, product):
+        with pytest.raises(ValueError, match="티커 형태"):
+            run_keyed(
+                sess,
+                ["900,Hourglass,100,ITEM,Item_NT_400000,30,400000,0,Item_NT_500000"],
+            )
+
+    def test_입양은_product_단위로_갇힌다(self, sess, product):
+        """한 CSV 에 두 상품. 남의 상품 칸을 입양하면 두 상품의 확률이 동시에 틀어진다."""
+        other = Product(
+            id=901,
+            name="gacha2",
+            order=2,
+            google_sku="g2",
+            apple_sku="a2",
+            apple_sku_k="ak2",
+            product_type=ProductType.FREE,
+            active=True,
+            rarity=ProductRarity.NORMAL,
+            size=ProductAssetUISize.ONE_BY_ONE,
+            path="p.png",
+            l10n_key="L",
+            mileage=0,
+            discount=0,
+        )
+        sess.add(other)
+        sess.commit()
+        run_import(sess, [ITEM_ROW, ITEM_ROW.replace("900,", "901,", 1)])
+        assert len(entries(sess)) == 2
+
+        run_keyed(
+            sess,
+            [HG_S, HG_L, HG_S.replace("900,", "901,", 1), HG_L.replace("900,", "901,", 1)],
+        )
+        by_product = {}
+        for e in entries(sess):
+            by_product.setdefault(e.product_id, []).append(e.slot_key)
+        assert sorted(by_product[900]) == ["mat_hourglass_l", "mat_hourglass_s"]
+        assert sorted(by_product[901]) == ["mat_hourglass_l", "mat_hourglass_s"]
+
+    def test_행_순서를_뒤집어도_최종_풀은_같다(self, sess, product):
+        run_import(sess, [ITEM_ROW])
+        run_keyed(sess, [HG_L, HG_S])  # 큰 칸 먼저
+        assert {(e.slot_key, e.amount, e.weight) for e in entries(sess)} == {
+            ("mat_hourglass_s", 8000, 2100),
+            ("mat_hourglass_l", 25000, 600),
+        }

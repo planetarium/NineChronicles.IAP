@@ -64,6 +64,7 @@ from app.grant_guard import (
 from app.utils import verify_token
 from app.utils.apple import get_tx_ids
 from app.utils.import_utils import (
+    gacha_pool_summary,
     import_category_products_from_csv,
     import_fungible_assets_from_csv,
     import_fungible_items_from_csv,
@@ -516,6 +517,19 @@ def import_fungible_items_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _touched_gacha_products(csv_content: str) -> set:
+    """CSV 가 건드린 product_id. 임포트 후 풀 요약을 남기는 데만 쓴다(검증은 임포터가 한다)."""
+    import csv as _csv
+    import io as _io
+
+    ids = set()
+    for row in _csv.DictReader(_io.StringIO(csv_content or "")):
+        raw = (row.get("product_id") or "").strip()
+        if raw.isdigit():
+            ids.add(int(raw))
+    return ids
+
+
 @router.post("/products/gacha/import")
 def import_gacha_entries_endpoint(
     request: ImportGachaEntriesRequest, sess=Depends(session)
@@ -523,11 +537,23 @@ def import_gacha_entries_endpoint(
     """
     # (PLD-1562) 뽑기 풀 임포트
     ---
-    컬럼: `product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places`
+    컬럼: `product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places,
+    slot_key`
       · `kind` = `ITEM` | `FAV` (생략 시 ITEM). 룬스톤·소울스톤·크리스탈은 **FAV** 다
       · `ticker` = `Item_NT_400000` / `FAV__RUNESTONE_HP` (옛 컬럼명 `fungible_item_id` 도 읽는다)
       · `sheet_item_id` = 아이템 아이콘용. **FAV 는 비워 둘 것**
       · `decimal_places` = FAV 자릿수(생략 시 0). 아이템은 항상 0
+      · `slot_key` = **칸의 정체성**(생략 시 티커). 같은 아이템을 수량만 다르게 여러 칸
+        두려면 필요하다 — 모래시계 8,000개 칸과 25,000개 칸이 따로 서려면 `mat_hourglass_s`
+        / `mat_hourglass_l` 처럼 서로 다른 이름을 준다
+
+    ### `slot_key` 를 쓸 때 지켜야 하는 것 (전부 거절로 막는다)
+      · 한 상품 안에서는 **전부 쓰거나 전부 안 쓴다.** 섞이면 두 행이 한 칸으로 합쳐진다
+      · 아직 `slot_key` 가 없던 상품에 처음 붙이는 임포트는 **풀 전체를 한 번에** 올린다.
+        새 칸만 올리면 남은 기존 칸이 그 행으로 **변신**한다(추가가 아니다)
+      · 한 번 `slot_key` 로 관리되기 시작한 상품에 **옛 시트(칸 이름 없음)를 다시 올리지
+        말 것** — 거절된다. 그대로 들어가면 칸이 복제돼 공시 확률이 절반이 된다
+      · 칸 이름을 티커(`Item_...`/`FAV__...`)로 짓지 말 것 — 다른 칸을 덮어쓴다
 
     ⚠️ FAV 칸을 넣으려면 `grant_allowed_fav_tickers` 에 그 티커가 열려 있어야 한다.
        닫혀 있으면 그 칸에 당첨된 주문이 **503** 으로 멈춘다(화폐 발행은 명시적으로만 연다).
@@ -562,16 +588,24 @@ def import_gacha_entries_endpoint(
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
             #   화이트리스트 플래그 하나 켜는 데도 알림을 남기는 선례와 맞춘다.
             if changed_count:
+                # 변경 건수만으로는 사고(칸 복제·칸 합쳐짐)를 알아챌 수 없다 — 그때도
+                #   건수는 정상값이다. **칸 수와 Σweight** 가 확률을 바꾸는 사고를 한 줄로
+                #   드러내므로 같이 싣는다.
+                pools = "; ".join(
+                    gacha_pool_summary(sess, pid)
+                    for pid in sorted(_touched_gacha_products(request.csv_content))
+                )
                 logger.info(
                     "gacha_pool_import",
                     processed=processed_count,
                     changed=changed_count,
+                    pools=pools,
                 )
                 send_slack_alert(
                     config.iap_alert_webhook_url,
                     f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
                     f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
-                    f" ({config.stage})",
+                    f"\n{pools} ({config.stage})",
                 )
             return {
                 "message": "뽑기 풀 데이터가 성공적으로 임포트되었습니다.",

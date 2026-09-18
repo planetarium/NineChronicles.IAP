@@ -47,7 +47,10 @@ def upgrade() -> None:
     op.execute("UPDATE product_gacha_entry SET slot_key = ticker")
     op.alter_column("product_gacha_entry", "slot_key", nullable=False)
 
-    # 2) UNIQUE 축 교체. 순서가 중요하다 — 먼저 지워야 같은 티커 두 칸이 들어갈 수 있다.
+    # 2) UNIQUE 축 교체. 두 DDL 사이의 순서는 무관하고(서로 다른 컬럼이다), 중요한 건
+    #    **이 마이그레이션 뒤에야** 같은 티커 두 칸이 들어갈 수 있다는 것이다.
+    #    백필이 옛 UNIQUE 를 깰 수는 없다 — (product_id, ticker) 가 유일했으므로
+    #    (product_id, slot_key=ticker) 도 유일하다.
     op.drop_constraint(
         "uq_product_gacha_entry_ticker", "product_gacha_entry", type_="unique"
     )
