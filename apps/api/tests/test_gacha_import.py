@@ -147,7 +147,7 @@ class TestKindIsThreeState:
     """
     `kind` 는 머니 플래그다 — 빈칸/컬럼 부재는 **"변경 없음"**이지 ITEM 이 아니다.
     2상태로 읽으면 옛 시트 재임포트가 기존 FAV 칸을 ITEM 으로 내려앉히고, 그 칸은 그 뒤로
-    얼로우리스트를 안 지난다(닫은 구멍이 임포트로 다시 열린다).
+    지급 tx 에서 아이템으로 취급돼 발행이 깨진다.
     """
 
     def test_빈칸은_기존_FAV_를_ITEM_으로_뒤집지_않는다(self, sess, product):
@@ -200,10 +200,6 @@ class TestShapeValidation:
             run_import(sess, [f"900,X,100,ITEM,Item_NT_400000,{amount},400000,0"])
 
 
-
-
-
-
 class TestMixedComponents:
     def test_고정_구성품이_있는_상품에는_풀을_못_넣는다(self, sess, product):
         sess.add(
@@ -251,8 +247,6 @@ def product_row(draws):
     return (
         f"900,gacha,g,a,ak,,,,1,TRUE,,,0.0,NORMAL,ONE_BY_ONE,,,FREE,0,,{draws}"
     )
-
-
 
 
 class TestDrawCountColumn:

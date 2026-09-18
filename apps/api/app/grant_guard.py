@@ -38,29 +38,36 @@ from shared.enums import ProductType
 from shared.models.product import SEASON_PASS_SKU_TOKEN
 
 
+#: `point_shop_grantable` 셀 토큰. `O` 를 true 에 넣지 않는다 — 숫자 `0`(=False) 오타가
+#: True 로 읽히는 비대칭은 머니 플래그에서 허용할 수 없다.
+GRANTABLE_TRUE_TOKENS = frozenset({"TRUE", "T", "Y", "YES", "1"})
+GRANTABLE_FALSE_TOKENS = frozenset({"FALSE", "F", "N", "NO", "0", "X", "-"})
+
+
 def parse_point_shop_grantable(value: Optional[str]) -> Optional[bool]:
     """
-    CSV `point_shop_grantable` 파서. **3상태**다 — `None` = "이 컬럼 없음/빈칸 = 변경 없음".
+    상품 CSV 의 `point_shop_grantable` 셀 → True/False/**None(=변경 없음)**.
 
-    2상태로 읽으면 이 컬럼이 없는 옛 시트를 재임포트하는 순간 켜 둔 상품이 전부 꺼지거나
-    (fail-closed 지만 포인트샵이 통째로 멈춘다) 전부 켜진다(fail-open — 더 나쁘다).
-    머니 플래그는 "안 적었다"와 "false 라고 적었다"를 구분해야 한다.
+    **3상태여야 한다.** "TRUE 아니면 False" 로 읽으면 컬럼이 없는 기존 시트로 임포트할 때마다
+    전 상품의 화이트리스트가 조용히 꺼진다(= 포인트샵 전면 중단). 빈칸·컬럼 부재는 유지고,
+    명시적으로 쓴 값만 반영한다.
+
+    해석 불가 토큰은 ValueError — 머니 플래그라 "모르는 값은 False" 도 위험하다(오타로 꺼져도
+    장애고, 무엇보다 운영자가 켠 줄 알고 방치한다). 임포트를 세우는 쪽이 낫다.
     """
     if value is None:
         return None
-    text = str(value).strip().lower()
-    if not text:
+    token = value.strip().upper()
+    if token == "":
         return None
-    if text in ("true", "1", "y", "yes", "t"):
+    if token in GRANTABLE_TRUE_TOKENS:
         return True
-    if text in ("false", "0", "n", "no", "f"):
+    if token in GRANTABLE_FALSE_TOKENS:
         return False
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            f"point_shop_grantable 값을 읽을 수 없습니다: {value!r}"
-            " — true/false 로 적거나 빈 칸으로 두세요(빈 칸 = 변경 없음)"
-        ),
+    raise ValueError(
+        f"point_shop_grantable '{value}' 를 해석할 수 없습니다"
+        f" (허용: {sorted(GRANTABLE_TRUE_TOKENS)} / {sorted(GRANTABLE_FALSE_TOKENS)}"
+        " / 빈칸=유지)"
     )
 
 

@@ -239,7 +239,7 @@ class Product(AutoIdMixin, TimeStampMixin, Base):
         return bool(self.gacha_entry_list)
 
 
-#: 뽑기 칸의 상금 종류. 머니 가드가 이 값으로 갈린다(모델 주석 참고).
+#: 뽑기 칸의 상금 종류. 지급 tx 의 분기가 이 값으로 갈린다(모델 주석 참고).
 GACHA_KIND_ITEM = "ITEM"
 GACHA_KIND_FAV = "FAV"
 

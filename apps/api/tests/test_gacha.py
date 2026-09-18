@@ -5,14 +5,13 @@
 
   ① **재추첨 불가** — 같은 external_ref 재요청이 같은 결과를 돌려준다. 앱 규약이 아니라
      `grant_outbox.external_ref` UNIQUE 가 강제한다.
-  ② **머니 가드가 뽑기에도 걸린다** — 뽑기 상품은 `fav_list`/`fungible_item_list` 가 비어
-     있어 발행량이 (0,0) 으로 계산된다. 그대로 두면 수량 상한이 뽑기에만 통째로 꺼진다.
+  ② **동결된 claim 이 형식 검증을 지난다** — 워커가 체인에 싣는 게 그 값이고, 자릿수를
+     재는 검사가 여기 말고는 없다(`claim_from_result`).
   ③ **지급은 동결된 결과로** — 추첨 뒤에 풀을 고쳐도 이미 뽑힌 주문의 지급은 안 바뀐다.
      (안 그러면 표를 고치는 것이 곧 뒷문 재추첨이다.)
   ④ **분포가 가중치를 따른다** — 경계값에서 칸이 밀리지 않는다.
 """
 
-from decimal import Decimal
 
 import pytest
 
@@ -146,7 +145,7 @@ class TestClaimFromResultFailsClosed:
             # 아이템 자릿수는 항상 0. 0 이 아니면 amount * 10**places 로 부풀려 발행된다.
             [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 18, "amount": 1}],
             [{"kind": "ITEM", "ticker": "a", "decimalPlaces": 1, "amount": 1}],
-            # kind 가 없거나 모르는 값이면 머니 가드의 FAV/아이템 분기가 추측 위에 선다.
+            # kind 가 없거나 모르는 값이면 지급 tx 의 FAV/아이템 분기가 추측 위에 선다.
             [{"ticker": "a", "decimalPlaces": 0, "amount": 1}],
             [{"kind": "COIN", "ticker": "a", "decimalPlaces": 0, "amount": 1}],
             [{"amount": 1}],
@@ -162,7 +161,6 @@ class TestClaimFromResultFailsClosed:
             claim_from_result(None)
 
 
-# ── ② 머니 가드 ───────────────────────────────────────────────────────────────
 class FakeProduct:
     def __init__(self, fav_list=None, fungible_item_list=None):
         self.id = 1
@@ -188,8 +186,8 @@ class TestFavPrizes:
     @pytest.mark.parametrize("places", [19, 180, -1, None, "18", True])
     def test_FAV_자릿수는_0에서_18_사이_정수여야_한다(self, places):
         # 실발행량이 `amount * 10**places` 라 자릿수가 곧 배율인데(180 이면 10^180 배),
-        #   이 축을 재는 가드가 **어디에도 없다** — 얼로우리스트는 티커만, FAV 수량 상한은
-        #   amount 만 본다. CSV 오타 하나가 그대로 체인에 나가므로 여기가 유일한 방어선이다.
+        #   이 축을 재는 검사가 **여기 말고는 없다**(CSV 임포트·CHECK 제약 어디도 안 본다).
+        #   오타 하나가 그대로 체인에 나가므로 여기가 유일한 방어선이다.
         with pytest.raises(GachaPoolError, match="decimalPlaces"):
             claim_from_result({
                 "version": GACHA_RESULT_VERSION,
@@ -265,6 +263,5 @@ class TestMultiDraw:
         assert by_ticker["Item_NT_400000"]["amount"] == 6
         assert by_ticker["FAV__RUNESTONE_HP"]["amount"] == 200
         assert by_ticker["FAV__RUNESTONE_HP"]["kind"] == "FAV"
-
 
 
