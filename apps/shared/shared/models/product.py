@@ -294,6 +294,16 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
 
     product_id = Column(Integer, ForeignKey("product.id"), nullable=False)
     product: Mapped["Product"] = relationship(back_populates="gacha_entry_list")
+    slot_key = Column(
+        Text,
+        nullable=False,
+        doc=(
+            "칸의 정체성. **표의 몇 번째 칸인가**이지 '무엇이 나오는가' 가 아니다."
+            " upsert 키이자 UNIQUE 축이라, 같은 아이템을 수량만 다르게 여러 칸 둘 수 있다"
+            " (상품표 v0.9 의 재료 티어가 티커 5종 × 수량 2단계 = 9칸이다)."
+            " 화면에 나가지 않는 운영 식별자다 — 유저가 보는 문자열은 `name` 쪽"
+        ),
+    )
     name = Column(
         Text,
         nullable=False,
@@ -348,9 +358,13 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
     __table_args__ = (
         # 풀 조회는 항상 상품 단위다(`WHERE product_id = ?`).
         Index("ix_product_gacha_entry_product_id", "product_id"),
-        # 같은 상품 안에 같은 티커 칸이 둘이면 운영 실수(CSV 재임포트의 중복 삽입)다.
+        # 같은 상품 안에 같은 **칸**이 둘이면 운영 실수(CSV 재임포트의 중복 삽입)다.
+        #   ⚠️ 축이 `ticker` 였다가 `slot_key` 로 옮겨왔다(마이그레이션 b2d94f6c15a8).
+        #   티커를 축으로 두면 "같은 아이템의 수량 2단계"(상품표 재료 티어)가 표현 불가고,
+        #   두 번째 행이 첫 번째를 **조용히 덮어써** 9칸 표가 5칸이 된다 — 임포트는 성공하고
+        #   확률만 기획과 달라지는, 가장 늦게 발견되는 종류의 사고다.
         UniqueConstraint(
-            "product_id", "ticker", name="uq_product_gacha_entry_ticker"
+            "product_id", "slot_key", name="uq_product_gacha_entry_slot"
         ),
         CheckConstraint(
             f"kind in ('{GACHA_KIND_ITEM}', '{GACHA_KIND_FAV}')",

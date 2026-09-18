@@ -144,6 +144,9 @@ def pool_snapshot(entries: Sequence[Any]) -> List[Dict[str, Any]]:
     return [
         {
             "entryId": getattr(e, "id", None),
+            # 운영이 그때 올린 시트와 1:1 로 맞춰 볼 축. 확률 분쟁에서 "이 칸" 을 가리키는
+            #   건 entryId(내부 PK)가 아니라 시트의 칸 이름이다.
+            "slotKey": getattr(e, "slot_key", None),
             "name": e.name,
             "weight": _weight_of(e),
             "kind": e.kind,

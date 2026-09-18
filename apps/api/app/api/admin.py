@@ -541,11 +541,31 @@ def import_gacha_entries_endpoint(
     """
     # (PLD-1562) 뽑기 풀 임포트
     ---
-    컬럼: `product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places`
+    컬럼: `product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places,
+    slot_key`
       · `kind` = `ITEM` | `FAV` (생략 시 ITEM). 룬스톤·소울스톤·크리스탈은 **FAV** 다
       · `ticker` = `Item_NT_400000` / `FAV__RUNESTONE_HP` (옛 컬럼명 `fungible_item_id` 도 읽는다)
       · `sheet_item_id` = 아이템 아이콘용. **FAV 는 비워 둘 것**
       · `decimal_places` = FAV 자릿수(생략 시 0). 아이템은 항상 0
+      · `slot_key` = **칸의 정체성**(생략 시 티커). 같은 아이템을 수량만 다르게 여러 칸
+        두려면 필요하다 — 모래시계 8,000개 칸과 25,000개 칸이 따로 서려면 `mat_hourglass_s`
+        / `mat_hourglass_l` 처럼 서로 다른 이름을 준다
+
+    ### `slot_key` 를 쓸 때 지켜야 하는 것 (전부 거절로 막는다)
+      · 한 상품 안에서는 **전부 쓰거나 전부 안 쓴다.** 섞이면 두 행이 한 칸으로 합쳐진다
+      · 아직 `slot_key` 가 없던 상품에 처음 붙이는 임포트는 **풀 전체를 한 번에** 올린다.
+        새 칸만 올리면 남은 기존 칸이 그 행으로 **변신**한다(추가가 아니다)
+      · 한 번 `slot_key` 로 관리되기 시작한 상품에 **옛 시트(칸 이름 없음)를 다시 올리지
+        말 것** — 거절된다. 그대로 들어가면 칸이 복제돼 공시 확률이 절반이 된다
+      · 칸 이름을 티커(`Item_...`/`FAV__...`)로 짓지 말 것 — 다른 칸을 덮어쓴다
+
+    ### 칸을 빼거나 산출물을 바꾸려면
+      · **빼기**: 이 API 에는 삭제가 없다. DB 에서 먼저 지우고 나머지를 올린다.
+        (전환 중인 상품에 "빼려는 칸을 뺀 시트" 를 올리면 위 커버 규칙이 거절한다)
+      · **산출물 교체**: 칸 이름을 유지한 채 `ticker`/`amount` 만 바꾸면 **갱신**이다.
+        임시 아이템으로 열어 둔 칸을 진짜 ID 로 바꿀 때가 이 경우다
+      · 커버 규칙은 **아직 칸 이름이 없는 칸이 남아 있는 동안만** 문다. 전환이 끝난 뒤에는
+        일부 칸만 담은 시트가 그냥 통과한다(그 칸들만 갱신, 나머지는 그대로)
 
     ⚠️ FAV 칸을 넣으려면 `grant_allowed_fav_tickers` 에 그 티커가 열려 있어야 한다.
        닫혀 있으면 그 칸에 당첨된 주문이 **503** 으로 멈춘다(화폐 발행은 명시적으로만 연다).
@@ -569,28 +589,40 @@ def import_gacha_entries_endpoint(
 
         try:
             _limits = limits_from_settings(config)
+            pool_summaries: list = []
             processed_count, changed_count = import_gacha_entries_from_csv(
                 sess,
                 temp_path,
                 _limits.max_item_units_per_request,
                 _limits.max_fav_units_per_request,
                 _limits.allowed_fav_tickers,
+                summary_out=pool_summaries,
             )
             # 민터 상금표를 바꾸는 write 다 — 무엇이 얼마나 어떤 확률로 발행되는지를 정하는
             #   변경인데 감사 흔적이 stdout 뿐이면 토큰이 유출돼도 채널에 아무것도 안 뜬다.
             #   화이트리스트 플래그 하나 켜는 데도 알림을 남기는 선례와 맞춘다.
             if changed_count:
-                logger.info(
-                    "gacha_pool_import",
-                    processed=processed_count,
-                    changed=changed_count,
-                )
-                send_slack_alert(
-                    config.iap_alert_webhook_url,
-                    f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
-                    f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
-                    f" ({config.stage})",
-                )
+                # ⚠️ 임포트는 **이미 커밋됐다.** 감사용 코드가 본작업을 실패로 만들면 안 되므로
+                #   여기서 나는 예외는 삼킨다(로그만 남긴다).
+                try:
+                    # 변경 건수만으로는 사고(칸 복제·칸 합쳐짐)를 알아챌 수 없다 — 그때도
+                    #   건수는 정상값이다. **칸 수와 Σweight** 가 확률을 바꾸는 사고를 한 줄로
+                    #   드러내므로 같이 싣는다.
+                    pools = "; ".join(pool_summaries)
+                    logger.info(
+                        "gacha_pool_import",
+                        processed=processed_count,
+                        changed=changed_count,
+                        pools=pools,
+                    )
+                    send_slack_alert(
+                        config.iap_alert_webhook_url,
+                        f":game_die: [IAP gacha pool] 뽑기 풀 변경 {changed_count}건"
+                        f" (처리 {processed_count}건) — 확률/상금이 바뀌었을 수 있습니다"
+                        f"\n{pools} ({config.stage})",
+                    )
+                except Exception:
+                    logger.exception("gacha_pool_import_alert_failed")
             return {
                 "message": "뽑기 풀 데이터가 성공적으로 임포트되었습니다.",
                 "processed_count": processed_count,
