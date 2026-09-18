@@ -1,7 +1,7 @@
 """Add grant_outbox table (PLD-1564)
 
 Revision ID: a7c31f5b9e02
-Revises: d2f4a1c6e8b3
+Revises: a5f3c8d21b7e
 Create Date: 2026-09-09 00:00:00
 
 배포 시 수동 적용이 필요하다(이미지 기동에 alembic 단계가 없다):
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "a7c31f5b9e02"
-down_revision = "d2f4a1c6e8b3"
+down_revision = "a5f3c8d21b7e"
 branch_labels = None
 depends_on = None
 
