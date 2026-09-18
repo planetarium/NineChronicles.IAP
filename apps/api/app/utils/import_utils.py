@@ -939,9 +939,29 @@ def assert_gacha_fav_tickers_allowed(db: Session, product_id: int, allowed) -> N
         )
 
 
-def _claim_id(entry: ProductGachaEntry):
-    """이번 임포트에서 이 칸을 이미 썼는지 가리는 키. 아직 flush 안 된 신규 행은 PK 가 없다."""
-    return entry.id if entry.id is not None else id(entry)
+def _row_ticker(row: dict) -> str:
+    """CSV 행의 티커. `fungible_item_id` 는 옛 컬럼명이다(불일치는 행 단위 검사가 끊는다)."""
+    return (row.get("ticker") or row.get("fungible_item_id") or "").strip()
+
+
+def _effective_slot_key(row: dict) -> str:
+    """실제 upsert 키. 명시 `slot_key`, 없으면 티커 폴백 — process_gacha_entry_row 와 같다."""
+    return (row.get(GACHA_SLOT_KEY_COLUMN) or "").strip() or _row_ticker(row)
+
+
+def _claim_id(entry: ProductGachaEntry) -> int:
+    """
+    이번 임포트에서 이 칸을 이미 썼는지 가리는 키 = **PK**.
+
+    ⚠️ 파이썬 객체 id 를 쓰면 안 된다. SQLAlchemy 의 identity map 은 **약한 참조**라
+    지역 변수가 사라진 뒤 GC 되면 같은 행이라도 다음 쿼리가 **새 인스턴스**를 만든다
+    (실측: claimed 에 넣은 id 와 다음 쿼리가 돌려준 객체의 id 가 달랐다). 게다가 해제된
+    id 는 재사용될 수 있어 엉뚱한 행을 '이미 썼다'고 볼 수도 있다.
+
+    그래서 신규 행은 `add()` 직후 flush 해 PK 를 받고 그 값을 기록한다.
+    """
+    assert entry.id is not None, "flush 전 행을 claim 하려 한다 — PK 가 없다"
+    return entry.id
 
 
 def gacha_pool_summary(db: Session, product_id: int) -> str:
@@ -966,10 +986,11 @@ def assert_slot_keys_consistent(db: Session, rows: list) -> None:
     풀 CSV 는 upsert-only(삭제가 없다)라 잘못 들어간 칸은 DB 를 직접 고쳐야 없어진다.
     그래서 "틀린 채로 성공" 을 한 줄도 허용하지 않는다.
 
-    막는 것 넷:
+    막는 것:
       1. **한 상품 안에서 slot_key 전부/전무** — 섞이면 무키 행이 레거시 칸을 갱신하고,
          뒤 행이 그 칸을 또 입양해 두 행이 한 칸으로 합쳐진다(9칸 표가 5칸).
-      2. **파일 안 중복 키** — 오타·복붙. 두 번째 행이 첫 번째를 조용히 덮어쓴다.
+      2. **파일 안 중복 키** — 오타·복붙, 그리고 **slot_key 컬럼을 깜빡한 재료 시트**.
+         판정은 실효 키(명시값 or 티커 폴백) 기준이다 — 키 있는 행만 보면 후자가 샌다.
       3. **이미 키잉된 상품에 무키 시트** — 옛 시트 탭이 남아 있는 전환 직후가 제일 위험하다.
          티커로 폴백해 INSERT 되고, 칸이 복제돼 공시 확률이 절반이 된다.
       4. **레거시 칸을 덮지 않는 부분 시트** — 새 행만 올리면 남은 레거시 칸이 그 행으로
@@ -987,18 +1008,29 @@ def assert_slot_keys_consistent(db: Session, rows: list) -> None:
                 " **전부**에 있거나 전부 없어야 한다 — 섞이면 두 행이 한 칸으로 합쳐진다"
             )
 
+        # 중복은 **실효 키**(명시값 or 티커 폴백) 기준으로 본다. 키 있는 행만 보면
+        #   무키 시트의 티커 중복 — 재료 9행을 쓰면서 slot_key 컬럼을 깜빡하는, 전환기
+        #   1순위 실수 — 이 그대로 통과해 9칸이 5칸이 된다(이 티켓의 원래 사고다).
+        keys = [_effective_slot_key(r) for r in product_rows]
+        dups = sorted({k for k in keys if keys.count(k) > 1})
+        if dups:
+            raise ValueError(
+                f"gacha product {product_id}: 같은 칸이 파일에 두 번 있다 {dups} —"
+                f" 뒤 행이 앞 행을 덮어써 칸이 사라진다."
+                f" 같은 아이템을 수량만 다르게 두려면 {GACHA_SLOT_KEY_COLUMN} 를 다르게 줄 것"
+            )
+
         if keyed:
-            keys = [(r.get(GACHA_SLOT_KEY_COLUMN) or "").strip() for r in keyed]
-            dups = sorted({k for k in keys if keys.count(k) > 1})
-            if dups:
-                raise ValueError(
-                    f"gacha product {product_id}: 같은 {GACHA_SLOT_KEY_COLUMN} 가 파일에"
-                    f" 두 번 있다 {dups} — 뒤 행이 앞 행을 덮어써 칸이 사라진다"
-                )
             # 칸 이름을 남의 티커로 지으면 그 칸을 집는다(백필 때문에 레거시 칸의 키가
             #   곧 티커다). 자기 티커와 같은 건 폴백과 구분이 안 되므로 허용한다.
-            for r, key in zip(keyed, keys):
-                ticker = (r.get("ticker") or r.get("fungible_item_id") or "").strip()
+            #   ⚠️ 이건 **보증이 아니라 벨트**다 — 접두어 없는 티커(예: `CRYSTAL`)는 못
+            #   거른다. 실제 방어는 위 중복 검사와 아래 커버 검사이고, 그 둘을 손댈 때
+            #   이 검사에 기대지 말 것.
+            for r in keyed:
+                key = (r.get(GACHA_SLOT_KEY_COLUMN) or "").strip()
+                ticker = _row_ticker(r)
+                if not ticker:
+                    continue  # 원인은 빈 티커다 — 행 단위 검사가 제대로 된 메시지를 낸다
                 if key != ticker and (key.startswith("Item_") or key.startswith("FAV__")):
                     raise ValueError(
                         f"gacha product {product_id}: {GACHA_SLOT_KEY_COLUMN}={key!r} 는"
@@ -1022,10 +1054,7 @@ def assert_slot_keys_consistent(db: Session, rows: list) -> None:
             continue
 
         # 전환 임포트(레거시 칸이 남아 있는데 키를 붙이는 중)는 **풀 전체**여야 한다.
-        csv_tickers = {
-            ((r.get("ticker") or r.get("fungible_item_id") or "").strip())
-            for r in product_rows
-        }
+        csv_tickers = {_row_ticker(r) for r in product_rows}
         missing = sorted(legacy - csv_tickers)
         if missing:
             raise ValueError(
@@ -1173,7 +1202,14 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
             setattr(existing, field, new)
         return True
 
-    db.add(ProductGachaEntry(**csv_data))
+    entry = ProductGachaEntry(**csv_data)
+    db.add(entry)
+    db.flush()  # PK 를 받아야 claim 할 수 있다(아래 주석) — 롤백 경계는 그대로다
+    # 이번 임포트가 **새로 만든** 칸도 입양 대상에서 빼야 한다. 빼지 않으면 뒤 행이
+    #   (slot_key == ticker 로 들어간) 이 칸을 집어 두 행이 한 칸으로 합쳐진다 —
+    #   "기존 칸은 이름 그대로 두고 새 칸만 이름 붙인다" 는 가장 자연스러운 시트 쓰기가
+    #   바로 그 조합이라, 회피 경로가 아니라 주 경로다.
+    claimed_ids.add(_claim_id(entry))
     print(
         f"🆕 Gacha entry 추가: product {csv_data['product_id']} /"
         f" 칸 {csv_data['slot_key']} = [{csv_data['kind']}] {csv_data['ticker']}"
@@ -1189,6 +1225,7 @@ def import_gacha_entries_from_csv(
     max_item_units=None,
     max_fav_units=None,
     allowed_fav_tickers=None,
+    touched_out: Optional[set] = None,
 ) -> Tuple[int, int]:
     """
     뽑기 풀 CSV 임포트.
@@ -1236,6 +1273,11 @@ def import_gacha_entries_from_csv(
         )
         for product_id in sorted(touched_products):
             print(f"   {gacha_pool_summary(db, product_id)}")
+        # 호출부가 CSV 를 **다시 파싱하지 않도록** 임포터가 본 그대로 내보낸다. 파서가
+        #   갈리면(예: 콤마 낀 product_id) 요약에서 그 상품이 조용히 빠지는데, 지금은 그
+        #   요약이 사고를 잡는 유일한 신호다.
+        if touched_out is not None:
+            touched_out.update(touched_products)
         return processed_count, changed_count
 
     except Exception as e:
