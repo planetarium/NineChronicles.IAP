@@ -272,11 +272,10 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
     상금 종류가 좁을 이유가 없다(룬스톤·소울스톤·크리스탈이 전부 FAV 축이다).
 
     온체인에서는 둘 다 `FungibleAssetValue`(티커 + 자릿수 + 수량)라 `ticker` 한 컬럼으로
-    충분하다. 그런데 **`kind` 를 따로 둔다** — 티커 접두어(`FAV__` / `Item_`)로 추론하면
-    머니 가드의 분기가 문자열 관례에 걸리고, 그건 새 접두어 하나에 조용히 뚫린다.
-    FAV 는 `check_fav_tickers` 얼로우리스트와 **FAV 전용 수량 상한**을 지나야 하므로
-    (아이템 상한과 따로 세지 않으면 물약 1,000개 상한이 곧 NCG 1,000 발행 상한이 된다)
-    어느 쪽인지가 데이터에 명시돼 있어야 한다.
+    충분하다. 그런데 **`kind` 를 따로 둔다** — 지급 tx 를 만드는 분기가 이 값으로 갈리는데
+    (FAV 는 `MintAsset`, 아이템은 인벤토리 민팅) 티커 접두어(`FAV__` / `Item_`)로 추론하면
+    그 분기가 문자열 관례에 걸리고, 새 접두어 하나에 조용히 어긋난다. 자릿수(`decimal_places`)
+    의 의미도 축마다 달라서, 어느 쪽인지가 데이터에 명시돼 있어야 한다.
 
     번들(한 칸이 여러 종)은 아직 아니다 — `gacha_result.claim` 이 이미 리스트라 스키마
     변경 없이 확장된다.
@@ -325,12 +324,12 @@ class ProductGachaEntry(AutoIdMixin, TimeStampMixin, Base):
     kind = Column(
         Text,
         nullable=False,
-        # server_default 를 두지 않는다 — 빠뜨린 INSERT 가 조용히 ITEM 이 되면 FAV 가
-        # 얼로우리스트를 안 지나고 새 나간다(가드 기준 fail-open). 시끄럽게 죽는 게 맞다.
+        # server_default 를 두지 않는다 — 빠뜨린 INSERT 가 조용히 ITEM 이 되면 FAV 칸이
+        # 아이템으로 지급을 시도해 tx 가 깨진다. 시끄럽게 죽는 게 맞다.
         doc=(
-            "'ITEM' | 'FAV'. **머니 가드의 분기가 이 값으로 갈린다** —"
-            " FAV 는 얼로우리스트(check_fav_tickers)와 FAV 전용 수량 상한을 지난다."
-            " 티커 접두어로 추론하지 않는다(접두어 관례 하나에 가드가 뚫린다)"
+            "'ITEM' | 'FAV'. **지급 tx 의 분기가 이 값으로 갈린다** —"
+            " FAV 는 MintAsset, 아이템은 인벤토리 민팅이다."
+            " 티커 접두어로 추론하지 않는다(접두어 관례 하나에 분기가 어긋난다)"
         ),
     )
     ticker = Column(

@@ -96,13 +96,12 @@ ITEM_ROW = "900,Hourglass,100,ITEM,Item_NT_400000,30,400000,0"
 #   (수량이 다르면 "기존 칸이 이 파일에 없다" 로 거절된다 — 의도된 fail-closed)
 ITEM_ROW_8000 = "900,Hourglass,100,ITEM,Item_NT_400000,8000,400000,0"
 FAV_ROW = "900,HP Rune,100,FAV,FAV__RUNESTONE_HP,200,,0"
-ALLOW_HP = frozenset({"FAV__RUNESTONE_HP"})
 
 
 class TestBasics:
     def test_아이템과_FAV_를_같이_넣는다(self, sess, product):
         processed, changed = run_import(
-            sess, [ITEM_ROW, FAV_ROW], allowed_fav_tickers=ALLOW_HP
+            sess, [ITEM_ROW, FAV_ROW]
         )
         assert (processed, changed) == (2, 2)
         by_kind = {e.kind: e for e in entries(sess)}
@@ -112,8 +111,8 @@ class TestBasics:
         assert by_kind["FAV"].sheet_item_id is None
 
     def test_재임포트는_멱등이다(self, sess, product):
-        run_import(sess, [ITEM_ROW], allowed_fav_tickers=ALLOW_HP)
-        processed, changed = run_import(sess, [ITEM_ROW], allowed_fav_tickers=ALLOW_HP)
+        run_import(sess, [ITEM_ROW])
+        processed, changed = run_import(sess, [ITEM_ROW])
         assert (processed, changed) == (1, 0)
         assert len(entries(sess)) == 1
 
@@ -152,12 +151,11 @@ class TestKindIsThreeState:
     """
 
     def test_빈칸은_기존_FAV_를_ITEM_으로_뒤집지_않는다(self, sess, product):
-        run_import(sess, [FAV_ROW], allowed_fav_tickers=ALLOW_HP)
+        run_import(sess, [FAV_ROW])
         # kind 를 비운 같은 티커 행 재임포트 (sheet_item_id 도 비워야 FAV 로 성립)
         run_import(
             sess,
             ["900,HP Rune,150,,FAV__RUNESTONE_HP,200,,0"],
-            allowed_fav_tickers=ALLOW_HP,
         )
         row = entries(sess)[0]
         assert row.kind == "FAV", "빈칸이 기존 FAV 를 ITEM 으로 뒤집으면 안 된다"
@@ -184,7 +182,6 @@ class TestShapeValidation:
             run_import(
                 sess,
                 ["900,X,100,FAV,FAV__RUNESTONE_HP,1,400000,0"],
-                allowed_fav_tickers=ALLOW_HP,
             )
 
     def test_ITEM_의_decimal_places_는_0_이어야_한다(self, sess, product):
@@ -203,51 +200,8 @@ class TestShapeValidation:
             run_import(sess, [f"900,X,100,ITEM,Item_NT_400000,{amount},400000,0"])
 
 
-class TestCapsAreMeasuredPerAxis:
-    """합치면 FAV 상한이 아이템 상한에 흡수된다 — 등록 시점에도 같은 규칙이어야 한다."""
-
-    def test_FAV_는_FAV_상한으로_잰다(self, sess, product):
-        with pytest.raises(ValueError, match="상한"):
-            run_import(
-                sess,
-                [FAV_ROW],  # amount=200
-                max_item_units=10_000,  # 아이템 상한은 넉넉
-                max_fav_units=50,  # FAV 상한은 빡빡
-                allowed_fav_tickers=ALLOW_HP,
-            )
-        assert entries(sess) == [], "거절이면 전체 롤백이어야 한다"
-
-    def test_아이템은_아이템_상한으로_잰다(self, sess, product):
-        with pytest.raises(ValueError, match="상한"):
-            run_import(sess, [ITEM_ROW], max_item_units=10, max_fav_units=10_000)
-
-    def test_상한_미설정이면_검사하지_않는다(self, sess, product):
-        run_import(sess, [ITEM_ROW, FAV_ROW], allowed_fav_tickers=ALLOW_HP)
-        assert len(entries(sess)) == 2
 
 
-class TestFavAllowlistAtRegistration:
-    """
-    닫힌 티커가 등록되면 그 칸에 당첨된 주문이 503 이 되는데, 그 503 은 "그 주문만 멈춤"이
-    아니라 **조용한 재추첨**이다(추첨이 아웃박스 행보다 먼저라 거절 시 행이 없고, 재시도가
-    멱등에 안 걸린다). 그래서 등록 자체를 막는다.
-    """
-
-    def test_허용목록_밖_티커는_등록되지_않는다(self, sess, product):
-        with pytest.raises(ValueError, match="허용목록 밖"):
-            run_import(
-                sess, [FAV_ROW], allowed_fav_tickers=frozenset({"FAV__CRYSTAL"})
-            )
-        assert entries(sess) == []
-
-    def test_허용목록이_비어_있으면_FAV_등록을_막는다(self, sess, product):
-        with pytest.raises(ValueError, match="비어 있다"):
-            run_import(sess, [FAV_ROW], allowed_fav_tickers=frozenset())
-        assert entries(sess) == []
-
-    def test_아이템만_있으면_허용목록과_무관하다(self, sess, product):
-        run_import(sess, [ITEM_ROW], allowed_fav_tickers=frozenset())
-        assert len(entries(sess)) == 1
 
 
 class TestMixedComponents:
@@ -299,45 +253,6 @@ def product_row(draws):
     )
 
 
-class TestDrawCountCaps:
-    """
-    상한은 **1 요청** 단위인데 10연은 한 요청이 10회 지급이다. 회차당으로 재면 10연이
-    상한을 10배 우회하고, 반대로 재검증을 빠뜨리면 "운 좋은 10연만 400" 이 된다 —
-    그 400 은 그 주문만 멈추는 게 아니라 **조용한 재추첨**이다(행이 안 생겨 포탈 재시도가
-    멱등에 안 걸린다).
-    """
-
-    def test_최악의_10연_합계로_잰다(self, sess, product):
-        # amount=30 × 10연 = 300 > 100 → 등록 시점에 막혀야 한다.
-        product.gacha_draw_count = 10
-        sess.commit()
-        with pytest.raises(ValueError, match="상한"):
-            run_import(sess, [ITEM_ROW], max_item_units=100)
-        assert entries(sess) == []
-
-    def test_단연이면_같은_칸이_통과한다(self, sess, product):
-        # 회차당으로 재는 회귀를 가른다 — draws=1 이면 30 ≤ 100 이라 통과다.
-        run_import(sess, [ITEM_ROW], max_item_units=100)
-        assert len(entries(sess)) == 1
-
-    def test_상품_CSV_로_10연을_켜면_풀_상한을_다시_잰다(self, sess, product):
-        # 🔴 이 경로가 없으면 상한 검사가 **한 번도 안 돌고**, 그 뒤 큰 칸이 뽑힌 10연만
-        #    지급 시점에 400 이 된다(= 재추첨).
-        run_import(sess, [ITEM_ROW], max_item_units=100)  # draws=1 이라 통과
-        with pytest.raises(ValueError, match="상한"):
-            run_product_import(sess, [product_row(10)], max_item_units=100)
-
-    def test_상품_CSV_로_켠_10연이_상한_안이면_통과한다(self, sess, product):
-        run_import(sess, [ITEM_ROW], max_item_units=1000)
-        run_product_import(sess, [product_row(10)], max_item_units=1000)
-        sess.refresh(product)
-        assert product.gacha_draw_count == 10
-
-    def test_풀이_없는_상품은_재검증하지_않는다(self, sess, product):
-        # 뽑기와 무관한 상품 임포트마다 풀을 조회할 이유가 없다.
-        run_product_import(sess, [product_row(10)], max_item_units=1)
-        sess.refresh(product)
-        assert product.gacha_draw_count == 10
 
 
 class TestDrawCountColumn:
