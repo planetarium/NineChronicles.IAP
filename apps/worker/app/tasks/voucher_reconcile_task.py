@@ -52,6 +52,10 @@ _REFUNDED_STATUSES = [
     ReceiptStatus.INVALID,
 ]
 # google void → receipt 매칭 시 좁힐 스토어(order_id는 (store,order_id)로만 유일 → 크로스-스토어 오매칭 방지).
+#   ⚠️ ONESTORE 를 여기 넣으면 안 된다. 이 목록은 "google void 폴링이 준 order_id" 를 받는
+#      자리이고, 넓히는 순간 같은 order_id 를 가진 원스토어 영수증까지 회수된다 — 위 주석이
+#      경고하는 크로스-스토어 오매칭 그 자체다. 원스토어 환불 회수는 원스토어 취소 조회를
+#      도는 **별도 폴링**이 필요하다(track_google_refund 대응물, 아직 없음).
 _GOOGLE_STORES = [Store.GOOGLE, Store.GOOGLE_TEST]
 # 회수 대상 = 발급됐을 수 있는 모든 비-종단 상태 + FAILED(크래시창에 발급 후 FAILED 찍힌 건 포함).
 _REVOCABLE_OUTBOX_STATUSES = [
