@@ -199,8 +199,8 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
                 )
             except HTTPException as e:
                 raise ValueError(f"product {csv_data['id']}: {e.detail}")
-        # prod 상한 미주입 게이트는 여기 두지 않는다 — 지급 시점이 fail-closed(503)라
-        #   플래그만 켜져도 발행 창이 열리지 않는다(voucher C3-lite 는 그 반대라 게이트가 필요했다).
+        # ⚠️ 이 플래그를 켜면 **그 상품은 곧바로 지급 가능**해진다. 예전에는 뒤에 발행량
+        #   상한이 한 겹 더 있었지만 지금은 없다(제거 근거는 app/grant_guard.py 도커스트링).
         csv_data[POINT_SHOP_GRANTABLE_COLUMN] = grantable
 
     # For internal environment, adjust open_timestamp if it's in the future
@@ -359,16 +359,8 @@ def import_products_from_csv(
             for row in reader:
                 processed_count += 1
                 csv_data = process_csv_row(row, is_internal)
-                # (PLD-1575) 화이트리스트를 **켜는** 행이면 FAV 티커를 선검증한다 — 켜는 순간
-                #   거절(미주입 503 / 목록 밖 400)이라야 운영자가 그 자리에서 안다.
                 if compare_and_update_product(db, csv_data, is_internal, interactive):
                     updated_count += 1
-                # (PLD-1562) 🔴 `gacha_draw_count` 가 바뀌면 **풀의 수량 상한을 다시 잰다.**
-                #   상한은 1 요청 단위인데 10연은 한 요청이 10회 지급이라, 1→10 으로 고치는
-                #   순간 이미 등록된 칸들의 최악값이 10배가 된다. 풀 CSV 쪽 검사만 있으면
-                #   이 경로는 **한 번도 안 돌고**, 그 뒤 `amount × 10 > cap` 인 칸이 뽑힌
-                #   10연만 지급 시점에 400 이 된다 — 그 400 이 곧 조용한 재추첨이다
-                #   (행이 안 생겨 포탈 재시도가 멱등에 안 걸리고 다시 뽑는다).
                 # (C1b) voucher 컬럼이 있으면 상품→티켓 매핑도 같은 트랜잭션서 REPLACE(원자적).
                 _apply_voucher_row(
                     db,
@@ -919,8 +911,7 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
     product_id = parse_int(row["product_id"])
     # kind 는 **3상태**다 — 빈칸/컬럼 부재는 "변경 없음"이지 ITEM 이 아니다.
     #   2상태로 읽으면 kind 컬럼 없는 옛 시트를 재임포트하는 순간 **기존 FAV 칸이 ITEM 으로
-    #   내려앉고**, 그 칸은 그 뒤로 얼로우리스트를 안 지나고 아이템 상한으로 재진다
-    #   (이 커밋이 닫은 구멍이 임포트로 다시 열린다).
+    #   내려앉고**, 그 칸은 지급 tx 에서 아이템으로 취급돼 발행이 깨진다.
     #   같은 리포의 선례: parse_point_shop_grantable 의 "머니 플래그는 3상태여야 한다".
     raw_kind = (row.get("kind") or "").strip().upper()
     if raw_kind and raw_kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):

@@ -1,10 +1,8 @@
 import base64
 from typing import Optional
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.enums import PackageName, PlanetID
-
 
 
 class Settings(BaseSettings):
@@ -98,7 +96,9 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        """운영 배포인가 — 머니 가드 fail-closed 게이트 판정용(voucher 게이트와 같은 집합)."""
+        """운영 배포인가. ⚠️ 지금은 **쓰는 곳이 없다** — 머니 가드의 prod fail-closed 게이트가
+        유일한 사용처였고 그게 제거됐다(app/grant_guard.py). voucher 쪽 게이트가 같은 집합을
+        쓰므로 정의는 남겨 둔다."""
         return self.stage in ("production", "mainnet")
 
     model_config = SettingsConfigDict(env_file=(".env"), env_prefix="API_")

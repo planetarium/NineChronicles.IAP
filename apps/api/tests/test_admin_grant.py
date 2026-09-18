@@ -45,10 +45,10 @@ for _key, _value in {
     os.environ.setdefault(_key, _value)
 
 import json  # noqa: E402
-from datetime import datetime, timedelta, timezone  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 
 import pytest  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from shared.enums import (  # noqa: E402
     GrantStatus,
@@ -125,8 +125,6 @@ def alert(monkeypatch):
     mock = MagicMock(return_value=True)
     monkeypatch.setattr(admin, "send_slack_alert", mock)
     return mock
-
-
 
 
 @pytest.fixture
@@ -512,7 +510,7 @@ class TestAuth:
         assert resp.status_code == 401
 
 
-# ── (PLD-1575) 머니 가드 ───────────────────────────────────────────────────────
+# ── 상품 화이트리스트 (남은 유일한 요청 시점 가드) ─────────────────────────────
 #   지급 API 는 `GrantItems` force-grant(잔액 없이 발행)를 여는 엔드포인트다. 여기 테스트는
 #   "무엇을·얼마나·누가"의 세 축이 실제로 닫혀 있는지, 그리고 **거절이 계약을 깨지 않는지**
 #   (행 없음·FAILED 없음·멱등 재요청 불변)를 못박는다.
@@ -564,21 +562,7 @@ class TestProductWhitelist:
 CRYSTAL = "FAV__CRYSTAL"
 
 
-
-
-
-
 OTHER_AVATAR = "0x" + "ef" * 20
-
-
-
-
-
-
-
-
-
-
 
 
 class TestWhitelistAdmin:
@@ -619,7 +603,11 @@ class TestWhitelistAdmin:
     def test_turning_off_is_always_allowed_even_in_prod(
         self, client, sess, monkeypatch, alert
     ):
-        """킬스위치는 게이트 뒤에 두지 않는다 — prod 여도 끄기는 통과."""
+        """킬스위치는 게이트 뒤에 두지 않는다 — prod 여도 끄기는 통과.
+
+        ⚠️ 지금 prod 전용 게이트는 없다(머니 가드와 함께 제거). stage 를 바꿔 두는 건
+        "게이트가 다시 생기면 이 테스트가 잡는다"는 표식이다.
+        """
         monkeypatch.setattr(admin.config, "stage", "production")
         product = make_product(sess, grantable=True, name="killswitch")
 
@@ -637,9 +625,6 @@ class TestWhitelistAdmin:
         resp = client.put(WHITELIST_URL, json={"product_id": 999999, "grantable": True})
 
         assert resp.status_code == 404
-
-
-
 
 
 PRODUCTS_IMPORT_URL = "/api/admin/products/import"
@@ -717,8 +702,6 @@ class TestWhitelistCsvImport:
                 "csv_content": "\n".join((CSV_HEADER,) + rows) + "\n",
             },
         )
-
-
 
 
     def test_item_only_product_is_unaffected(self, client, sess):
@@ -924,7 +907,6 @@ class TestGachaGrant:
         assert len(rows_of(sess)) == 1
 
 
-
     def test_고정_구성품과_풀을_동시에_가지면_400(self, client, sess):
         # "둘 다 주나 하나만 주나"가 정의되지 않는다. 지급은 되돌릴 수 없다.
         product = make_gacha_product(
@@ -946,9 +928,6 @@ class TestGachaGrant:
         assert resp.status_code == 201
         assert resp.json()["drawResult"] is None
         assert rows_of(sess)[0].gacha_entry_id is None
-
-
-
 
 
     def test_10연은_한_요청에_10회_지급한다(self, client, sess):
@@ -992,3 +971,64 @@ class TestGachaGrant:
         assert (first.status_code, second.status_code) == (201, 200)
         assert second.json()["drawResult"] == first.json()["drawResult"]
         assert len(rows_of(sess)) == 1
+
+
+class TestCsvGrantableColumn:
+    """
+    `point_shop_grantable` 셀 파서. **3상태**(True/False/변경 없음)이고, 토큰 집합이 좁아지면
+    시트에 이미 쓰인 값이 임포트를 통째로 400 으로 세운다 — 머니 플래그 옆의 파서라
+    여기서 못박는다(가드 제거 때 실제로 한 번 좁혔다가 되돌렸다).
+    """
+
+    @pytest.mark.parametrize("cell", ["TRUE", "true", "T", "Y", "YES", "1", " true "])
+    def test_true_토큰(self, cell):
+        assert grant_guard.parse_point_shop_grantable(cell) is True
+
+    @pytest.mark.parametrize(
+        "cell", ["FALSE", "false", "F", "N", "NO", "0", "X", "-", " x "]
+    )
+    def test_false_토큰(self, cell):
+        assert grant_guard.parse_point_shop_grantable(cell) is False
+
+    @pytest.mark.parametrize("cell", [None, "", "   "])
+    def test_빈칸은_변경_없음이다(self, cell):
+        # 2상태로 읽으면 이 컬럼 없는 옛 시트 재임포트가 전 상품을 꺼 버린다.
+        assert grant_guard.parse_point_shop_grantable(cell) is None
+
+    @pytest.mark.parametrize("cell", ["O", "maybe", "2", "ON"])
+    def test_모르는_토큰은_거절(self, cell):
+        # "모르는 값은 False" 도 위험하다 — 운영자가 켠 줄 알고 방치한다.
+        #   `O` 를 true 로 받지 않는 것도 같은 이유(숫자 0 오타와 비대칭이 된다).
+        with pytest.raises(ValueError, match="point_shop_grantable"):
+            grant_guard.parse_point_shop_grantable(cell)
+
+    def test_미지_상품유형은_차단이_기본이다(self):
+        """ProductType 에 새 유형이 추가돼도 기본이 차단 — deny-by-default."""
+        with pytest.raises(HTTPException) as e:
+            grant_guard.validate_point_shop_grantable_eligible(1, "NEW_TYPE_2027", None)
+        assert e.value.status_code == 400
+        assert "알 수 없는 상품유형" in e.value.detail
+
+
+class TestGachaPoolErrorPath:
+    def test_자릿수가_범위를_넘는_칸은_400_이고_행을_안_남긴다(self, client, sess, worker):
+        """
+        `claim_from_result` 가 **유일한 자릿수 방어선**이다 — 실발행량이
+        `amount × 10**decimalPlaces` 라 자릿수가 곧 배율인데, DB CHECK 는 `>= 0` 만 본다.
+
+        순수 함수 테스트(test_gacha.py)만으로는 "그 검증이 요청 경로에 실제로 이어져 있는가"가
+        안 잡힌다 — 이 파일이 이미 한 번 겪은 함정이라 엔드포인트에서 못박는다.
+        """
+        product = make_gacha_product(
+            sess, entries=[("룬", 1, "FAV__RUNESTONE_HP", 1)], name="bad-places"
+        )
+        entry = product.gacha_entry_list[0]
+        entry.decimal_places = 19  # 상한 18 초과 — CSV 임포트는 막지만 직접 INSERT 는 아니다
+        sess.commit()
+
+        resp = client.post(GRANT_URL, json=payload(product))
+
+        assert resp.status_code == 400
+        assert "gacha pool" in json.dumps(resp.json())
+        assert rows_of(sess) == []
+        assert worker.call_count == 0

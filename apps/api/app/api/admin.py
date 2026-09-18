@@ -363,7 +363,7 @@ def import_products_endpoint(request: ImportProductsRequest, sess=Depends(sessio
             os.unlink(temp_path)
 
     except HTTPException:
-        raise  # fetch(502/409/503)·prod게이트(400)·grant 가드(503/400) 등 명시 상태코드 보존
+        raise  # fetch(502/409/503)·검증(400) 등 명시 상태코드 보존
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -523,9 +523,6 @@ def import_gacha_entries_endpoint(
         임시 아이템으로 열어 둔 칸을 진짜 ID 로 바꿀 때가 이 경우다
       · 커버 규칙은 **아직 칸 이름이 없는 칸이 남아 있는 동안만** 문다. 전환이 끝난 뒤에는
         일부 칸만 담은 시트가 그냥 통과한다(그 칸들만 갱신, 나머지는 그대로)
-
-    ⚠️ FAV 칸을 넣으려면 `grant_allowed_fav_tickers` 에 그 티커가 열려 있어야 한다.
-       닫혀 있으면 그 칸에 당첨된 주문이 **503** 으로 멈춘다(화폐 발행은 명시적으로만 연다).
 
     `fungible-items/import` 와 같은 모양(상품당 여러 행)이다. **upsert 이고 REPLACE 가
     아니다** — 부분 CSV 로 나머지 칸이 조용히 사라지면 확률이 통째로 바뀌는 사고가 된다.
@@ -1811,19 +1808,17 @@ def create_grant(
     - **201**: 새 아웃박스 행 생성 + 워커 큐 발행
     - **200**: 같은 `externalRef` 재요청 — **새 tx 를 만들지 않고** 기존 행을 그대로 반환
       (그래서 409 를 쓰지 않는다. 포탈은 재시도해도 안전하다)
-    - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo) 또는
-      **머니 가드 위반**(화이트리스트 밖 상품·발행량/빈도 상한 초과·**아바타 축 상한 초과**·
-      미등록 네임스페이스). 가드 위반은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면
+    - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo·잘못된 뽑기 풀) 또는
+      **화이트리스트 밖 상품**. 거절은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면
       포탈이 환급을 트리거하는데, 지급이 시작되지도 않았기 때문이다(계약 v1.1).
-    - **503**: prod 인데 머니 가드 임계가 미주입(운영 실수 — 포탈은 재시도하면 된다)
     - **401/403**: 인증(라우터 레벨)
 
     `status` 는 이 시점에 항상 `PENDING` 이다 — 실제 온체인 확정은 워커가 추적하며,
     포탈은 `GET /admin/grant/{externalRef}` 로 `GRANTED` 를 기다린다.
 
-    같은 `(아바타, 상품)` 이 짧은 창 안에 반복되면 **201 로 통과시키고 Slack 경고만** 남긴다
-    (`duplicate_grant_warn`) — 포탈이 같은 구매에 새 `externalRef` 를 붙여 재요청했을
-    가능성이지만 정상 반복 구매와 구분되지 않아 거절하지 않는다(grant_guard.py 참고).
+    ⚠️ 발행량·빈도 상한은 **없다**(제거 근거는 grant_guard.py 도커스트링). 같은 구매에 새
+    `externalRef` 가 붙어 두 번 오면 IAP 는 막지 못한다 — 주문의 권위가 포탈에 있어서,
+    그 중복은 포탈 `shop_order` 쪽에서만 판별된다.
     """
     planet = parse_grant_planet(request.planet_id)
 
@@ -1875,7 +1870,20 @@ def create_grant(
     # 요청 시점 가드는 **상품 화이트리스트 하나**다(grant_guard.py 도커스트링에 제거 근거).
     #   INSERT 전에 끝낸다 — 아웃박스에 FAILED 를 남기면 포탈이 환급을 트리거하는데,
     #   지급이 시작되지도 않았기 때문이다(계약 v1.1).
-    assert_product_grantable(product)
+    #   거절은 **로그로 남긴다.** 남은 유일한 가드라, 발화했는지 볼 수 없으면 포탈이 잘못된
+    #   productId 를 쏟아내도 IAP 쪽에 아무 흔적이 없다(알림은 걷어냈지만 관측은 남긴다).
+    try:
+        assert_product_grantable(product)
+    except HTTPException as denied:
+        logger.warning(
+            "grant rejected: product not grantable",
+            detail=denied.detail,
+            external_ref=request.external_ref,
+            product_id=request.product_id,
+            avatar_addr=avatar_addr,
+            planet_id=request.planet_id,
+        )
+        raise
 
     # (PLD-1562) 추첨 — **INSERT 와 같은 트랜잭션에서 한 번**.
     #   재추첨이 안 되는 근거는 위 멱등 분기와 INSERT 의 UNIQUE(external_ref) 다. 같은
@@ -1885,7 +1893,6 @@ def create_grant(
     #   안 만든 채 포탈 재시도를 부르고, 그 재시도가 곧 재추첨이다).
     gacha_entry = None
     gacha_result = None
-    gacha_claim = None
     if product.is_gacha:
         try:
             # 상품이 정한 횟수만큼 **독립** 추첨(10연 = 복원추출 10회).
@@ -1897,9 +1904,10 @@ def create_grant(
             #   gacha_result["draws"] 가 전부 들고 있다.
             gacha_entry = picks[0] if len(picks) == 1 else None
             gacha_result = build_gacha_result(product.gacha_entry_list, picks)
-            # 동결본을 **여기서 바로 되읽는다** — 형식 검증이 이 시점에 끝나야 한다.
-            #   워커까지 미루면 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
-            gacha_claim = claim_from_result(gacha_result)
+            # 동결본을 **여기서 바로 되읽는다.** ⚠️ 반환값을 쓰지 않는다 — 부르는 목적이
+            #   **검증**이다(자릿수 상한 등). 이 줄을 "쓰지 않는 값"으로 보고 지우면 그
+            #   검증이 워커로 밀려 "포인트 쓰고 결과까지 본 뒤 FAILED→환급" 이 된다.
+            claim_from_result(gacha_result)
         except GachaPoolError as e:
             # 풀 설정 오류(빈 풀·잘못된 가중치·형식). 재시도해도 같으므로 400 이다.
             sess.rollback()
@@ -1938,8 +1946,8 @@ def create_grant(
         return _grant_schema(existing)
     sess.refresh(row)
 
-    # 감사 로그(who/what/when). who = 등록된 external_ref 네임스페이스(admin JWT 에 subject
-    #   클레임이 없어 이게 유일한 출처 식별자다 — PLD-1575 근거는 grant_guard.py 참고).
+    # 감사 로그(who/what/when). who = external_ref 앞부분(admin JWT 에 subject 클레임이 없어
+    #   이게 유일한 출처 단서다 — 등록제가 아니라 관례다, grant_outbox 모델 주석 참고).
     logger.info(
         "grant requested",
         namespace=namespace,
