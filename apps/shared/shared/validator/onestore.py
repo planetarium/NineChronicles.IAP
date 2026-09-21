@@ -79,6 +79,38 @@ def clear_token_cache() -> None:
         _token_cache.clear()
 
 
+SANDBOX_TOKEN_PREFIX = "SANDBOX"
+
+
+def is_sandbox_token(purchase_token: Optional[str]) -> bool:
+    """샌드박스 구매인지 **영수증만 보고** 판단한다.
+
+    샌드박스 purchaseToken 은 `SANDBOX` 로 시작한다(실측: `SANDBOX3000002616574`).
+    상용은 날짜+지역 표식 형태다(실측: `260918043551SGP40543`, SGP=싱가포르).
+    """
+    return bool(purchase_token) and purchase_token.startswith(SANDBOX_TOKEN_PREFIX)
+
+
+def resolve_host(
+    host: Optional[str], sandbox_host: Optional[str], purchase_token: Optional[str]
+) -> Optional[str]:
+    """이 구매를 어느 호스트에 물어볼지.
+
+    **기본은 `host` 하나뿐이고, 그게 fail-closed 장치다.** 구매 기록이 환경별로 갈려 있어
+    샌드박스 영수증을 상용 호스트에 물으면 `NoSuchData` 로 떨어진다. 메인넷이 상용 호스트만
+    보게 두면 **공짜인 샌드박스 구매가 지급으로 새지 않는다.**
+
+    `sandbox_host` 는 그 장치를 **의도적으로 여는** 설정이다. 검증 환경에서는 한 배포가 둘 다
+    처리해야 하기 때문이다 — 원스토어 콘솔의 검증요청 잠금은 **샌드박스** 결제를 요구하는데,
+    심사자는 **상용** 결제를 한다(PLD-1616).
+
+    그래서 **메인넷에는 이 값을 설정하지 않는다.** 설정하지 않으면 동작이 종전과 같다.
+    """
+    if sandbox_host and is_sandbox_token(purchase_token):
+        return sandbox_host
+    return host
+
+
 def is_onestore_configured(host: Optional[str], client_id: Optional[str], client_secret: Optional[str]) -> bool:
     """시크릿이 배선됐는지. 호출자가 **영수증을 만들기 전에** 확인하는 용도.
 

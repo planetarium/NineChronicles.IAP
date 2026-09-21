@@ -38,6 +38,7 @@ from shared.validator.onestore import (
     acknowledge_onestore,
     is_onestore_configured,
     validate_onestore,
+    resolve_host,
 )
 from shared.validator.web import validate_web, validate_web_test
 from sqlalchemy import desc, func, or_, select, text
@@ -517,7 +518,11 @@ def request_product(
     elif receipt_data.store == Store.ONESTORE:
         # 전제조건(시크릿·필수 필드)은 영수증을 만들기 전에 이미 봤다.
         success, msg, purchase = validate_onestore(
-            config.onestore_host,
+            resolve_host(
+                config.onestore_host,
+                config.onestore_sandbox_host,
+                receipt_data.order["purchaseToken"],
+            ),
             config.onestore_client_id,
             config.onestore_client_secret,
             product_id,
@@ -817,7 +822,11 @@ def request_product(
     #   실패해도 지급은 이미 나갔으므로 로그만 남기고 진행한다.
     if receipt.store == Store.ONESTORE:
         acked, ack_msg = acknowledge_onestore(
-            config.onestore_host,
+            resolve_host(
+                config.onestore_host,
+                config.onestore_sandbox_host,
+                receipt_data.order["purchaseToken"],
+            ),
             config.onestore_client_id,
             config.onestore_client_secret,
             product_id,

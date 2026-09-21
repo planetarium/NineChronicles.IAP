@@ -466,3 +466,43 @@ class TestAcknowledge:
 
         assert ok is False
         assert "not configured" in msg
+
+
+# --- 호스트 분기 (PLD-1616) --------------------------------------------------
+#
+# 한 배포가 샌드박스와 상용을 **둘 다** 처리해야 하는 경우가 있다. 검증요청 잠금은 샌드박스
+# 결제를, 심사자는 상용 결제를 요구한다. 다만 이건 fail-closed 장치를 여는 것이라, 설정하지
+# 않은 배포(메인넷)에서는 종전 동작이 그대로여야 한다.
+
+from shared.validator.onestore import is_sandbox_token, resolve_host
+
+SANDBOX = "https://sbpp.onestore.net"
+PROD = "https://iap-apis.onestore.net"
+
+# 실측값 (2026-09-21)
+SANDBOX_TOKEN = "SANDBOX3000002616574"
+PROD_TOKEN = "260918043551SGP40543"
+
+
+def test_is_sandbox_token():
+    assert is_sandbox_token(SANDBOX_TOKEN)
+    assert not is_sandbox_token(PROD_TOKEN)
+    assert not is_sandbox_token("")
+    assert not is_sandbox_token(None)
+
+
+def test_resolve_host_without_sandbox_host_is_unchanged():
+    """샌드박스 호스트를 설정하지 않으면 종전 그대로 — 메인넷의 fail-closed 가 유지된다."""
+    assert resolve_host(PROD, None, SANDBOX_TOKEN) == PROD
+    assert resolve_host(PROD, None, PROD_TOKEN) == PROD
+    assert resolve_host(SANDBOX, None, PROD_TOKEN) == SANDBOX
+
+
+def test_resolve_host_routes_by_token_when_configured():
+    """설정한 배포에서만 토큰을 보고 갈린다."""
+    assert resolve_host(PROD, SANDBOX, SANDBOX_TOKEN) == SANDBOX
+    assert resolve_host(PROD, SANDBOX, PROD_TOKEN) == PROD
+
+
+def test_resolve_host_passes_through_none_host():
+    assert resolve_host(None, SANDBOX, PROD_TOKEN) is None
