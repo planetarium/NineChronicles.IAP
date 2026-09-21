@@ -62,7 +62,11 @@ class OneStorePurchaseSchema(BaseSchema):
     purchaseId: str
     consumptionState: int = OneStoreConsumptionState.YET_BE_CONSUMED
     acknowledgeState: int = OneStoreAckState.YET_TO_BE_ACKNOWLEDGED
-    developerPayload: str = ""
+    # **상용은 null 을 준다** — 검증환경(sbpp)은 `""` 를 준다. 기본값은 키가 없을 때만
+    #   먹고 명시적 null 에는 안 먹어서, str 로 두면 상용 구매가 전부
+    #   "Malformed ONE Store purchase data" 로 떨어져 INVALID 로 굳는다(= 영영 지급 불가).
+    #   샌드박스로는 못 잡는 차이다. 2026-09-21 상용 호스트 실측으로 확인.
+    developerPayload: Optional[str] = ""
     quantity: int = 1
 
     @property

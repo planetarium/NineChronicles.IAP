@@ -216,6 +216,26 @@ class TestValidateOneStore:
         assert "Malformed" not in msg
         assert purchase is not None
 
+    def test_null_developer_payload_is_accepted(self):
+        """상용은 `developerPayload` 를 **null** 로 준다 — 검증환경은 `""` 를 준다.
+
+        필드 기본값은 키가 **없을 때만** 먹고 명시적 null 에는 안 먹는다. 그대로 두면
+        상용 구매가 전부 `Malformed ONE Store purchase data` 로 떨어져 INVALID 로 굳는다.
+        샌드박스에서는 절대 안 잡히는 차이라, 2026-09-21 인터널 호스트를 상용으로 돌려
+        실측했다(구매 26091804355110440543).
+        """
+        with patch.object(
+            onestore_validator.requests, "post", return_value=_resp(200, TOKEN_BODY)
+        ), patch.object(
+            onestore_validator.requests,
+            "get",
+            return_value=_resp(200, {**PURCHASE_BODY, "developerPayload": None}),
+        ):
+            success, msg, purchase = _call()
+
+        assert success is True, msg
+        assert purchase.developerPayload is None
+
     def test_host_trailing_slash_is_normalized(self):
         get = Mock(return_value=_resp(200, PURCHASE_BODY))
         with patch.object(
