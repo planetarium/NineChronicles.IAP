@@ -1,4 +1,5 @@
 # Import tasks here for autodiscovery
+from app.tasks.grant_task import send_grant, track_grants
 from app.tasks.retryer import retryer
 from app.tasks.send_product_task import send_product
 from app.tasks.status_monitor import status_monitor
