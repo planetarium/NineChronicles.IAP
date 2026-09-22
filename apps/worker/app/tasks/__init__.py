@@ -6,3 +6,4 @@ from app.tasks.track_google_refund import track_google_refund
 from app.tasks.tracker import track_tx
 from app.tasks.voucher_grant_task import grant_vouchers
 from app.tasks.voucher_reconcile_task import reconcile_vouchers
+from app.tasks.reconcile_purchase_signal import reconcile_purchase_signal
