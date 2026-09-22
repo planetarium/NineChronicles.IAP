@@ -7,6 +7,7 @@
 실행: 리포 루트에서 `pytest tests/worker/test_reconcile_purchase_signal.py`
 """
 
+import importlib
 import os
 import sys
 
@@ -27,6 +28,13 @@ def reconciler():
     `apps/api`와 `apps/worker` 둘 다 top-level `app` 패키지를 쓴다. 그냥 import하면
     먼저 로드된 쪽이 `sys.modules["app"]`을 선점해 다른 테스트 파일이 조용히
     엉뚱한 패키지를 집게 되므로, import 전후로 `app*`을 갈아끼웠다 되돌린다.
+
+    그리고 **`from app.tasks import reconcile_purchase_signal` 로 가져오면 안 된다.**
+    `app/tasks/__init__.py` 가 셀러리 등록을 위해 `from app.tasks.X import X` 를 하는데,
+    그 순간 `app.tasks.X` **속성**이 모듈에서 태스크 객체로 덮인다(이 저장소의 모든 태스크가
+    모듈명과 함수명이 같아서 전부 그렇다). 그러면 아래 monkeypatch 가 태스크 객체의 없는
+    속성을 건드려 AttributeError 로 죽는다. `import_module` 은 `sys.modules` 를 보므로
+    그 가림과 무관하게 **모듈**을 준다.
     """
     os.environ.setdefault("WORKER_KMS_KEY_ID", "test")
 
@@ -36,7 +44,7 @@ def reconciler():
 
     sys.path.insert(0, WORKER_ROOT)
     try:
-        from app.tasks import reconcile_purchase_signal as module
+        module = importlib.import_module("app.tasks.reconcile_purchase_signal")
     finally:
         sys.path.remove(WORKER_ROOT)
         for key in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
@@ -205,3 +213,42 @@ def test_failed_request_is_not_marked_complete(reconciler, stub):
     assert reconciler.resolve(None, signal, dry_run=False) == "request_failed"
     assert signal.status == PurchaseSignalStatus.FAILED
     assert "400" in signal.msg
+
+
+def test_every_beat_task_is_registered():
+    """beat 가 부르는 이름이 전부 워커에 등록돼 있는가.
+
+    이 배치는 첫 리뷰에서 **등록이 빠진 채** 올라왔다. `app.autodiscover_tasks(["app.tasks"])`
+    는 `app.tasks` 패키지를 import 하는 게 전부고 실제 등록은 `app/tasks/__init__.py` 의 명시
+    import 가 한다 — 거기 한 줄을 빠뜨리면 beat 는 10분마다 publish 하는데 워커는
+    `Received unregistered task of type` 으로 리젝트한다. `task_acks_late=True` 라 메시지는
+    그냥 버려지고, **알람도 배치 안에 있으니 안 온다.** 기능이 죽은 걸 아무도 모른다.
+
+    그래서 이름 하나가 아니라 **beat 전체**를 본다. 다음에 태스크를 추가하는 사람도 같은
+    구멍에 빠지지 않는다.
+    """
+    os.environ.setdefault("WORKER_KMS_KEY_ID", "test")
+
+    saved = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+    for key in saved:
+        del sys.modules[key]
+
+    sys.path.insert(0, WORKER_ROOT)
+    try:
+        celery_app = importlib.import_module("app.celery_app").app
+        celery_app.loader.import_default_modules()
+        registered = set(celery_app.tasks)
+        scheduled = {
+            entry["task"] for entry in celery_app.conf.beat_schedule.values()
+        }
+    finally:
+        sys.path.remove(WORKER_ROOT)
+        for key in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
+            del sys.modules[key]
+        sys.modules.update(saved)
+
+    assert "iap.reconcile_purchase_signal" in scheduled
+    assert not (scheduled - registered), (
+        f"beat 가 부르는데 등록되지 않은 태스크: {sorted(scheduled - registered)} "
+        "— app/tasks/__init__.py 에 import 를 추가할 것"
+    )

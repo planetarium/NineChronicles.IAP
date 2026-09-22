@@ -199,6 +199,20 @@ def resolve(sess, signal: PurchaseSignal, dry_run: bool) -> str:
     completed = find_receipt(sess, store, signal.purchase_token)
     if completed is not None:
         signal.receipt_id = completed.id
+    else:
+        # 200 을 받았는데 영수증을 못 찾았다 = **매칭 키가 어긋났다는 유일한 조기 신호**다.
+        #
+        # 이 배치의 이중 지급 안전성은 전부 `/request` 의 dedup `(store, order_id)` 에 실려 있고,
+        # 그 `order_id` 는 우리가 **합성한** 값이다(구글 `orderId`). 반면 신호↔영수증 매칭은
+        # `purchase_token` 으로 한다. 두 키가 같은 결제를 가리키는 한 재실행·경합·크래시가 전부
+        # 막히지만, 합성한 `orderId` 가 클라가 보냈을 값과 달라지면 dedup 이 헛돌아 **같은 결제가
+        # 두 번 지급될 수 있다.** 그 어긋남이 눈에 보이는 순간이 정확히 여기다 — 조용히 넘기면
+        # 두 번째 지급이 나가고 나서야 안다.
+        logger.warning(
+            f"[SIGNAL_RECEIPT_UNMATCHED] {signal.id} :: {store} :: {signal.purchase_token} "
+            "— /request 는 200 인데 영수증을 못 찾았다. 신호↔영수증 매칭 키가 어긋났을 수 있고, "
+            "그러면 dedup 이 헛돌아 이중 지급이 가능하다. 즉시 확인할 것."
+        )
     return "completed"
 
 
