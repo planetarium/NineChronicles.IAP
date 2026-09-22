@@ -12,6 +12,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 from app import api
 from app.config import config
 from app.exceptions import ReceiptNotFoundException
+from shared.validator.onestore import warn_if_sandbox_host_on_prod
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +30,11 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup():
     FastAPICache.init(InMemoryBackend())
+    # 설정 사고를 기동 시점에 시끄럽게 만든다 — resolve_host 가 이미 무시하므로 지급은 안 새지만,
+    #   메인넷에 이 키가 들어왔다는 건 시크릿 병합이 잘못됐다는 신호다.
+    warn_if_sandbox_host_on_prod(
+        config.onestore_sandbox_host, config.stage == "mainnet", logger
+    )
 
 
 @app.middleware("http")

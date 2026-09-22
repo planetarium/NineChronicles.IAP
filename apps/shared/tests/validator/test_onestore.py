@@ -474,7 +474,11 @@ class TestAcknowledge:
 # 결제를, 심사자는 상용 결제를 요구한다. 다만 이건 fail-closed 장치를 여는 것이라, 설정하지
 # 않은 배포(메인넷)에서는 종전 동작이 그대로여야 한다.
 
-from shared.validator.onestore import is_sandbox_token, resolve_host
+from shared.validator.onestore import (
+    is_sandbox_token,
+    resolve_host,
+    warn_if_sandbox_host_on_prod,
+)
 
 SANDBOX = "https://sbpp.onestore.net"
 PROD = "https://iap-apis.onestore.net"
@@ -493,16 +497,51 @@ def test_is_sandbox_token():
 
 def test_resolve_host_without_sandbox_host_is_unchanged():
     """샌드박스 호스트를 설정하지 않으면 종전 그대로 — 메인넷의 fail-closed 가 유지된다."""
-    assert resolve_host(PROD, None, SANDBOX_TOKEN) == PROD
-    assert resolve_host(PROD, None, PROD_TOKEN) == PROD
-    assert resolve_host(SANDBOX, None, PROD_TOKEN) == SANDBOX
+    assert resolve_host(PROD, None, SANDBOX_TOKEN, False) == PROD
+    assert resolve_host(PROD, None, PROD_TOKEN, False) == PROD
+    assert resolve_host(SANDBOX, None, PROD_TOKEN, False) == SANDBOX
 
 
 def test_resolve_host_routes_by_token_when_configured():
     """설정한 배포에서만 토큰을 보고 갈린다."""
-    assert resolve_host(PROD, SANDBOX, SANDBOX_TOKEN) == SANDBOX
-    assert resolve_host(PROD, SANDBOX, PROD_TOKEN) == PROD
+    assert resolve_host(PROD, SANDBOX, SANDBOX_TOKEN, False) == SANDBOX
+    assert resolve_host(PROD, SANDBOX, PROD_TOKEN, False) == PROD
 
 
 def test_resolve_host_passes_through_none_host():
-    assert resolve_host(None, SANDBOX, PROD_TOKEN) is None
+    assert resolve_host(None, SANDBOX, PROD_TOKEN, False) is None
+
+
+# `is_prod` 가드. 예전엔 "메인넷엔 설정하지 않는다" 는 **관례**뿐이었고, 그 관례는 지킬 수단이
+# 없었다 — 차트가 양쪽에 같은 템플릿을 렌더하고 메인넷/인터널을 가르는 건 시크릿 JSON 에 키가
+# 있느냐 하나인데, 그 JSON 은 통째로 읽어 병합해 되쓴다. 키가 딸려 들어가도 **무증상**이고
+# 결과는 공짜 샌드박스 구매의 실지급(+ NCG 바우처)이다. 그래서 코드가 막는다.
+def test_prod_ignores_sandbox_host_even_for_sandbox_token():
+    """메인넷에선 설정이 들어와 있어도 샌드박스 호스트로 가지 않는다 — 이게 방어의 핵심이다."""
+    assert resolve_host(PROD, SANDBOX, SANDBOX_TOKEN, True) == PROD
+    assert resolve_host(PROD, SANDBOX, PROD_TOKEN, True) == PROD
+    # 호스트가 아예 없으면 그대로 None (설정 누락은 여기서 만들어내지 않는다).
+    assert resolve_host(None, SANDBOX, SANDBOX_TOKEN, True) is None
+
+
+def test_warn_fires_only_on_prod_with_sandbox_host():
+    """무시하는 것과 별개로, 설정이 잘못 들어왔다는 **사실 자체**는 신호라 기동 시 찍는다."""
+
+    class _Log:
+        def __init__(self):
+            self.errors = []
+
+        def error(self, msg):
+            self.errors.append(msg)
+
+    log = _Log()
+    assert warn_if_sandbox_host_on_prod(SANDBOX, True, log) is True
+    assert len(log.errors) == 1
+    assert "ONESTORE_SANDBOX_HOST_ON_PROD" in log.errors[0]
+
+    # 나머지 세 조합은 조용해야 한다(인터널의 정상 설정에 알람이 울리면 안 된다).
+    quiet = _Log()
+    assert warn_if_sandbox_host_on_prod(SANDBOX, False, quiet) is False
+    assert warn_if_sandbox_host_on_prod(None, True, quiet) is False
+    assert warn_if_sandbox_host_on_prod(None, False, quiet) is False
+    assert quiet.errors == []

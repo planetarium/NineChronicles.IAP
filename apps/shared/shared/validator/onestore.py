@@ -92,7 +92,10 @@ def is_sandbox_token(purchase_token: Optional[str]) -> bool:
 
 
 def resolve_host(
-    host: Optional[str], sandbox_host: Optional[str], purchase_token: Optional[str]
+    host: Optional[str],
+    sandbox_host: Optional[str],
+    purchase_token: Optional[str],
+    is_prod: bool,
 ) -> Optional[str]:
     """이 구매를 어느 호스트에 물어볼지.
 
@@ -104,11 +107,43 @@ def resolve_host(
     처리해야 하기 때문이다 — 원스토어 콘솔의 검증요청 잠금은 **샌드박스** 결제를 요구하는데,
     심사자는 **상용** 결제를 한다(PLD-1616).
 
-    그래서 **메인넷에는 이 값을 설정하지 않는다.** 설정하지 않으면 동작이 종전과 같다.
+    **`is_prod` 면 `sandbox_host` 를 무시한다.** 예전엔 "메인넷엔 설정하지 않는다" 는 관례뿐이었는데,
+    그 관례는 지킬 수단이 없다 — 차트는 양쪽 클러스터에 같은 템플릿을 렌더하고
+    (`API_ONESTORE_SANDBOX_HOST` 는 `optional: true` 로 이미 배선돼 있다) 메인넷과 인터널을 가르는 건
+    AWS 시크릿에 키가 있느냐 하나뿐이다. 그 시크릿은 `dataFrom: extract` 로 JSON 을 통째로 끌어오고
+    갱신 절차가 "현재 JSON 을 읽어 병합해 되쓰기" 라, 인터널 JSON 을 참고해 메인넷을 편집하다 키가
+    딸려 들어가도 **아무 신호가 없다** — 영수증은 정상 ONESTORE VALID 로 보이고 `_PROD_STORES` 에
+    ONESTORE 가 있으니 NCG 바우처까지 나간다. 온체인 지급은 되돌릴 수 없다.
+
+    같은 저장소가 이미 같은 사고 유형을 겪었다(`voucher_grant_task._grantable_stores` 주석, 그리고
+    `Store.TEST` 분기가 **코드에서** `config.stage == "mainnet"` 을 보는 것). 이 경로만 관례에
+    기대고 있었다. `API_STAGE` 는 시크릿이 아니라 values 평문이라 가드가 확실히 먹는다.
     """
+    if is_prod:
+        return host
     if sandbox_host and is_sandbox_token(purchase_token):
         return sandbox_host
     return host
+
+
+def warn_if_sandbox_host_on_prod(
+    sandbox_host: Optional[str], is_prod: bool, log=None
+) -> bool:
+    """prod 인데 샌드박스 호스트가 설정돼 있으면 시끄럽게 알린다. 기동 시 1회 호출용.
+
+    `resolve_host` 가 이미 무시하므로 지급이 새지는 않는다. 그래도 찍는 이유는 **설정이 잘못
+    들어왔다는 사실 자체가 신호**이기 때문이다 — 시크릿 병합 사고가 났다는 뜻이고, 같은 사고로
+    다른 키가 함께 들어왔을 수 있다.
+    """
+    if not (is_prod and sandbox_host):
+        return False
+    if log is not None:
+        log.error(
+            "[ONESTORE_SANDBOX_HOST_ON_PROD] 메인넷 설정에 onestore-sandbox-host 가 있다. "
+            "검증은 상용 호스트로 강제되지만(지급 누출 없음), 시크릿 병합이 잘못된 것이니 "
+            "같은 사고로 다른 키가 들어오지 않았는지 확인할 것."
+        )
+    return True
 
 
 def is_onestore_configured(host: Optional[str], client_id: Optional[str], client_secret: Optional[str]) -> bool:

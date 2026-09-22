@@ -74,7 +74,13 @@ INVALID 로 굳는다. 돈은 3일 뒤 자동 환불되지만 **그 구매를 �
   `_GOOGLE_STORES` 에 ONESTORE 를 넣는 건 **틀린 수정**이다(그 목록은 google void 폴링이 준
   order_id 를 받는 자리다).
 
-  **해법은 폴링이 아니라 PNS(Push Notification Service)다.** 원스토어가 결제·결제취소 발생 시
+  ⚠️ **정정(2026-09-22 리뷰)**: "대응물이 없다" 는 틀렸다 — **`GET /v7/apps/{clientId}/voided-purchases`
+  가 있다.** 응답이 `purchaseId`(= 우리 `order_id`)·`purchaseToken`·`voidedTime` 이라 매칭 키가
+  정확히 맞고, 과거 1개월 조회 + continuationKey 페이징까지 google void 폴링과 모양이 같다.
+  즉 **PNS 를 기다릴 필요가 없다**. 아래 PNS 설명은 "더 나은 선택지" 로 읽을 것이지
+  "유일한 해법" 이 아니다.
+
+  **PNS(Push Notification Service)도 있다.** 원스토어가 결제·결제취소 발생 시
   개발사 서버로 알림을 보내 준다(`purchaseState` = COMPLETED / CANCELED). 설정은 개발자센터 →
   In-App정보 → **PNS 관리** 이고 샌드박스·상용을 따로 잡는다.
   단 문서가 "notification 수신을 기준으로 상품을 제공하는 것은 권장하지 않습니다"(지연·유실
@@ -115,6 +121,25 @@ INVALID 로 굳는다. 돈은 3일 뒤 자동 환불되지만 **그 구매를 �
    A 토큰 + B productId 를 조회해 확인하고 결과를 여기 적어라. 깨지면 열려 있는 것이다.
    (존재하지 않는 토큰으로는 판별이 안 된다 — 어느 쪽이든 NoSuchData 다. 마켓 코드가
    맞아서 200 이 나오는 토큰이 생긴 지금은 판별이 된다.)
+
+   ⚠️ **왜 코드로 못 막는지, 그리고 실측 말고 뭘 할 수 있는지(2026-09-22 리뷰)**
+   `getPurchaseDetails` 응답 필드는 `consumptionState / developerPayload / purchaseState /
+   purchaseTime / purchaseId / acknowledgeState / quantity` **7개가 전부**라 `productId` 도
+   `orderId` 도 가격도 없다. 그래서 검증기가 대조할 수 있는 건 `purchaseId` 하나인데, 그 값은
+   봉투에서 온 것이라 공격자가 A 의 진짜 `purchaseId` 를 그대로 보내면 통과한다. **대조를
+   안 한 게 아니라 이 엔드포인트로는 할 수가 없다.**
+
+   실측 없이 코드로 닫으려면 둘 중 하나다:
+   - **`GET /v7/apps/{clientId}/unconfirmed-purchases`** — 구매확인 전 목록이라 검증 시점의
+     그 구매가 여기 있고, 항목에 `productId`·`orderId`·`purchaseToken`·`purchaseId` 가 다 있다.
+     (purchaseToken → productId) 를 서버가 직접 확인할 수 있다. 비용은 왕복 1회 + continuationKey
+     페이징. **`[ONESTORE_ACK_FAILED]` 회수 배치와 같은 엔드포인트라 한 번 짜면 둘 다 쓴다.**
+   - 봉투 `Payload.signature` 검증(라이선스 키) — 서명 대상 json 에 productId 가 있으니
+     암호학적으로 묶인다. 다만 규격이 서버 API 문서가 아니라 SDK 문서 쪽이라 키 형식·검증
+     절차를 따로 확인해야 한다.
+
+   **부수 사실: 금액 검증은 어떤 방법으로도 서버에서 못 한다.** 응답에 가격·통화가 없다.
+   원스토어는 SKU 와 가격을 따로 등록하는 스토어라 콘솔 가격 대조는 **오픈 전 사람 몫**이다.
 2. **401 강제 재발급이 진짜 새 토큰을 주는지** — 문서가 "600초 미만 남은 경우 신규 발급 가능"
    이라, 잔여가 많은데 401 을 맞으면 같은 죽은 토큰을 돌려받아 재시도가 무의미해질 수 있다.
 3. **서버 ack 뒤에도 클라이언트 consume 이 정상인지** — 순서상 ack 가 먼저 나간다.
