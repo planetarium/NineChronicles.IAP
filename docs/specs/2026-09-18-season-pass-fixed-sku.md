@@ -2,6 +2,10 @@
 
 - 작성일: 2026-09-18
 - 상태: 설계 확정, 구현 미착수
+>
+> ⚠️ **설계 확정 ≠ 스토어 등록 착수 가능.** §10 의 고정 SKU 문자열과 상품 `name` 규약이
+> 확정되기 전에는 스토어 등록을 시작하지 말 것 — 심사가 몇 주짜리라 문자열을 잘못 박으면
+> 되돌리는 비용이 심사 사이클 하나다(제약 4 가 정확히 그 지점이다).
 - 관련 저장소: `NineChronicles.IAP`, `NineChronicles.SeasonPass`, `NineChronicles`, `NineChronicles.Backoffice`
 
 ## 1. 문제
@@ -105,7 +109,13 @@
 
 `/api/product` 응답은 THOR 행성에서 아이템·FAV·마일리지를 2배로 부풀려 표시하고, 지급도 구매 경로에서 2배로 나간다. 이 저장소는 이 불변식을 여러 주석에서 명시적으로 지키고 있다(복권 티켓·가챠 풀은 표시만 부풀리면 안 되므로 2배 대상에서 제외).
 
-**배수는 IAP 가 결정하고 season-pass 가 적용한다.** 구성품을 안 보내므로 IAP 에는 곱할 대상이 없다 — `/api/user/upgrade` 에 `reward_multiplier` 를 숫자로 넘기고 season-pass 가 자기 시즌 정의에 곱한다. season-pass 의 `reward_coef` 하드코딩 1 은 이 값으로 대체된다.
+**배수는 IAP 가 결정하고 season-pass 가 적용한다.** 구성품을 안 보내므로 IAP 에는 곱할 대상이 없다 — `/api/user/upgrade` 에 `reward_multiplier` 를 숫자로 넘기고 season-pass 가 자기 시즌 정의에 곱한다. ⚠️ **`reward_coef` 를 건드리는 게 아니다.** 그 상수는 두 곳(`user.py` 의 `create_claim`,
+`season_pass.py` 의 현재 시즌 조회)에 있고 **둘 다 레벨 보상 경로**다 — 구매 보상 경로
+(`upgrade_season_pass`)에는 계수가 아예 없고, IAP 가 이미 곱해 보낸 값을 그대로 쓴다
+(`# NOTE: reward_list is already modified from IAP service. Do not modify this.`).
+게다가 `reward_coef` 는 과거 THOR 5배였다가 커밋 `246c143 "remove thor"` 로 **의도적으로 1 로
+내린** 값이라, 여기에 배수를 꽂으면 없애기로 한 THOR 레벨보상 배수가 되살아난다.
+`reward_multiplier` 가 적용될 자리는 **A4 가 새로 만드는 `purchase_reward_list` 경로 하나**다.
 
 ⚠️ **대가를 분명히 하자.** 지금은 표시 2배와 지급 2배가 둘 다 IAP 안에 있어 한 파일만 보면 불변식을 확인할 수 있다. 이 설계 후에는 **표시는 IAP, 지급은 season-pass** 로 갈라진다. 두 곳이 같은 배수를 쓰는지 감시하는 비용이 새로 생기므로, 배수 계산을 한 곳(공유 상수/함수)에 두고 양쪽이 그것만 참조하게 할 것.
 
@@ -229,12 +239,33 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 `yang/grant-pointshop-gacha`(PR #493, 22커밋)가 `/api/product` 의 상품 루프에 포인트 카탈로그 필터와 가챠 풀 주입을 추가한다. B5 도 같은 루프에 들어간다. 파일 단위로 겹치지만 로직 충돌은 아니라 기계적으로 풀린다.
 
+> 📌 **이 문서의 기준선**: 원스토어 경로(§B1·§E)는 `origin/main` 에 **없다** — PLD-1616
+> 브랜치 기준이다. 가챠 풀(§4.3)도 PR #493 기준이라 main 에 없다. main 만 보는 사람은
+> 해당 코드를 찾지 못한다.
+> §1 실측치의 진실 소스는 `GET /api/product/all` + NoShow 카테고리 연결이고, §2 의 클라
+> 라인번호는 `prepare/490.0.x` 기준이다(릴리즈마다 밀리므로 심볼명으로 찾을 것).
+
 ## 10. 미결
 
 - 고정 SKU 의 정확한 문자열 (`g_pkg_couragepasspremium` 형태 제안, 스토어 정책 확인 필요)
   - **제약 1**: `google_sku` 안에 `pass` 가 **대소문자 구분으로** 들어 있어야 시즌패스로 판별된다(`SEASON_PASS_SKU_TOKEN`)
   - **제약 2**: 현재 `product.google_sku.split("pass")` 가 `try` **밖**이라 `pass` 가 정확히 1회 등장해야 한다(2회면 ValueError → 500). B2 가 이 줄을 손보더라도 SKU 네이밍 제약으로 남겨둘 것
-  - **제약 3**: `pass` 를 유지해야 다른 3곳의 필터가 현 동작을 보존한다 — 월간 매출/토큰 집계 제외(`admin.py`), 자동 재시도 제외(`retryer.py`), invalid-receipt-count 알람 제외(`purchase.py`, 여기만 상수 대신 `"%pass%"` 하드코딩)
+  - **제약 3**: `pass` 를 유지해야 다른 3곳의 `%pass%` 필터가 현 동작을 보존한다 — 월간 매출/토큰
+    집계 제외(`admin.py`, `_SEASON_PASS_SKU_ILIKE` 로 별도 하드코딩이고 `ilike` 라 대소문자 무시),
+    자동 재시도 제외(`retryer.py`, 공유 상수를 쓰는 유일한 곳), invalid-receipt-count 알람
+    제외(`purchase.py`, `"%pass%"` 하드코딩 + `notlike` 라 대소문자 구분)
+  - 🔴 **제약 4 — SKU 에 숫자가 최소 1개 남아야 한다.** `admin.py` 의 유저 영수증 집계 5곳이
+    SKU 를 **정규식**으로 물고 그 패턴이 전부 `\d+` 를 요구한다:
+    `couragepass\d+premium`(861·934), `adventurebosspass\d+premium`(982),
+    `exclude_sku_patterns`(1055·1141).
+    제안형 `g_pkg_couragepasspremium` 은 제약 1~3 을 만족하면서 **이 5곳을 매치 실패**시키고,
+    실패는 예외가 아니라 **빈 결과**다 — 포함 쿼리는 "패스 미보유" 로 오답하고 제외 쿼리는
+    패스 구매를 non-pass 집계에 섞는다.
+    소비자가 라이브다: 포탈 `earningService.ts`(courage-pass / adventure-boss-pass /
+    non-pass-count / non-pass-amount)와 `checkPassOwnership.ts` — **패스 보유 게이트와 미션
+    적립 판정이 무증상으로 틀린다.**
+    → `couragepass0premium` 처럼 숫자를 남기거나, **B 목록에 "이 5곳을 `%pass%` 계열로 통일"
+    을 추가**할 것. 후자를 택하면 제약 4 는 사라진다.
 - **고정 상품의 `name` 규약** — C 가 `GetProductKey` 에서 시즌을 빼면 조회 키가 `$"{PASSTYPE}{PremiumType}"` = `COURAGEPASSPremium` 이 된다. IAP 고정 상품의 `name` 이 **정확히 그 문자열**이어야 한다
 - 스토어 상품 설명 문구 — 시즌 무관하게 정확해야 한다(애플은 설명이 실제와 어긋나면 리젝 사유)
 - B6 별칭 제거 시점의 구버전 비중 기준
