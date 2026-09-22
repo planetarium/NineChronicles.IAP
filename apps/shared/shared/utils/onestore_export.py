@@ -34,6 +34,8 @@ HEADER = ["In-App ID", "Currency:Default Price", "Country:In-App Price|",
 
 #: 원스토어 In-App ID 규칙: 소문자/숫자/_/. 만, 소문자 또는 숫자로 시작, 136자 이내
 ID_RULE = re.compile(r"^[a-z0-9][a-z0-9_.]{0,135}$")
+#: 스토어가 읽는 금액 형태. 소수는 최대 2자리이고, 지수표기·부호·공백은 허용하지 않는다.
+AMOUNT_RULE = re.compile(r"^\d+(\.\d{1,2})?$")
 
 #: 인앱 현지가격 허용 범위가 문서에 있는 건 이 4곳뿐이다(원스토어가 자체 스토어를
 #: 운영하는 곳). 나머지는 검사하지 않는다 — 근거 없는 값으로 거르면 멀쩡한 상품이 빠진다.
@@ -103,10 +105,22 @@ def money(price: Mapping) -> float:
 
 
 def fmt_money(amount: float, currency: str) -> str:
-    """소수점 없는 통화는 정수로, 나머지는 불필요한 0 을 떼고."""
+    """소수점 없는 통화는 정수로, 나머지는 불필요한 0 을 떼고.
+
+    **`:g` 를 쓰면 안 된다.** 유효숫자 6자리가 기본이라 100만 이상이 지수표기로 나가고
+    (`1599000.0 -> '1.599e+06'`) 7자리부터는 반올림으로 값이 바뀐다
+    (`149999.99 -> '150000'`, `33000.38 -> '33000.4'`). 둘 다 **조용히** 일어나고
+    `validate_rows` 의 `float()` 파싱은 지수표기를 정상으로 받아들여 그냥 통과시킨다 —
+    즉 반려로도 안 걸리고 잘못된 가격이 그대로 등록된다.
+
+    실제로 걸리는 상품이 지금 판매 중이다: `$89.99` 짜리가 있고 그 티어의 IDR 현지가는
+    140만~150만 Rp 대라 1e6 을 넘는다. 2자리 통화 중 100만을 넘는 건 IDR 말고 LAK·UZS 등도
+    있고, `ZERO_DECIMAL` 에 든 통화만 안전하다.
+    """
     if currency in ZERO_DECIMAL:
         return str(round(amount))
-    return f"{round(amount, 2):g}"
+    # 고정 소수 2자리로 만든 뒤 꼬리 0 만 뗀다 — 지수표기도, 유효숫자 절단도 없다.
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
 
 
 def l10n_key(product_id: str) -> str:
@@ -290,7 +304,13 @@ def _titles(product, l10n_titles):
     else:
         resolved = {}
         for locale, code in LOCALE_MAP.items():
-            title = play_titles.get(locale) or fallback.get(L10N_FALLBACK[code], "").strip()
+            # `csv.DictReader` 는 열이 모자란 행에 `""` 가 아니라 **`None`** 을 넣는다.
+            #   그냥 `.strip()` 하면 AttributeError → 500 이고, CDN fetch 만 감싼 바깥
+            #   try/except 로는 안 잡힌다(fetch 는 성공했으니까). 게임팀이 편집하는
+            #   파일이라 열 하나 밀리는 건 실제로 일어난다.
+            title = play_titles.get(locale) or (
+                fallback.get(L10N_FALLBACK[code]) or ""
+            ).strip()
             if title:
                 resolved[code] = title
         # 원스토어의 '기본' 언어가 한국어라 비워두면 한국 노출 시 제목이 없는 상품이 된다.
@@ -331,6 +351,15 @@ def validate_rows(rows: Sequence[Sequence[str]], catalog: OneStoreCatalog) -> li
         for segment in str(row[2]).split("|"):
             if segment.strip():
                 country, currency, amount = segment.split(":")
+                # **형태를 먼저 본다.** `float()` 만 쓰면 `1.599e+06` 같은 지수표기가 정상으로
+                #   파싱돼 그냥 통과한다 — 이 함수는 "반려당하기 전에 막는" 자리인데 정작
+                #   가격 문자열이 망가진 경우를 못 잡았다(fmt_money 의 `:g` 가 그걸 만들었다).
+                if not AMOUNT_RULE.match(amount):
+                    violations.append(
+                        f"{pid}: 가격 문자열이 스토어가 읽을 수 있는 형태가 아니다 "
+                        f"({country}:{currency}:{amount!r}) — 지수표기·자릿수 초과를 의심할 것"
+                    )
+                    continue
                 got[country] = (currency, float(amount))
 
         missing = sorted(set(catalog.currency_by_country) - set(got))

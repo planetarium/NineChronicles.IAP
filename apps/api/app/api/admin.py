@@ -1485,8 +1485,16 @@ def _on_sale_skus(sess) -> set:
     return {sku for sku in rows if sku}
 
 
+# `async def` 가 아니라 `def` 다 — 일부러다.
+#   이 핸들러가 하는 일은 전부 **동기 블로킹**이다: Play API 조회(googleapiclient,
+#   타임아웃 60s × 2페이지), CDN L10N(urllib, 30s), 상품 SKU 조회(psycopg2), openpyxl 쓰기(CPU).
+#   `async def` 로 두면 그게 전부 이벤트 루프 위에서 돌고, **같은 app 에 purchase 라우터가
+#   붙어 있고 워커는 기본 1개다.** 즉 백오피스에서 추출 버튼 한 번에 그 파드가 영수증 검증을
+#   하나도 처리하지 못하는 구간이 생긴다 — 평상시 2~4초, Play 가 느려지면 최대 2분 30초.
+#   결제 실패 → 클라 재시도로 번지는 자리다.
+#   `def` 로 두면 FastAPI 가 threadpool 로 돌린다. 같은 파일의 다른 DB 엔드포인트 16개도 전부 `def` 다.
 @router.post("/onestore/export", response_model=OneStoreExportResponse)
-async def onestore_export(
+def onestore_export(
     file: UploadFile = File(
         ...,
         description="개발자센터 [인앱 상품 > 상품 일괄 등록하기 > 내보내기] 로 받은 xlsx",
@@ -1503,9 +1511,14 @@ async def onestore_export(
     소스**다. 이 값들은 문서에 없고 Play 와도 다르다(가봉은 Play=EUR / 원스토어=USD).
     """
     try:
-        catalog = parse_onestore_export(await file.read())
+        catalog = parse_onestore_export(file.file.read())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ImportError:
+        # openpyxl 이 안 깔린 환경. 400 으로 뭉뚱그리면 운영자가 **자기 파일이 깨진 줄 안다** —
+        #   실제로 apps/api/poetry.lock 에 openpyxl 이 없어서, 이미지가 사는 건 Dockerfile 이
+        #   apps/shared 를 먼저 install 하는 순서 덕이다. 단독 install 경로에선 안 깔린다.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"내보내기 파일(xlsx)을 읽지 못했다: {e}"

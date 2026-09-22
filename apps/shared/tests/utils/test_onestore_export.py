@@ -12,6 +12,7 @@ import pytest
 from shared.utils.onestore_export import (
     OneStoreCatalog,
     build_rows,
+    fmt_money,
     parse_onestore_export,
     validate_rows,
     write_workbook,
@@ -374,3 +375,49 @@ def test_workbook_keeps_template_shape():
         "In-App ID", "Currency:Default Price", "Country:In-App Price|",
         "Language:In-App Title|")
     assert list(ws.iter_rows(min_row=2, values_only=True)) == [tuple(rows[0])]
+
+
+# ── 가격 문자열 (리뷰에서 나온 🔴) ────────────────────────────────────────────
+#
+# `fmt_money` 가 `:g` 를 쓰고 있었다. 유효숫자 6자리가 기본이라 100만 이상은 지수표기로,
+# 7자리 이상은 반올림으로 값이 바뀌어 나갔다. 그리고 `validate_rows` 의 `float()` 파싱이
+# 지수표기를 정상으로 받아들여 **자체 검증도 통과시켰다** — 반려로도 안 걸리고 잘못된
+# 가격이 그대로 스토어에 등록되는 경로였다.
+#
+# 실제 트리거가 판매 중이다: $89.99 상품의 IDR 현지가는 140만~150만 Rp 대로 1e6 을 넘는다.
+
+
+def test_large_amounts_are_not_scientific_notation():
+    """100만 이상이 지수표기로 나가면 스토어가 읽지 못한다."""
+    assert fmt_money(1599000.0, "IDR") == "1599000"
+    assert fmt_money(1400000.0, "IDR") == "1400000"
+    # 0 이 아닌 소수부는 살아남아야 한다.
+    assert fmt_money(1234567.89, "IDR") == "1234567.89"
+
+
+def test_amounts_keep_their_cents():
+    """유효숫자 절단으로 값이 바뀌면 안 된다 — 유저가 내는 돈이다."""
+    assert fmt_money(149999.99, "NGN") == "149999.99"
+    assert fmt_money(33000.38, "TWD") == "33000.38"
+    # 꼬리 0 은 떼되 값은 그대로.
+    assert fmt_money(19.0, "USD") == "19"
+    assert fmt_money(19.90, "USD") == "19.9"
+    assert fmt_money(99.99, "USD") == "99.99"
+
+
+def test_zero_decimal_currencies_stay_integers():
+    assert fmt_money(28000.0, "KRW") == "28000"
+    assert fmt_money(1490000.0, "VND") == "1490000"
+
+
+def test_validate_rows_rejects_unreadable_amount():
+    """형태 검사가 없으면 `float()` 가 지수표기를 통과시킨다 — 방어선이 여기서 꺼졌었다."""
+    data = catalog({"US": "USD", "KR": "KRW"})
+    rows = [["g_pkg_a", "KRW : 100", "US:USD:1|KR:KRW:1.599e+06|", "ko:A|en:A|"]]
+
+    violations = validate_rows(rows, data)
+
+    assert any("가격 문자열" in v for v in violations), violations
+    # 세 자리 소수도 스토어가 못 읽는다.
+    rows2 = [["g_pkg_a", "KRW : 100", "US:USD:1.234|KR:KRW:1100|", "ko:A|en:A|"]]
+    assert any("가격 문자열" in v for v in validate_rows(rows2, data))
