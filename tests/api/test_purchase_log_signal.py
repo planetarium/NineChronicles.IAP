@@ -68,15 +68,30 @@ def purchase_api():
 
 
 class FakeSession:
-    def __init__(self, existing_id=None, fail_on_commit=False):
+    """`scalar` 를 **호출 순서로** 답한다 — 핸들러가 두 번 묻기 때문이다.
+
+      1회차: 같은 토큰의 신호가 이미 있나 (`existing_id`)
+      2회차: 그 sku 가 실재 상품인가 (`known_sku` → 상품 id 또는 None)
+
+    2회차가 생긴 건 이 엔드포인트가 **무인증 공개 GET 인데 DB 에 쓰고, 그 행이 지급 대상을
+    정하기** 때문이다. 아무 sku 나 쓰게 두면 배치의 처리 창(10분당 50건 FIFO)을 쓰레기가
+    채워 진짜 유실 건이 72시간 자동환불 밖으로 밀린다.
+    """
+
+    def __init__(self, existing_id=None, fail_on_commit=False, known_sku=True):
         self.existing_id = existing_id
         self.fail_on_commit = fail_on_commit
+        self.known_sku = known_sku
         self.added = []
         self.commits = 0
         self.rollbacks = 0
+        self.scalar_calls = 0
 
     def scalar(self, *_args, **_kwargs):
-        return self.existing_id
+        self.scalar_calls += 1
+        if self.scalar_calls == 1:
+            return self.existing_id
+        return 1 if self.known_sku else None
 
     def add(self, obj):
         self.added.append(obj)
@@ -163,3 +178,19 @@ def test_storage_failure_does_not_break_the_client(purchase_api):
 
     assert response.status_code == 200
     assert sess.rollbacks == 1
+
+
+def test_unknown_sku_is_not_recorded(purchase_api):
+    """모르는 sku 의 신호는 기록하지 않는다.
+
+    무인증 엔드포인트라 임의 INSERT 가 가능했다. 실재 상품 확인 하나로 그 경로가 대부분
+    닫히고, 원스토어 신호가 GOOGLE 로 오판돼 FAILED 로 쌓이던 노이즈도 같이 줄어든다.
+    (지급 대상이 무인증 입력에서 온다는 사실 자체는 남는다 — 완화지 해결이 아니다.)
+    """
+    sess = FakeSession(known_sku=False)
+
+    response = call_log(purchase_api, sess)
+
+    # 클라이언트에겐 여전히 200 이다 — 로깅 엔드포인트라 구매 흐름을 막으면 안 된다.
+    assert response.status_code == 200
+    assert sess.added == []

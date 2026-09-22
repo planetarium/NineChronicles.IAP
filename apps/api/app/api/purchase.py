@@ -95,6 +95,30 @@ def save_purchase_signal(
     ):
         return
 
+    # **이 엔드포인트는 무인증 공개 GET 이다.** 그런데 이제 DB 에 쓰고, 그 행이 나중에
+    #   지급 대상을 결정한다. 임의의 sku 로 무제한 INSERT 가 가능하면 배치의 처리 창
+    #   (10분당 50건, FIFO)을 쓰레기가 채워 **진짜 유실 건이 72시간 자동환불 밖으로 밀린다**
+    #   (그리고 Slack 알림이 10분마다 울린다).
+    #   실재 상품인지만 확인해도 그 경로가 대부분 닫히고, 원스토어 신호가 GOOGLE 로 오판돼
+    #   FAILED 로 쌓이는 노이즈도 같이 줄어든다. 지급 대상이 무인증 입력에서 온다는 사실
+    #   자체는 남으므로(구글 경로가 원래 그 수준이다) 이건 완화지 해결이 아니다.
+    known_sku = sess.scalar(
+        select(Product.id)
+        .where(
+            or_(
+                Product.google_sku == product_id,
+                Product.apple_sku == product_id,
+                Product.apple_sku_k == product_id,
+            )
+        )
+        .limit(1)
+    )
+    if known_sku is None:
+        logger.warning(
+            f"[PURCHASE_LOG] 모르는 sku 의 결제 신호는 기록하지 않는다: {product_id!r}"
+        )
+        return
+
     sess.add(
         PurchaseSignal(
             purchase_token=purchase_token,

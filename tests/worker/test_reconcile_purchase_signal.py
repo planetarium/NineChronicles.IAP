@@ -10,12 +10,43 @@
 import importlib
 import os
 import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 from shared.enums import PurchaseSignalStatus, Store
 from shared.models.purchase_signal import PurchaseSignal
 
 WORKER_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "apps", "worker")
+
+
+@contextmanager
+def worker_app_imported():
+    """`apps/worker` 의 `app` 패키지를 **빌려 쓰고 되돌린다**.
+
+    `apps/api` 와 `apps/worker` 둘 다 top-level `app` 을 쓴다. 그냥 import 하면 먼저 로드된
+    쪽이 `sys.modules["app"]` 을 선점해 다른 테스트 파일이 조용히 엉뚱한 패키지를 집는다.
+    그래서 앞뒤로 `app*` 을 통째로 갈아끼웠다 되돌린다.
+
+    픽스처와 beat 테스트가 같은 블록을 두 벌 갖고 있었다 — 한쪽만 고치면 조용히 어긋나므로
+    하나로 모았다.
+    """
+    os.environ.setdefault("WORKER_KMS_KEY_ID", "test")
+    saved = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
+    for key in saved:
+        del sys.modules[key]
+    sys.path.insert(0, WORKER_ROOT)
+    try:
+        yield
+    finally:
+        sys.path.remove(WORKER_ROOT)
+        for key in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
+            del sys.modules[key]
+        sys.modules.update(saved)
+
+
+
+_UNSET = object()
 
 TOKEN = "abcdefghijklmnop.AO-J1OxTESTTOKEN"
 SKU = "g_pkg_couragepass33premium"
@@ -36,21 +67,8 @@ def reconciler():
     속성을 건드려 AttributeError 로 죽는다. `import_module` 은 `sys.modules` 를 보므로
     그 가림과 무관하게 **모듈**을 준다.
     """
-    os.environ.setdefault("WORKER_KMS_KEY_ID", "test")
-
-    saved = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
-    for key in saved:
-        del sys.modules[key]
-
-    sys.path.insert(0, WORKER_ROOT)
-    try:
-        module = importlib.import_module("app.tasks.reconcile_purchase_signal")
-    finally:
-        sys.path.remove(WORKER_ROOT)
-        for key in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
-            del sys.modules[key]
-        sys.modules.update(saved)
-    return module
+    with worker_app_imported():
+        return importlib.import_module("app.tasks.reconcile_purchase_signal")
 
 
 class FakeResponse:
@@ -81,18 +99,26 @@ def stub(monkeypatch, reconciler):
     def configure(
         store=Store.GOOGLE,
         receipt=None,
+        receipt_after=_UNSET,
         purchase=None,
         package="com.planetariumlabs.ninechroniclesmobilek",
         response=FakeResponse(200),
     ):
+        # `find_receipt` 는 한 번의 resolve 에서 **두 번** 불린다 — 앞에서 "이미 있나",
+        #   뒤에서 "완결 뒤 생겼나". 실제 흐름은 앞에선 없고 뒤엔 생기는 것이므로
+        #   호출 순서로 답할 수 있어야 한다. `receipt_after` 를 안 주면 종전대로 같은 값.
+        after = receipt if receipt_after is _UNSET else receipt_after
+        seen = {"n": 0}
         monkeypatch.setattr(
             reconciler,
             "resolve_store_and_package",
             lambda sess, sku: (store, object() if store else None, package),
         )
-        monkeypatch.setattr(
-            reconciler, "find_receipt", lambda sess, store, token: receipt
-        )
+        def fake_find(sess, store, token):
+            seen["n"] += 1
+            return receipt if seen["n"] == 1 else after
+
+        monkeypatch.setattr(reconciler, "find_receipt", fake_find)
         monkeypatch.setattr(
             reconciler, "lookup_google_purchase", lambda sku, token: (package, purchase)
         )
@@ -178,6 +204,8 @@ def test_unknown_sku_is_not_completed(reconciler, stub):
 def test_completion_replays_the_client_request(reconciler, stub):
     calls = stub(
         receipt=None,
+        # 완결이 성공하면 `/request` 가 영수증을 만들어 두므로 뒤 조회에선 잡힌다.
+        receipt_after=SimpleNamespace(id=4242),
         purchase={
             "purchaseState": 0,
             "orderId": "GPA.1234-5678-9012-34567",
@@ -187,6 +215,7 @@ def test_completion_replays_the_client_request(reconciler, stub):
     signal = make_signal()
 
     assert reconciler.resolve(None, signal, dry_run=False) == "completed"
+    assert signal.receipt_id == 4242
     assert signal.status == PurchaseSignalStatus.COMPLETED
 
     (package_name, body), = calls["requests"]
@@ -227,28 +256,54 @@ def test_every_beat_task_is_registered():
     그래서 이름 하나가 아니라 **beat 전체**를 본다. 다음에 태스크를 추가하는 사람도 같은
     구멍에 빠지지 않는다.
     """
-    os.environ.setdefault("WORKER_KMS_KEY_ID", "test")
-
-    saved = {k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")}
-    for key in saved:
-        del sys.modules[key]
-
-    sys.path.insert(0, WORKER_ROOT)
-    try:
+    with worker_app_imported():
         celery_app = importlib.import_module("app.celery_app").app
         celery_app.loader.import_default_modules()
         registered = set(celery_app.tasks)
-        scheduled = {
-            entry["task"] for entry in celery_app.conf.beat_schedule.values()
-        }
-    finally:
-        sys.path.remove(WORKER_ROOT)
-        for key in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
-            del sys.modules[key]
-        sys.modules.update(saved)
+        scheduled = {entry["task"] for entry in celery_app.conf.beat_schedule.values()}
 
     assert "iap.reconcile_purchase_signal" in scheduled
     assert not (scheduled - registered), (
         f"beat 가 부르는데 등록되지 않은 태스크: {sorted(scheduled - registered)} "
         "— app/tasks/__init__.py 에 import 를 추가할 것"
     )
+
+
+def test_completed_but_unmatched_is_labelled_separately(reconciler, stub):
+    """완결은 됐는데 영수증을 못 찾았다 = **매칭 키가 어긋났다는 유일한 조기 신호**다.
+
+    이 배치의 이중 지급 안전성은 전부 `/request` 의 dedup `(store, order_id)` 에 실려 있고
+    그 order_id 는 우리가 **합성한** 값인데, 신호↔영수증 매칭은 purchase_token 으로 한다.
+    둘이 어긋나면 dedup 이 헛돌아 같은 결제가 두 번 지급된다. 라벨을 "completed" 로 되돌리면
+    Slack 요약에서 정상 완결과 구분이 안 되므로 쪼갠다(`attention` 에 실리게).
+    """
+    stub(
+        receipt=None,
+        receipt_after=None,
+        purchase={
+            "purchaseState": 0,
+            "orderId": "GPA.1234-5678-9012-34567",
+            "purchaseTimeMillis": "1786242210269",
+        },
+    )
+    signal = make_signal()
+
+    assert reconciler.resolve(None, signal, dry_run=False) == "completed_unmatched"
+    assert signal.status == PurchaseSignalStatus.COMPLETED
+    assert signal.receipt_id is None
+
+
+def test_apple_is_not_auto_completed(reconciler, stub):
+    """애플엔 환불 게이트가 배치에도 `/request` 에도 없다 — 자동 완결하면 안 된다.
+
+    구글은 `purchaseState` 로 막지만 `validate_apple` 은 200 이면 무조건 success 이고
+    `ApplePurchaseSchema` 엔 `revocationDate` 필드조차 없다. dry_run 을 끄는 순간이 곧
+    묵은 신호를 한꺼번에 드레인하는 순간이고 플래그는 env 하나라 양쪽이 동시에 켜진다.
+    """
+    calls = stub(store=Store.APPLE, receipt=None)
+    signal = make_signal()
+
+    assert reconciler.resolve(None, signal, dry_run=False) == "apple_needs_void_gate"
+    assert signal.status == PurchaseSignalStatus.UNRESOLVED
+    # 지급 요청이 나가면 안 된다.
+    assert calls["requests"] == []

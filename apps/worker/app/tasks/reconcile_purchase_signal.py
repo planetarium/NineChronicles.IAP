@@ -65,15 +65,23 @@ def find_receipt(sess, store: Store, purchase_token: str):
         return sess.scalar(
             select(Receipt).where(Receipt.order_id == purchase_token).limit(1)
         )
-    return sess.scalar(
+    # **`or_` 로 묶으면 안 된다.** PG 는 OR 의 **모든** 가지가 인덱스 가능해야 BitmapOr 를 쓰는데,
+    #   `receipt.order_id` 에는 인덱스가 없다(`data->>'TransactionID'` 쪽만 `d2f4a1c6e8b3` 이
+    #   표현식 인덱스를 만들어 뒀다). 그래서 묶는 순간 그 인덱스가 죽고 seq scan 으로 떨어진다.
+    #   그 마이그레이션 주석에 실측이 남아 있다 — receipt 74만 행 / 힙 1.4GB / PG 버퍼 128MB,
+    #   메인넷 순차 스캔 shared read 174,905 blocks · **15.5초**. 10분마다 최대 50회면
+    #   버퍼 축출까지 같이 온다. 그리고 이건 dry_run 과 무관하게 돈다 — dry-run 의 정상
+    #   경로(MATCHED 판정)가 바로 이 함수다.
+    #   그래서 인덱스 있는 쪽을 먼저 보고, 없을 때만 order_id 로 한 번 더 본다.
+    hit = sess.scalar(
         select(Receipt)
-        .where(
-            or_(
-                Receipt.data["TransactionID"].astext == purchase_token,
-                Receipt.order_id == purchase_token,
-            )
-        )
+        .where(Receipt.data["TransactionID"].astext == purchase_token)
         .limit(1)
+    )
+    if hit is not None:
+        return hit
+    return sess.scalar(
+        select(Receipt).where(Receipt.order_id == purchase_token).limit(1)
     )
 
 
@@ -177,8 +185,20 @@ def resolve(sess, signal: PurchaseSignal, dry_run: bool) -> str:
             purchase["purchaseTimeMillis"],
         )
     else:
-        package_name = apple_package
-        data = build_apple_receipt_data(signal.purchase_token)
+        # **애플은 환불 게이트가 어디에도 없다.** 구글은 위에서 `purchaseState` 를 보지만,
+        #   `validate_apple` 은 애플이 200 만 주면 무조건 success 이고 `ApplePurchaseSchema` 엔
+        #   `revocationDate` 필드조차 없다. 즉 **환불된 애플 결제를 이 배치가 지급한다.**
+        #
+        #   평시엔 신호 10분 뒤 처리라 환불 창이 좁지만, 위험한 건 **묵은 신호를 한꺼번에
+        #   드레인할 때**다 — dry_run 을 끄는 순간이 정확히 그 순간이고, 플래그는 env 하나라
+        #   구글·애플이 **동시에** 켜진다. "나중에 기억해서 애플 게이트를 넣는다" 가 성립하지
+        #   않는 구조라, 게이트가 생기기 전까지는 완결하지 않고 사람에게 넘긴다.
+        signal.status = PurchaseSignalStatus.UNRESOLVED
+        signal.msg = (
+            "애플은 환불(revocationDate) 확인 경로가 없어 자동 완결하지 않는다 — "
+            "게이트를 넣기 전까지는 수동 처리"
+        )
+        return "apple_needs_void_gate"
 
     resp = request_product_via_api(
         package_name,
@@ -213,6 +233,10 @@ def resolve(sess, signal: PurchaseSignal, dry_run: bool) -> str:
             "— /request 는 200 인데 영수증을 못 찾았다. 신호↔영수증 매칭 키가 어긋났을 수 있고, "
             "그러면 dedup 이 헛돌아 이중 지급이 가능하다. 즉시 확인할 것."
         )
+        # 라벨을 쪼개야 Slack 요약(`attention`)에 실린다. "completed" 로 되돌리면
+        #   정상 완결과 글자 하나 차이도 안 나서, "즉시 확인할 것" 이라 써 놓고 전달 수단이
+        #   로그 한 줄뿐인 상태가 된다.
+        return "completed_unmatched"
     return "completed"
 
 
@@ -249,6 +273,17 @@ def handle(event=None, context=None):
                 label = resolve(sess, signal, dry_run)
             except Exception as e:  # noqa: BLE001  한 건이 배치 전체를 죽이지 않게
                 logger.error(f"신호 처리 실패 {signal.uuid}: {e}")
+                # **rollback 이 먼저다.** DB 오류(statement timeout·커넥션 블립)면 세션이
+                #   이미 실패 트랜잭션이라, 그대로 쓰고 commit 하면 PendingRollbackError 가
+                #   for 루프 **밖으로** 튄다. 그러면 finally 만 돌고 아래 Slack 요약 구간을
+                #   지나지 못한다 — 알람이 배치 **안**에 있는 구조라, 직전에 고친 '등록 누락'
+                #   과 똑같이 **조용히 안 도는** 상태가 된다.
+                #   rollback 뒤엔 signal 이 detach 되므로 다시 붙여서 쓴다.
+                sess.rollback()
+                signal = sess.get(PurchaseSignal, signal.id)
+                if signal is None:  # 그 사이 지워졌다면 셀 것도 없다
+                    counts["error"] = counts.get("error", 0) + 1
+                    continue
                 signal.status = PurchaseSignalStatus.FAILED
                 signal.msg = str(e)[:500]
                 label = "error"
