@@ -23,8 +23,41 @@ API 테스트 부트스트랩 — `shared` 설치본이 스테일하면 리포�
 이 저장소 CI(.github/workflows/build_docker.yml)는 pytest 를 돌리지 않는다 — 로컬 실행이 유일하다.
 """
 import importlib.util
+import os
 import sys
 from pathlib import Path
+
+# `app.config.Settings` 는 기본값 없는 필수 필드가 많고, 실 앱(`main.app`)을 띄우는
+# 테스트는 **임포트 시점**에 그걸 읽는다. `.env` 가 없는 환경(CI·깨끗한 체크아웃)에서도
+# 수집이 죽지 않게 더미로 채운다.
+#   ⚠️ Settings 는 정의되지 않은 `API_*` 키를 거부한다(extra_forbidden). 그러니 여기엔
+#      **필수 필드만** 두고, 필드를 지울 때 이 목록에서도 같이 지울 것.
+for _key, _value in {
+    "API_BACKOFFICE_JWT_SECRET": "x",
+    "API_SEASON_PASS_HOST": "http://localhost",
+    "API_SEASON_PASS_JWT_SECRET": "x",
+    "API_GOOGLE_CREDENTIAL": "{}",
+    "API_APPLE_CREDENTIAL": "x",
+    "API_APPLE_BUNDLE_ID": "x",
+    "API_APPLE_KEY_ID": "x",
+    "API_APPLE_ISSUER_ID": "x",
+    "API_APPLE_VALIDATION_URL": "http://localhost",
+    "API_STRIPE_SECRET_KEY": "x",
+    "API_STRIPE_TEST_SECRET_KEY": "x",
+    "API_CLOUDFLARE_API_KEY": "x",
+    "API_CLOUDFLARE_ASSETS_K_ZONE_ID": "x",
+    "API_CLOUDFLARE_ASSETS_ZONE_ID": "x",
+    "API_CLOUDFLARE_EMAIL": "x",
+    "API_R2_ACCESS_KEY_ID": "x",
+    "API_R2_ACCOUNT_ID": "x",
+    "API_R2_BUCKET": "x",
+    "API_R2_SECRET_ACCESS_KEY": "x",
+    "API_S3_BUCKET": "x",
+    "API_CLOUDFRONT_DISTRIBUTION_1": "x",
+    "API_CLOUDFRONT_DISTRIBUTION_2": "x",
+    "API_REDEEM_API_BASE_URL": "http://localhost",
+}.items():
+    os.environ.setdefault(_key, _value)
 
 _repo_shared = Path(__file__).resolve().parents[2] / "shared"
 
