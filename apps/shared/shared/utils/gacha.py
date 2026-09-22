@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from shared.models.product import GACHA_KIND_FAV, GACHA_KIND_ITEM
+from shared.utils.fav_currency import FavCurrencyError, assert_fav_decimal_places
 
 # 추첨 결과 JSON 의 버전. 형식을 바꾸면 올리고, 읽는 쪽이 모르는 버전을 만나면 **거절**한다
 # (모르는 형식을 추측해서 지급하면 안 된다 — 조용히 다른 걸 주는 것보다 멈추는 게 낫다).
@@ -236,16 +237,25 @@ def claim_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # kind 가 없거나 모르는 값이면 **멈춘다**. 여기서 접두어로 추측해 채우면
             # 지급 tx 의 FAV/아이템 분기가 추측 위에 서게 된다.
             raise GachaPoolError(f"claim kind 가 ITEM/FAV 가 아닙니다: {row!r}")
-        # ⚠️ 자릿수를 재는 검사가 **여기 말고는 없다.** 실발행량이
-        #    `int(amount * 10**decimalPlaces)` 라 자릿수가 곧 배율인데(180 이면 10^180 배),
-        #    CSV 오타 하나가 임포트 검증과 CHECK 제약을 전부 통과해 그대로 체인에 나간다.
-        #    그래서 여기가 유일한 방어선이고, 여기서 막는다.
-        #    상한 18 = lib9c 통화의 최대 자릿수(그 이상은 통화 정의가 성립하지 않는다).
-        if (
-            not isinstance(places, int)
-            or isinstance(places, bool)
-            or not 0 <= places <= MAX_DECIMAL_PLACES
-        ):
+        # ⚠️ 자릿수가 곧 발행 배율이다. 실발행량은 `amount × 10**decimalPlaces` 이고
+        #    통화의 진짜 자릿수는 **lib9c 가 정한다** — 우리가 적은 값이 다르면 그 차이가
+        #    그대로 배율이 된다(룬스톤 실제 0 에 18 을 적으면 1 개가 10^18 개).
+        #
+        #    예전엔 여기서 `0 <= places <= 18` 만 봤다. **티커를 보지 않는 상한이라 그 사고를
+        #    하나도 못 막는다.** 옳은 불변식은 "dp == 그 통화의 dp" 고, 그 표는
+        #    `shared.utils.fav_currency` 에 있다(lib9c Currencies.cs 를 옮긴 것).
+        #
+        #    주 방어선은 **등록 시점**(CSV 임포트·상품 CRUD)이다. 추첨 시점에 거절하면
+        #    "당첨될수록 실패하는" 분포가 되고 재추첨 문제가 돌아온다. 여기 검사는 직접
+        #    INSERT 경로를 닫는 **이중 방어**다.
+        if not isinstance(places, int) or isinstance(places, bool):
+            raise GachaPoolError(f"claim decimalPlaces 는 정수여야 합니다: {row!r}")
+        if kind == GACHA_KIND_FAV:
+            try:
+                assert_fav_decimal_places(ticker, places)
+            except FavCurrencyError as e:
+                raise GachaPoolError(f"claim {e}: {row!r}")
+        elif not 0 <= places <= MAX_DECIMAL_PLACES:
             raise GachaPoolError(
                 f"claim decimalPlaces 는 0~{MAX_DECIMAL_PLACES} 정수여야 합니다: {row!r}"
             )

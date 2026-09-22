@@ -265,3 +265,100 @@ class TestMultiDraw:
         assert by_ticker["FAV__RUNESTONE_HP"]["kind"] == "FAV"
 
 
+
+
+# ── FAV 자릿수 = 발행 배율 (리뷰에서 나온 🔴) ─────────────────────────────────
+#
+# `GrantItems` 는 통화의 자릿수를 **lib9c 가 정한 값**으로 쓰고 발행량(raw)은 우리가 보낸
+# `amount × 10**decimal_places` 를 그대로 쓴다(Lib9c/Action/GrantItems.cs:209-214,
+# `FungibleAssetValue.FromRawValue`). 그래서 우리 쪽 자릿수가 그 통화의 실제 자릿수와
+# 다르면 **그 차이가 그대로 배율**이다 — 룬스톤(실제 0)에 18 을 적으면 1 개가 10^18 개다.
+#
+# 예전 검사는 전부 "0 이상" 또는 "0~18" 이었다. 티커를 안 보는 상한이라 이 사고를 하나도
+# 못 막았고, CSV 임포트·DB CHECK·추첨 검증 세 겹이 전부 dp=18 을 통과시켰다.
+#
+# lib9c 실측(Lib9c/Currencies.cs): CRYSTAL·GARAGE = 18, GetRune·GetSoulStone = 0.
+
+import pytest
+
+from shared.utils.fav_currency import (
+    FavCurrencyError,
+    assert_fav_decimal_places,
+    decimal_places_of,
+)
+
+
+@pytest.mark.parametrize(
+    "ticker,expected",
+    [
+        ("FAV__CRYSTAL", 18),
+        ("FAV__GARAGE", 18),
+        ("FAV__RUNE_GOLDENLEAF", 0),
+        ("FAV__RUNESTONE_HP", 0),
+        ("FAV__SOULSTONE_1001", 0),
+        # 접두어 없이도 같은 답이어야 한다(호출부가 벗겨서 넘길 수 있다).
+        ("SOULSTONE_1001", 0),
+    ],
+)
+def test_lib9c_decimal_places(ticker, expected):
+    assert decimal_places_of(ticker) == expected
+
+
+@pytest.mark.parametrize(
+    "ticker",
+    [
+        # NCG 는 minter 가 있어 GetMinterlessCurrency 가 거절한다 = 발행 자체가 불가능.
+        "FAV__NCG",
+        # 접두어가 없으면 lib9c 가 모르는 티커다.
+        "FAV__RUNESTONEX",
+        "FAV__SOMETHING",
+        # 접두어만 있고 알맹이가 없는 것도 통화가 아니다.
+        "FAV__RUNESTONE_",
+        "FAV__",
+        "",
+    ],
+)
+def test_unknown_tickers_are_rejected(ticker):
+    with pytest.raises(FavCurrencyError):
+        decimal_places_of(ticker)
+
+
+def test_wrong_decimal_places_is_rejected():
+    """이 한 줄이 10^18 배 발행을 막는다."""
+    with pytest.raises(FavCurrencyError) as e:
+        assert_fav_decimal_places("FAV__RUNESTONE_HP", 18)
+    assert "0" in str(e.value) and "18" in str(e.value)
+
+    # 반대 방향도 사고다 — 크리스탈에 0 을 적으면 10^-18 배로 나간다.
+    with pytest.raises(FavCurrencyError):
+        assert_fav_decimal_places("FAV__CRYSTAL", 0)
+
+    # 맞으면 통과.
+    assert_fav_decimal_places("FAV__RUNESTONE_HP", 0)
+    assert_fav_decimal_places("FAV__CRYSTAL", 18)
+
+
+def test_claim_from_result_rejects_wrong_decimal_places():
+    """직접 INSERT 경로(임포트를 우회)를 닫는 이중 방어."""
+    from shared.utils.gacha import GachaPoolError, claim_from_result
+
+    def result(ticker, places):
+        return {
+            "version": 2,
+            "claim": [
+                {
+                    "ticker": ticker,
+                    "amount": 1,
+                    "decimalPlaces": places,
+                    "kind": "FAV",
+                }
+            ],
+        }
+
+    with pytest.raises(GachaPoolError):
+        claim_from_result(result("FAV__RUNESTONE_HP", 18))
+    with pytest.raises(GachaPoolError):
+        claim_from_result(result("FAV__NCG", 0))
+    # 맞는 조합은 통과해야 한다(방어가 정상 지급을 막으면 안 된다).
+    assert claim_from_result(result("FAV__RUNESTONE_HP", 0))
+    assert claim_from_result(result("FAV__CRYSTAL", 18))

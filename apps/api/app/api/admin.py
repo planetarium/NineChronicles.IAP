@@ -1826,7 +1826,36 @@ def create_grant(
         select(GrantOutbox).where(GrantOutbox.external_ref == request.external_ref)
     )
     if existing is not None:
-        # 멱등 — 요청 본문이 달라도 **기존 행이 진실**이다(이미 tx 가 나갔을 수 있다).
+        # 멱등 — **같은 내용의** 재요청이면 기존 행이 진실이다(이미 tx 가 나갔을 수 있다).
+        #
+        # 내용을 대조하는 이유: 네임스페이스 등록제를 걷어낸 뒤로 `external_ref` 의 유일성
+        #   보장이 전적으로 포탈에 있다. 포탈 orderId 가 전역이 아니거나(유저별·행성별 시퀀스)
+        #   다른 지급원이 같은 접두어를 쓰면, **유저 B 의 주문이 유저 A 의 GRANTED 행을 200 으로
+        #   돌려받는다.** 포탈은 주문을 확정하고 포인트를 차감하는데 B 에게는 아무것도 안 갔고,
+        #   멱등 분기가 로깅 앞이라 IAP 에 흔적조차 안 남아 사후 대조도 불가능하다.
+        #   같은 내용일 때만 멱등을 보장하면 충분하고, 다르면 409 로 시끄럽게 실패해야 한다.
+        if (
+            existing.planet_id != planet
+            or existing.product_id != request.product_id
+            or existing.avatar_addr != format_addr(request.avatar_address)
+        ):
+            logger.error(
+                "grant external_ref collision",
+                external_ref=request.external_ref,
+                existing_product_id=existing.product_id,
+                existing_avatar_addr=existing.avatar_addr,
+                existing_planet_id=str(existing.planet_id),
+                requested_product_id=request.product_id,
+                requested_avatar_addr=format_addr(request.avatar_address),
+                requested_planet_id=request.planet_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"externalRef {request.external_ref!r} already exists with different"
+                    " content — externalRef must be globally unique"
+                ),
+            )
         response.status_code = 200
         return _grant_schema(existing)
 

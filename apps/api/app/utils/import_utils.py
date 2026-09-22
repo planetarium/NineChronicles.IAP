@@ -3,6 +3,10 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple, Union
 
 from fastapi import HTTPException
+from shared.utils.fav_currency import (
+    FavCurrencyError,
+    assert_fav_decimal_places,
+)
 from shared.models.product import (
     FungibleAssetProduct,
     FungibleItemProduct,
@@ -466,6 +470,18 @@ def process_fungible_asset_row(db: Session, row: dict) -> bool:
         "amount": parse_float(row["amount"]),
         "decimal_places": parse_int(row["decimal_places"]),
     }
+
+    # 여기엔 티커·자릿수 검증이 **한 건도 없었다.** 유상 결제 경로라 지금까지는 상품 등록이
+    #   곧 기획 검수였지만, 지급 API(PLD-1564)가 같은 상품을 무상으로 열기 때문에 가챠와
+    #   같은 검사가 필요하다. 근거는 fav_currency 모듈 참조.
+    try:
+        assert_fav_decimal_places(
+            csv_data["ticker"],
+            csv_data["decimal_places"],
+            f"product {csv_data['product_id']}",
+        )
+    except FavCurrencyError as e:
+        raise ValueError(f"fungible_asset_product: {e}")
 
     # 기존 데이터 확인
     existing_asset = (
@@ -995,10 +1011,17 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
                 f"gacha product {product_id}: FAV 칸에 sheet_item_id 를 두지 말 것"
                 f" ({ticker}) — 화면이 없는 아이콘을 그린다"
             )
-        if decimal_places < 0:
-            raise ValueError(
-                f"gacha product {product_id}: decimal_places 는 0 이상이어야 한다 ({ticker})"
+        # 0 이상만 보면 **아무것도 못 막는다.** 실발행량은 `amount × 10**decimal_places` 이고
+        #   통화의 진짜 자릿수는 lib9c 가 정하므로, 우리가 적은 자릿수가 다르면 그 차이가
+        #   그대로 배율이 된다 — 룬스톤(실제 0)에 18 을 적으면 1 개가 10^18 개로 나간다.
+        #   옳은 불변식은 "dp <= 18" 이 아니라 "dp == 그 통화의 dp" 다. 티커 오타도 같이 막힌다
+        #   (lib9c 는 접두어만 맞으면 없는 룬도 즉석에서 만들어 주고, tx 는 SUCCESS 로 끝난다).
+        try:
+            assert_fav_decimal_places(
+                ticker, decimal_places, f"gacha product {product_id}"
             )
+        except FavCurrencyError as e:
+            raise ValueError(f"gacha product {product_id}: {e}")
 
     # 0·음수는 DB CheckConstraint 도 막지만, 여기서 끊어야 **어느 행이** 틀렸는지 말해줄 수
     # 있다(제약 위반은 IntegrityError 문자열만 남아 운영이 CSV 를 못 찾는다).

@@ -1023,7 +1023,10 @@ class TestGachaPoolErrorPath:
             sess, entries=[("룬", 1, "FAV__RUNESTONE_HP", 1)], name="bad-places"
         )
         entry = product.gacha_entry_list[0]
-        entry.decimal_places = 19  # 상한 18 초과 — CSV 임포트는 막지만 직접 INSERT 는 아니다
+        # 룬스톤의 진짜 자릿수는 **0** 이다. 19 면 10^19 배로 나간다.
+        #   이제 CSV 임포트가 등록 시점에 막지만, 직접 INSERT 는 그걸 우회하므로
+        #   엔드포인트의 이중 방어가 여전히 필요하다 — 이 테스트가 그 자리를 지킨다.
+        entry.decimal_places = 19
         sess.commit()
 
         resp = client.post(GRANT_URL, json=payload(product))

@@ -27,8 +27,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # nullable=False + server_default → 기존 행이 바로 만족한다. PG11+ 는 non-volatile
-    #   default 의 ADD COLUMN 이 메타데이터 연산이라 재작성이 없다(실 DB 는 PG15).
+    # nullable=False + server_default → 기존 행이 바로 만족한다.
+    # ⚠️ **이 DB 는 PostgreSQL 10 이다**(2026-08 receipt 인덱스 작업 때 확인). PG11+ 라면
+    #   non-volatile default 의 ADD COLUMN 이 메타데이터 연산이지만, PG10 에서는
+    #   **테이블 재작성 + ACCESS EXCLUSIVE** 다. `product` 는 작아 실 소요는 짧지만, 장기
+    #   쿼리(`/stats/product-sales` 등) 뒤에 큐잉되면 그동안 `product` 읽기가 전부 막힌다
+    #   = 결제 포함 전면 정지. 그래서 기다리다 막는 대신 **빨리 실패**하게 한다(재시도하면 된다).
+    #   같은 판단을 e3b7d21a4c58 이 먼저 했다 — 세 리비전이 같은 테이블·같은 연산이다.
+    op.execute("SET LOCAL lock_timeout = '3s'")
     op.add_column(
         "product",
         sa.Column(
@@ -49,6 +55,7 @@ def upgrade() -> None:
         "product",
         "gacha_draw_count between 1 and 100",
     )
+    op.execute("SET LOCAL lock_timeout = DEFAULT")
 
 
 def downgrade() -> None:

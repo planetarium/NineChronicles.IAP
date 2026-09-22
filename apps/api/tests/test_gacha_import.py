@@ -698,3 +698,54 @@ class TestSlotKeyGuards:
             ("mat_hourglass_s", 8000),
         ]
         assert sum(e.weight for e in rows) == 5000  # 2100+600+1800+500
+
+
+# ── FAV 자릿수 = 발행 배율 (리뷰에서 나온 🔴) ─────────────────────────────────
+#
+# 이 파일의 서두가 말한 "등록 시점 검증" 에 정작 **가장 비싼 축이 빠져 있었다.**
+# FAV 분기가 `decimal_places < 0` 만 봤고, DB CHECK 도 `>= 0`, 추첨 검증도 `0~18` 이라
+# **세 겹이 전부 티커를 보지 않는 상한**이었다.
+#
+# 실발행량은 `amount × 10**decimal_places` 이고 통화의 진짜 자릿수는 lib9c 가 정한다
+# (Lib9c/Currencies.cs — CRYSTAL·GARAGE=18, GetRune·GetSoulStone=0). 우리가 적은 값이
+# 다르면 그 차이가 **그대로 배율**이다. 아래 첫 테스트의 CSV 한 줄이 예전엔 임포트를
+# 통과했고, 그 칸이 뽑히면 룬스톤 1 개 대신 10^18 개가 체인에 나갔다. 되돌릴 수 없다.
+
+
+def test_fav_decimal_places_must_match_the_currency(sess, product):
+    """룬스톤(실제 자릿수 0)에 18 을 적은 CSV 는 등록에서 막혀야 한다."""
+    with pytest.raises(ValueError) as e:
+        run_import(sess, ["900,HP Rune,100,FAV,FAV__RUNESTONE_HP,1,,18"])
+    assert "자릿수" in str(e.value)
+    assert entries(sess) == []
+
+
+def test_fav_crystal_keeps_its_eighteen(sess, product):
+    """반대 방향도 사고다 — 크리스탈(18)에 0 을 적으면 10^-18 배가 된다."""
+    with pytest.raises(ValueError):
+        run_import(sess, ["900,Crystal,100,FAV,FAV__CRYSTAL,1,,0"])
+    assert entries(sess) == []
+
+
+def test_unknown_fav_ticker_is_rejected_at_import(sess, product):
+    """lib9c 가 모르는 티커. `GetRune` 은 접두어만 맞으면 없는 룬도 즉석에서 만들어 주고
+    tx 는 SUCCESS 로 끝나므로, 유저는 시트에 없는 쓸모없는 잔고를 받고 아무도 모른다."""
+    with pytest.raises(ValueError):
+        run_import(sess, ["900,Typo,100,FAV,FAV__RUNESTONEX,1,,0"])
+    # NCG 는 minter 가 있어 GrantItems 로 발행 자체가 불가능하다 — 등록도 막는다.
+    with pytest.raises(ValueError):
+        run_import(sess, ["900,NCG,100,FAV,FAV__NCG,1,,0"])
+    assert entries(sess) == []
+
+
+def test_correct_fav_rows_still_import(sess, product):
+    """방어가 정상 등록을 막으면 안 된다."""
+    run_import(
+        sess,
+        [
+            "900,HP Rune,100,FAV,FAV__RUNESTONE_HP,1,,0",
+            "900,Crystal,100,FAV,FAV__CRYSTAL,1,,18",
+            "900,Soulstone,100,FAV,FAV__SOULSTONE_1001,1,,0",
+        ],
+    )
+    assert len(entries(sess)) == 3

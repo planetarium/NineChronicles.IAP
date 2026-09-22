@@ -228,6 +228,35 @@ def get_account() -> Account:
 
 
 def _fail(row: GrantOutbox, error: str) -> str:
+    """종단 실패(FAILED). **단, nonce 를 잡았는데 tx 가 안 나간 행은 종단시키지 않는다.**
+
+    `_retry` 는 이 조건을 이미 지키는데 `_fail` 에는 없었다. 그런데 `_fail` 호출부 중 셋은
+    `row.tx is None` 블록 안이라 **2회차 이후에도 도달한다**:
+
+      1회차: `claim_nonce` 성공(nonce=N 커밋) → 서명이 KMS 예외 → `_retry`(nonce 보유라 종단 안 함)
+      2회차: `load_product` 가 None 이거나 `gacha_result` 를 못 읽음 → `_fail`
+             → **FAILED, nonce=N, tx_id=NULL**
+
+    체인에 안 나간 nonce N 이 영구 결번이 되고, libplanet 은 서명자별 nonce 가 연속이어야
+    블록에 담으므로 **그 위 nonce 전부 — 유상 결제 지급 포함 — 가 정지**한다.
+
+    게다가 관측이 안 된다: `pending_dispatch_query` 도 `stalled_count` 도 `status == PENDING`
+    만 보므로 `FAILED + nonce IS NOT NULL + tx_id IS NULL` 은 어떤 감시에도 안 잡힌다.
+
+    그래서 이 조합이면 PENDING 으로 남긴다. 실패 원인이 결정적(상품 소실·결과 판독 불가)이라
+    저절로 낫지는 않지만, **사람이 데이터를 고치면 그 nonce 가 소비되어 결번이 메워진다** —
+    그게 유일하게 옳은 복구다. 침전은 `ALERT_ATTEMPTS` 알림이 사람에게 알린다.
+    `_retry` 가 nonce 보유 행을 종단시키지 않는 근거와 같다.
+
+    tx FAILURE 로 죽은 행은 여기 해당하지 않는다(`tx_id` 가 있고 nonce 는 실제로 소비됐다).
+    """
+    if row.nonce is not None and row.tx_id is None:
+        row.attempts = (row.attempts or 0) + 1
+        row.last_error = error[:ERROR_MAX_LEN]
+        return (
+            f"retry (nonce held, not terminating to avoid a nonce gap, "
+            f"{row.attempts}): {error}"
+        )
     row.status = GrantStatus.FAILED
     row.last_error = error[:ERROR_MAX_LEN]
     return f"failed: {error}"
@@ -467,6 +496,33 @@ def stalled_count(sess) -> int:
     )
 
 
+def nonce_gap_count(sess) -> int:
+    """**결번을 만든 행**의 수: FAILED 인데 nonce 를 쥐었고 tx 는 안 나갔다.
+
+    이 조합은 지금 코드가 만들지 않는다(`_fail` 이 그 경우 종단하지 않는다). 그래도 세는 이유:
+
+      · 과거 버전이 남긴 행이 이미 있을 수 있다. 결번 하나가 **유상 결제 지급까지 전부 정지**
+        시키는데, 기존 감시(`pending_dispatch_query`·`stalled_count`)는 전부 `status == PENDING`
+        만 봐서 이 행들을 **한 번도 안 본다.**
+      · 운영자가 런북대로 `status=FAILED` 를 손으로 넣는 경우도 같은 결과가 된다.
+
+    0 이 아니면 지급 지갑이 서 있다는 뜻이고, 복구는 그 nonce 를 실제로 소비시키는 것뿐이다
+    (행을 PENDING 으로 되돌려 재시도시키거나, 같은 nonce 로 빈 tx 를 내보낸다).
+    """
+    return (
+        sess.scalar(
+            select(func.count())
+            .select_from(GrantOutbox)
+            .where(
+                GrantOutbox.status == GrantStatus.FAILED,
+                GrantOutbox.nonce.isnot(None),
+                GrantOutbox.tx_id.is_(None),
+            )
+        )
+        or 0
+    )
+
+
 @app.task(
     name="iap.send_grant",
     bind=True,
@@ -543,15 +599,24 @@ def track_grants(self) -> str:
                 )
 
         stalled = stalled_count(sess)
+        gaps = nonce_gap_count(sess)
         result = (
             f"dispatched={dispatched} granted={granted} "
             f"newly_failed={newly_failed} stalled(attempts>={ALERT_ATTEMPTS})={stalled}"
+            f" nonce_gap={gaps}"
         )
         logger.info("grant track run", result=result)
         if newly_failed or stalled:
             # newly_failed = 종단(포탈이 환급). stalled = 종단시키지 않는 재시도 침전
             #   (nonce 보유 행 포함 — 방치하면 지급 지갑 nonce 가 막힌다). 둘 다 사람이 봐야 한다.
             _alert(f"[grant] 지급 주의: 종단 {newly_failed}건 / 침전 {stalled}건. {result}")
+        if gaps:
+            # 결번은 다른 어떤 경보보다 급하다 — 지급 지갑 전체(유상 결제 포함)가 서 있다.
+            _alert(
+                f"[grant] 🔴 nonce 결번 {gaps}건 (FAILED + nonce 보유 + tx 없음). "
+                "지급 지갑의 그 위 nonce 가 전부 정지한다. 해당 행을 PENDING 으로 되돌려 "
+                "그 nonce 를 소비시킬 것."
+            )
         return result
     except Exception:
         sess.rollback()
