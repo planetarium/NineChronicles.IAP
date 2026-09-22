@@ -25,7 +25,10 @@
 
 - 전체 상품 365개 중 패스 관련 **83개가 누적**되어 있고 지워지지 않는다
 - CouragePass 는 시즌 34, AdventureBossPass 는 22, WorldClearPass 는 1 까지 존재
-- **83개 전부 `open_timestamp`/`close_timestamp` 가 null 이고 `active=true`** — 기간 기반 전환을 아무도 쓰지 않는다
+- **83개 전부 `open_timestamp`/`close_timestamp` 가 null** — 기간 기반 전환을 아무도 쓰지 않는다
+  (⚠️ 정정: "전부 `active=true`" 는 틀렸다. 라이브 실측으로 **12개가 `active=false`** 다
+  — SeasonPass1~4 × premium/plus/all. 즉 `active` 로 내린 이력은 있다. 설계 결론은
+  타임스탬프 쪽에 걸려 있어 그대로 살아남지만, "아무것도 은퇴시키지 않는다" 는 함의는 아니다.)
 - 클라에 실제 노출되는 건 `NoShow` 카테고리에 연결된 **현재 시즌 3개뿐**
 
 | 상품 | google_sku | account_limit | mileage |
@@ -172,9 +175,10 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 | B2 | SKU 문자열에서 시즌 숫자를 뽑는 파싱 제거. pass_type 판정만 남긴다 |
 | B3 | 구매 처리 시 `reward_list` 를 싣지 않고 `purchased_at`·`reward_multiplier` 만 보낸다 |
 | B4 | 구매 제한에 시즌 범위 축 추가 — 집행 경로(`check_purchase_limit` / `get_purchase_count`) **와 표시 경로(`get_purchase_history`)를 둘 다**. 아래 ⚠️ 참조 |
-| B5 | `/api/product` 응답에 현재 시즌 구성품 주입 (+ 캐시). Thor 2배 블록 **앞**에 넣어 표시=지급 불변식 유지. `/api/product/all` 도 같이 — 안 하면 백오피스에서 고정 상품이 구성품 0개로 보인다 |
+| B5 | `/api/product` 응답에 현재 시즌 구성품 주입 (+ 캐시). Thor 2배 블록 **앞**에 넣어 표시=지급 불변식 유지. 백오피스용으로는 **`/api/admin/products`** 에도 같이 — ⚠️ `/api/product/all` 이 아니다(아래 참조) |
 | B6 | 이행기 별칭 — `NoShow` 응답에 현재 시즌 이름(`COURAGEPASS34Premium`)의 복제 항목을 함께 싣는다 |
 | B7 | 복권 티켓 매핑(`ProductVoucherGrant`, 키가 `product_id`)을 고정 상품 id 로 이전. 안 하면 패스 구매자에게 **조용히 티켓이 안 나간다** |
+| B8 | **`admin.py` 유저 영수증 집계 5곳의 정규식 완화** — `\d+` → `\w*`(종류 토큰은 유지). §10 제약 4. **고정 SKU 상품 행을 만들기 전에 끝나야 한다** — 순서가 뒤집히면 첫 판매부터 결제 게이트가 오답한다 |
 
 시즌패스 판별은 기존 `is_season_pass_product()` 한 곳을 계속 쓴다(바우처 발급 워커도 같은 집합을 알아야 한다).
 
@@ -182,12 +186,29 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 ⚠️ **B4 — 표시 경로가 집행 경로와 다른 함수다.** 버튼 활성화(`buyable`/`purchase_count`)는 `get_purchase_history()` 가 정하고 이건 `get_purchase_count()` 와 별개다. 집행만 고치면 **4번째 시즌부터 구매는 되는데 버튼이 꺼진다.** 게다가 표시는 `agent_addr` 기준인데 시즌패스 집행은 `avatar_addr` 기준이라 지금도 축이 어긋나 있다 — 어느 쪽으로 맞출지 정할 것.
 
+⚠️ **B5 — 백오피스가 보는 엔드포인트는 `/api/product/all` 이 아니다.** 그쪽 response_model 은
+`List[SimpleProductSchema]` 라 `fav_list`/`fungible_item_list` **필드 자체가 없다** — 구성품이
+'0개로 보이는' 게 아니라 원래 안 실린다. 백오피스가 상품을 읽는 건 `IAPRepository.cs` →
+**`GET /api/admin/products`**(`admin.py`, 응답 `PaginatedProductResponse.items: List[ProductSchema]`)
+이고 여기엔 구성품이 실린다. 지금 문구대로 `/api/product/all` 에 주입하면 **백오피스 화면은
+계속 비어 있다.**
+
 ⚠️ **B5 — FAV 티커가 스키마에서 정규화된다.** 상품 스키마의 `make_ticker_to_name` 이 `FAV__` 접두어를 **벗기고**, 클라는 그 값을 그대로 아이콘 조회에 쓴다(`SpriteHelper.GetFavIcon(ticker)`). season-pass 의 `FAV__CRYSTAL` 을 주입할 때 접두어가 살아남으면 아이콘·툴팁이 깨진다. 다만 `make_ticker_to_name` 은 `FungibleAssetValueSchema` 의 `model_validator(mode="after")` 라(`apps/shared/shared/schemas/product.py:99`), **스키마 인스턴스를 생성해서** append 하면 주입 시점이 뒤여도 정규화가 돈다. 위험한 건 dict 나 `model_construct` 로 검증을 우회할 때뿐이니, 규칙은 '앞에 주입하라' 가 아니라 **'반드시 스키마를 통과시켜 주입하라'** 로 읽을 것.
 
 ⚠️ **B6 — 별칭 이름이 겹치면 전면 장애다.** 클라의 `SeasonPassProduct.Add(product.Name, ...)` 는 `TryAdd` 가 아니라 `Add` 라, 키 중복 시 `ArgumentException` 으로 **IAP 초기화 전체가 죽는다**(바로 위 SKU 딕셔너리는 `TryAdd` 라 안전). `product.name` 에 유니크 제약이 없으므로 NoShow 안에서 이름이 겹치지 않도록 코드로 막을 것.
 그리고 **포탈은 이 별칭에 죽지 않고 조용히 중복 노출한다** — `getProducts.ts` 가 NoShow 를 그대로 받아
 `CategoryList.tsx` 의 'Season Pass' 탭에 싣기 때문에 웹샵에 **같은 패스 타일이 2개** 뜨고 둘 다 구매 가능하다.
-별칭은 유니티 구버전을 위한 것이므로 **포탈 응답에서는 빼는** 분기가 필요하다.
+별칭은 유니티 구버전을 위한 것이므로 포탈 응답에서는 빼야 하는데, **지금 코드로는 포탈을
+식별할 수단이 없다** — `getProducts.ts` 는 상품 조회에 `x-iap-packagename` 을 붙이지 않고
+(붙이는 건 결제 헤더뿐이다) `product.py` 의 기본값이 `NINE_CHRONICLES_M` 이라 IAP 입장에서
+포탈 요청과 모바일 클라 요청이 **구분 불가**다. 따라서 둘 중 하나를 택해야 한다:
+**(a) 포탈이 상품 조회에도 헤더를 붙이도록 고치고 그걸 B6 의 선행 작업으로 넣는다**
+(구버전 포탈 배포분은 그동안 중복 노출된다), 또는 **(b) 별칭을 `NoShow` 가 아닌 별도 표식으로
+단다.** '포탈에서 빼면 된다' 로 적어두고 넘어가면 구현 단계에서 막힌다.
+
+⚠️ 그리고 별칭을 `schema_dict[product.id]` 에 넣으면 안 된다 — `product.py` 가 **`product.id` 를
+키로 덮어쓰기** 때문에 원본이 사라져 **신버전 클라가 상품을 못 찾는다.** 별칭은
+`cat_schema.product_list` 에 직접 append 해야 한다.
 
 ⚠️ **redeem 경로엔 시즌패스 분기가 없다.** `redeem.py` 는 SKU 로 상품을 찾은 뒤 무조건 `send_product` 로 보낸다 — 온체인 지급만 되고 프리미엄 활성화는 안 된다. SKU 가 영구화되면 리딤 코드가 참조하는 패스 SKU 도 영구 유효해진다(지금은 시즌마다 자연 소멸). 패스 SKU 를 리딤에서 거절할지 정할 것.
 
@@ -219,6 +240,9 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 1. **season-pass 배포 (A)** — 하위 호환이라 단독 배포 무해
 2. **스토어에 고정 SKU 3개 등록** + 심사 통과 대기
+   - ⚠️ 심사와 **병행해서 B8(정규식 완화)을 먼저 배포**해 둔다. B8 은 기존 SKU 를 그대로
+     매치하므로(`\w*` ⊃ `\d+`, 실측 22→22 손실 0) 단독 선행 배포가 무해하고, 순서를 뒤집으면
+     고정 SKU 첫 판매부터 결제 게이트가 '패스 미보유' 로 오답한다.
 3. **IAP 배포 (B)** — 이 시점부터 고정 SKU 구매가 동작. 구버전 클라는 B6 별칭으로 계속 동작
 4. **클라 배포 (C)** — 신버전은 고정 이름으로 조회
 5. 구버전 비중이 충분히 내려가면 **B6 별칭 제거**
@@ -242,7 +266,7 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 ## 9. 알려진 충돌면
 
-`yang/grant-pointshop-gacha`(PR #493, 31커밋(9/22 기준, 계속 늘어난다))가 `/api/product` 의 상품 루프에 포인트 카탈로그 필터와 가챠 풀 주입을 추가한다. B5 도 같은 루프에 들어간다. 파일 단위로 겹치지만 로직 충돌은 아니라 기계적으로 풀린다.
+`yang/grant-pointshop-gacha`(PR #493)가 `/api/product` 의 상품 루프에 포인트 카탈로그 필터와 가챠 풀 주입을 추가한다. B5 도 같은 루프에 들어간다. 파일 단위로 겹치지만 로직 충돌은 아니라 기계적으로 풀린다.
 
 > 📌 **이 문서의 기준선**: 원스토어 경로(§B1·§E)는 `origin/main` 에 **없다** — PLD-1616
 > 브랜치 기준이다. 가챠 풀(§4.3)도 PR #493 기준이라 main 에 없다. main 만 보는 사람은
