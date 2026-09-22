@@ -6,7 +6,7 @@
 > ⚠️ **설계 확정 ≠ 스토어 등록 착수 가능.** §10 의 고정 SKU 문자열과 상품 `name` 규약이
 > 확정되기 전에는 스토어 등록을 시작하지 말 것 — 심사가 몇 주짜리라 문자열을 잘못 박으면
 > 되돌리는 비용이 심사 사이클 하나다(제약 4 가 정확히 그 지점이다).
-- 관련 저장소: `NineChronicles.IAP`, `NineChronicles.SeasonPass`, `NineChronicles`, `NineChronicles.Backoffice`
+- 관련 저장소: `NineChronicles.IAP`, `NineChronicles.SeasonPass`, `NineChronicles`, `NineChronicles.Backoffice`, **`9c-portal`**(웹샵 — `getProducts.ts` 가 `GET /product` 를 그대로 물고 NoShow 를 'Season Pass' 탭으로 노출한다)
 
 ## 1. 문제
 
@@ -178,11 +178,16 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 시즌패스 판별은 기존 `is_season_pass_product()` 한 곳을 계속 쓴다(바우처 발급 워커도 같은 집합을 알아야 한다).
 
+⚠️ **B4 — 표시 경로는 유니티와 포탈에서 결과가 다르다.** 한도가 소진되면 유니티는 버튼이 꺼지지만, 포탈 웹샵은 `buyable=false` 를 **목록에서 걸러내서 상품이 아예 사라진다** — 같은 데이터로 '비활성'과 '없음'이 갈리므로 한도 축을 바꿀 때 포탈 쪽 체감을 따로 확인할 것.
+
 ⚠️ **B4 — 표시 경로가 집행 경로와 다른 함수다.** 버튼 활성화(`buyable`/`purchase_count`)는 `get_purchase_history()` 가 정하고 이건 `get_purchase_count()` 와 별개다. 집행만 고치면 **4번째 시즌부터 구매는 되는데 버튼이 꺼진다.** 게다가 표시는 `agent_addr` 기준인데 시즌패스 집행은 `avatar_addr` 기준이라 지금도 축이 어긋나 있다 — 어느 쪽으로 맞출지 정할 것.
 
-⚠️ **B5 — FAV 티커가 스키마에서 정규화된다.** 상품 스키마의 `make_ticker_to_name` 이 `FAV__` 접두어를 **벗기고**, 클라는 그 값을 그대로 아이콘 조회에 쓴다(`SpriteHelper.GetFavIcon(ticker)`). season-pass 의 `FAV__CRYSTAL` 을 스키마 검증 **뒤에** 주입하면 접두어가 살아남아 아이콘·툴팁이 깨진다. 주입 지점이 정규화 앞이어야 한다.
+⚠️ **B5 — FAV 티커가 스키마에서 정규화된다.** 상품 스키마의 `make_ticker_to_name` 이 `FAV__` 접두어를 **벗기고**, 클라는 그 값을 그대로 아이콘 조회에 쓴다(`SpriteHelper.GetFavIcon(ticker)`). season-pass 의 `FAV__CRYSTAL` 을 주입할 때 접두어가 살아남으면 아이콘·툴팁이 깨진다. 다만 `make_ticker_to_name` 은 `FungibleAssetValueSchema` 의 `model_validator(mode="after")` 라(`apps/shared/shared/schemas/product.py:99`), **스키마 인스턴스를 생성해서** append 하면 주입 시점이 뒤여도 정규화가 돈다. 위험한 건 dict 나 `model_construct` 로 검증을 우회할 때뿐이니, 규칙은 '앞에 주입하라' 가 아니라 **'반드시 스키마를 통과시켜 주입하라'** 로 읽을 것.
 
 ⚠️ **B6 — 별칭 이름이 겹치면 전면 장애다.** 클라의 `SeasonPassProduct.Add(product.Name, ...)` 는 `TryAdd` 가 아니라 `Add` 라, 키 중복 시 `ArgumentException` 으로 **IAP 초기화 전체가 죽는다**(바로 위 SKU 딕셔너리는 `TryAdd` 라 안전). `product.name` 에 유니크 제약이 없으므로 NoShow 안에서 이름이 겹치지 않도록 코드로 막을 것.
+그리고 **포탈은 이 별칭에 죽지 않고 조용히 중복 노출한다** — `getProducts.ts` 가 NoShow 를 그대로 받아
+`CategoryList.tsx` 의 'Season Pass' 탭에 싣기 때문에 웹샵에 **같은 패스 타일이 2개** 뜨고 둘 다 구매 가능하다.
+별칭은 유니티 구버전을 위한 것이므로 **포탈 응답에서는 빼는** 분기가 필요하다.
 
 ⚠️ **redeem 경로엔 시즌패스 분기가 없다.** `redeem.py` 는 SKU 로 상품을 찾은 뒤 무조건 `send_product` 로 보낸다 — 온체인 지급만 되고 프리미엄 활성화는 안 된다. SKU 가 영구화되면 리딤 코드가 참조하는 패스 SKU 도 영구 유효해진다(지금은 시즌마다 자연 소멸). 패스 SKU 를 리딤에서 거절할지 정할 것.
 
@@ -237,7 +242,7 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
 
 ## 9. 알려진 충돌면
 
-`yang/grant-pointshop-gacha`(PR #493, 22커밋)가 `/api/product` 의 상품 루프에 포인트 카탈로그 필터와 가챠 풀 주입을 추가한다. B5 도 같은 루프에 들어간다. 파일 단위로 겹치지만 로직 충돌은 아니라 기계적으로 풀린다.
+`yang/grant-pointshop-gacha`(PR #493, 31커밋(9/22 기준, 계속 늘어난다))가 `/api/product` 의 상품 루프에 포인트 카탈로그 필터와 가챠 풀 주입을 추가한다. B5 도 같은 루프에 들어간다. 파일 단위로 겹치지만 로직 충돌은 아니라 기계적으로 풀린다.
 
 > 📌 **이 문서의 기준선**: 원스토어 경로(§B1·§E)는 `origin/main` 에 **없다** — PLD-1616
 > 브랜치 기준이다. 가챠 풀(§4.3)도 PR #493 기준이라 main 에 없다. main 만 보는 사람은
@@ -261,11 +266,23 @@ Alembic 은 `cd apps/shared && alembic revision --autogenerate` (`apps/shared/al
     제안형 `g_pkg_couragepasspremium` 은 제약 1~3 을 만족하면서 **이 5곳을 매치 실패**시키고,
     실패는 예외가 아니라 **빈 결과**다 — 포함 쿼리는 "패스 미보유" 로 오답하고 제외 쿼리는
     패스 구매를 non-pass 집계에 섞는다.
-    소비자가 라이브다: 포탈 `earningService.ts`(courage-pass / adventure-boss-pass /
-    non-pass-count / non-pass-amount)와 `checkPassOwnership.ts` — **패스 보유 게이트와 미션
-    적립 판정이 무증상으로 틀린다.**
-    → `couragepass0premium` 처럼 숫자를 남기거나, **B 목록에 "이 5곳을 `%pass%` 계열로 통일"
-    을 추가**할 것. 후자를 택하면 제약 4 는 사라진다.
+    **살아있는 소비자는 결제 게이트다.** 포탈 `checkPassOwnership.ts` → `CheckoutForm.tsx:132`
+    / `ProductDetailModal.tsx:250` 이 **결제 직전**에 이걸 묻는다. `hasPass=false` 로 오답하면
+    같은 시즌 패스의 **중복 결제가 통과**하고, season-pass 는 `upgrade_season_pass` 에서
+    "already purchased same or inclusive product"(`InvalidUpgradeRequestError`)로 거절한다.
+    §4.2 가 적어둔 두 결함(예외 매핑이 없어 500, 그런데 `receipt.status=VALID` 는 커밋되어
+    한도는 소모)과 합쳐지면 결과는 **과금은 되고 지급은 안 되는 건**이다.
+    (포탈 `earningService.ts` 의 IAP 구매 미션 5종도 같은 엔드포인트를 물지만 **이미 종료됐다** —
+    `endsAt = IAP_MISSION_ENDS_AT = 2026-08-31T15:00:00Z`, 즉 9/1 00:00 KST. 코드는 남아 있으니
+    되살릴 때 같이 깨진다는 뜻이지, 지금 라이브 피해는 결제 게이트 쪽이다.)
+    → **`\d+` 요구만 걷어내고 종류 토큰은 유지**하는 것이 정답이다(`couragepass\w*premium`
+    `adventurebosspass\w*premium`). 아니면 `couragepass0premium` 처럼 숫자를 남긴다.
+    ⚠️ **이 5곳을 `%pass%` 로 통일하면 안 된다** — 제약 3 의 3곳과 성격이 다르다:
+    · 861·934·982 는 **패스 종류별 포함 필터**다(courage vs adventureboss). `%pass%` 로 합치면
+      어드벤처보스패스 구매가 `/user-receipts/courage-pass` 에서 보유로 잡혀 **종류 구분이 소멸**한다.
+    · 1055·1141 의 제외 목록엔 **`worldclearpass` 가 없다** — 즉 지금은 WorldClearPass 구매가
+      non-pass 집계에 **포함**된다. `%pass%` 로 넓히면 조용히 빠지면서 non-pass 임계(금액·건수)
+      판정이 바뀐다. 이걸 뺄지는 **별개 결정**으로 다뤄야지 정규식 통일의 부수효과가 되면 안 된다.
 - **고정 상품의 `name` 규약** — C 가 `GetProductKey` 에서 시즌을 빼면 조회 키가 `$"{PASSTYPE}{PremiumType}"` = `COURAGEPASSPremium` 이 된다. IAP 고정 상품의 `name` 이 **정확히 그 문자열**이어야 한다
 - 스토어 상품 설명 문구 — 시즌 무관하게 정확해야 한다(애플은 설명이 실제와 어긋나면 리젝 사유)
 - B6 별칭 제거 시점의 구버전 비중 기준
