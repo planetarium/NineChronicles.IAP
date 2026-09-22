@@ -421,3 +421,32 @@ def test_validate_rows_rejects_unreadable_amount():
     # 세 자리 소수도 스토어가 못 읽는다.
     rows2 = [["g_pkg_a", "KRW : 100", "US:USD:1.234|KR:KRW:1100|", "ko:A|en:A|"]]
     assert any("가격 문자열" in v for v in validate_rows(rows2, data))
+
+
+def test_l10n_row_with_a_missing_column_does_not_crash():
+    """CDN CSV 의 열이 모자란 행은 `""` 가 아니라 **`None`** 으로 들어온다.
+
+    `csv.DictReader` 의 동작이다. 그대로 `.strip()` 하면 AttributeError → **500** 이고,
+    CDN fetch 만 감싼 바깥 try/except 로는 안 잡힌다(fetch 는 성공했으니까).
+    게임팀이 편집하는 파일이라 열 하나 밀리는 건 실제로 일어난다.
+    """
+    result = build_rows(
+        [play_product("g_pkg_a")],
+        catalog(),
+        {"g_pkg_a"},
+        {"MOBILE_SHOP_PRODUCT_a": {"Korean": None, "English": "ABC"}},
+    )
+
+    # 죽지 않고, 한국어가 없으니 영어로 폴백한다(Play 영문 제목이 우선).
+    assert result.rows, result.skipped
+    assert result.rows[0][3] == "ko:g_pkg_a EN|en:g_pkg_a EN|"
+
+    # Play 에 영문 제목조차 없으면 CDN 영문이 쓰인다 — 이때도 None 열에 안 죽는다.
+    result2 = build_rows(
+        [play_product("g_pkg_a", listings=[])],
+        catalog(),
+        {"g_pkg_a"},
+        {"MOBILE_SHOP_PRODUCT_a": {"Korean": None, "English": "ABC"}},
+    )
+    assert result2.rows, result2.skipped
+    assert result2.rows[0][3] == "ko:ABC|en:ABC|"
