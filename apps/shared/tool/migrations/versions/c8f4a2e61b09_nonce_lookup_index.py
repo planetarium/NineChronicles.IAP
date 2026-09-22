@@ -13,6 +13,13 @@
 
 잠금 설계 자체는 옳으므로 되돌릴 게 아니라 인덱스를 얹는다. 그러면 잠금 구간이 마이크로초가 된다.
 
+⚠️ `IF NOT EXISTS` 때문에 **CONCURRENTLY 빌드가 실패한 뒤 재실행하면 INVALID 인덱스를
+건너뛰고 리비전만 stamped 된다** — 순차 스캔이 조용히 남는다. 적용 후 반드시 확인할 것:
+
+    SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+
+나오면 그 인덱스를 DROP 하고 이 리비전을 다시 돌려야 한다.
+
 `CONCURRENTLY` 를 쓴다 — `receipt` 에 ACCESS EXCLUSIVE 를 잡으면 그동안 결제가 멈춘다.
 그래서 이 리비전은 **트랜잭션 밖**에서 돌아야 한다(`autocommit_block`).
 

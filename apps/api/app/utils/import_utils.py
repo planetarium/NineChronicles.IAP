@@ -4,6 +4,7 @@ from typing import Optional, Tuple, Union
 
 from fastapi import HTTPException
 from shared.utils.fav_currency import (
+    FAV_PREFIX,
     FavCurrencyError,
     assert_fav_decimal_places,
 )
@@ -995,6 +996,16 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
     decimal_places = parse_int((row.get("decimal_places") or "").strip() or "0") or 0
 
     if kind == GACHA_KIND_ITEM:
+        # **kind 와 티커가 어긋나면 체인이 우리 분류를 무시한다.** 체인은 kind 가 아니라
+        #   `Currencies.IsWrappedCurrency`(= 티커가 `FAV` 로 시작하는지)로 갈린다. 그래서
+        #   ITEM 칸에 `FAV__CRYSTAL` 을 적으면 여기 ITEM 분기가 dp=0 을 강제한 채 FAV 로
+        #   발행된다 — CRYSTAL 이 10^-18 로 나가고(under-grant 라 민팅 사고는 아니다),
+        #   아이콘용 sheet_item_id 를 요구하는 칸에 통화가 들어앉는다.
+        if ticker.startswith(FAV_PREFIX):
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 칸에 FAV 티커를 적었다 ({ticker})"
+                " — 체인은 kind 가 아니라 티커 접두어로 갈린다. kind 를 FAV 로 바꿀 것"
+            )
         if sheet_item_id is None:
             raise ValueError(
                 f"gacha product {product_id}: ITEM 칸은 sheet_item_id 가 필요하다"
@@ -1006,6 +1017,14 @@ def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = Non
                 f" ({ticker}) — 아이템에 소수 자릿수가 없다"
             )
     else:
+        # 반대 방향도 막는다. 접두어 없는 `CRYSTAL` 은 체인에서 아이템으로 읽혀
+        #   `ParseItemCurrency` 예외 → tx FAILURE 다. 요란하긴 하지만, 등록 때 잡을 수 있는
+        #   걸 유저가 포인트를 쓴 뒤에 잡는 셈이라 여기서 끊는다.
+        if not ticker.startswith(FAV_PREFIX):
+            raise ValueError(
+                f"gacha product {product_id}: FAV 칸의 티커는 {FAV_PREFIX} 로 시작해야 한다"
+                f" ({ticker}) — 체인이 그 접두어로 통화/아이템을 가른다"
+            )
         if sheet_item_id is not None:
             raise ValueError(
                 f"gacha product {product_id}: FAV 칸에 sheet_item_id 를 두지 말 것"

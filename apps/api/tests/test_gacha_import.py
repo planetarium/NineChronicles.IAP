@@ -749,3 +749,68 @@ def test_correct_fav_rows_still_import(sess, product):
         ],
     )
     assert len(entries(sess)) == 3
+
+
+def test_item_slot_rejects_a_fav_ticker(sess, product):
+    """체인은 kind 가 아니라 **티커 접두어**로 통화/아이템을 가른다.
+
+    `Currencies.IsWrappedCurrency` 가 `StartsWith("FAV")` 라, ITEM 칸에 FAV 티커를 적으면
+    우리 분류와 무관하게 FAV 로 발행된다 — ITEM 분기가 강제한 dp=0 이 그대로 적용돼
+    CRYSTAL 이 10^-18 로 나가고, 아이콘용 sheet_item_id 를 요구하는 칸에 통화가 들어앉는다.
+    """
+    with pytest.raises(ValueError) as e:
+        run_import(sess, ["900,Crystal,100,ITEM,FAV__CRYSTAL,1,400000,0"])
+    assert "FAV" in str(e.value)
+    assert entries(sess) == []
+
+
+def test_fav_slot_requires_the_prefix(sess, product):
+    """반대 방향 — 접두어 없는 `CRYSTAL` 은 체인에서 아이템으로 읽혀 tx FAILURE 다.
+
+    등록 때 잡을 수 있는 걸 유저가 포인트를 쓴 뒤에 잡게 두지 않는다.
+    """
+    with pytest.raises(ValueError):
+        run_import(sess, ["900,Crystal,100,FAV,CRYSTAL,1,,18"])
+    assert entries(sess) == []
+
+
+def test_lowercase_ticker_is_rejected(sess, product):
+    """대소문자가 다르면 **다른 통화**다.
+
+    lib9c 의 `IsRuneTicker` 는 소문자로 내려 판정하지만 `GetRune(ticker)` 는 원래 표기
+    그대로 통화를 만든다. 즉 `runestone_hp` 는 tx 가 SUCCESS 로 끝나고 유저는 아무 데서도
+    안 쓰이는 잔고를 받는다 — 가장 조용한 실패라 등록에서 막는다.
+    """
+    with pytest.raises(ValueError):
+        run_import(sess, ["900,HP Rune,100,FAV,FAV__runestone_hp,1,,0"])
+    assert entries(sess) == []
+
+
+def test_fixed_product_fav_row_is_validated(sess, product):
+    """고정 상품 FAV 행에도 같은 검증이 걸린다.
+
+    여긴 원래 티커·자릿수 검증이 **0건**이었다. 유상 결제 경로라 지금까지는 상품 등록이 곧
+    기획 검수였지만, 지급 API(PLD-1564)가 같은 상품을 **무상**으로 연다.
+    """
+    from app.utils.import_utils import process_fungible_asset_row
+
+    with pytest.raises(ValueError):
+        process_fungible_asset_row(
+            sess,
+            {
+                "product_id": "900",
+                "ticker": "FAV__RUNESTONE_HP",
+                "amount": "1",
+                "decimal_places": "18",
+            },
+        )
+    # 맞는 조합은 통과해야 한다.
+    process_fungible_asset_row(
+        sess,
+        {
+            "product_id": "900",
+            "ticker": "FAV__CRYSTAL",
+            "amount": "1",
+            "decimal_places": "18",
+        },
+    )

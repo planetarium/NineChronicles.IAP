@@ -321,6 +321,53 @@ class TestProcessGrant:
         assert "not found" in result
         assert row.status == GrantStatus.FAILED
 
+    def test_nonce_held_row_is_not_terminated(self, sess):
+        """nonce 를 잡았는데 tx 가 안 나간 행은 **종단시키면 안 된다.**
+
+        libplanet 은 서명자별 nonce 가 연속이어야 블록에 담으므로, 채번만 하고 영원히
+        안 나간 nonce 는 **그 위 nonce 전부 — 유상 결제 지급 포함 — 를 정지**시킨다.
+        `_retry` 는 이 조건을 갖고 있었는데 `_fail` 엔 없어서, 1회차에 nonce 를 잡고
+        서명이 실패해 재시도로 넘어간 행이 2회차에 상품 소실을 만나면 그대로 FAILED 로
+        굳었다. 그리고 감시가 전부 `status == PENDING` 만 봐서 **아무 데도 안 잡혔다.**
+
+        사람이 데이터를 고치면 그 nonce 가 소비되어 결번이 메워진다 — 그게 유일한 복구다.
+        """
+        product = make_product(sess)
+        row = make_outbox(sess, product)
+        # 1회차에 nonce 를 잡은 상태를 재현한다(tx 는 아직 없다).
+        row.nonce = 5
+        row.product_id = 999999  # 2회차에 상품이 사라진 상황
+        sess.commit()
+
+        result = gt.process_grant(
+            sess,
+            row,
+            account=FakeAccount(),
+            next_nonce_fn=nonce_fn(),
+            stage_fn=stage_ok(),
+        )
+
+        assert row.status == GrantStatus.PENDING, "결번을 만들면 안 된다"
+        assert row.nonce == 5
+        assert row.tx_id is None
+        assert "nonce held" in result
+
+    def test_nonce_gap_rows_are_counted(self, sess):
+        """과거 버전이 남긴 결번 행은 기존 감시에 한 번도 안 잡힌다 — 따로 센다."""
+        product = make_product(sess)
+        row = make_outbox(sess, product)
+        row.status = GrantStatus.FAILED
+        row.nonce = 7
+        row.tx_id = None
+        sess.commit()
+
+        assert gt.nonce_gap_count(sess) == 1
+
+        # tx 가 실제로 나갔다면 nonce 는 소비된 것이라 결번이 아니다.
+        row.tx_id = "0xdeadbeef"
+        sess.commit()
+        assert gt.nonce_gap_count(sess) == 0
+
     def test_node_error_is_retried_not_terminal(self, sess):
         """노드에서 nonce 를 못 얻으면 재시도 — 지급을 종단시키지 않는다."""
         product = make_product(sess)

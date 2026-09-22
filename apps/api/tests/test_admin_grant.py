@@ -1035,3 +1035,42 @@ class TestGachaPoolErrorPath:
         assert "gacha pool" in json.dumps(resp.json())
         assert rows_of(sess) == []
         assert worker.call_count == 0
+
+
+class TestExternalRefCollision:
+    """멱등은 **같은 내용**일 때만 보장한다.
+
+    네임스페이스 등록제를 걷어낸 뒤로 `external_ref` 유일성 보장이 전적으로 포탈에 있다.
+    포탈 orderId 가 전역이 아니거나 다른 지급원이 같은 접두어를 쓰면, 내용 대조 없는 멱등은
+    **유저 B 의 주문이 유저 A 의 지급 행을 200 으로 돌려받게** 만든다 — 포탈은 주문을 확정하고
+    포인트를 차감하는데 B 에겐 아무것도 안 갔고, 멱등 분기가 로깅 앞이라 IAP 에 흔적조차
+    안 남아 사후 대조도 불가능하다.
+    """
+
+    def test_same_content_is_idempotent_200(self, client, sess, worker):
+        product = make_product(sess)
+        first = client.post(GRANT_URL, json=payload(product))
+        assert first.status_code == 201
+
+        again = client.post(GRANT_URL, json=payload(product))
+        assert again.status_code == 200
+        assert again.json()["externalRef"] == first.json()["externalRef"]
+
+    def test_different_avatar_is_409(self, client, sess, worker):
+        product = make_product(sess)
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+        other = "0x" + "b" * 40
+        resp = client.post(GRANT_URL, json=payload(product, avatarAddress=other))
+
+        assert resp.status_code == 409
+        assert "externalRef" in json.dumps(resp.json())
+
+    def test_different_product_is_409(self, client, sess, worker):
+        product = make_product(sess)
+        another = make_product(sess, name="other", google_sku="g901")
+        assert client.post(GRANT_URL, json=payload(product)).status_code == 201
+
+        resp = client.post(GRANT_URL, json=payload(another))
+
+        assert resp.status_code == 409

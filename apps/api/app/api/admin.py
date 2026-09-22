@@ -34,6 +34,10 @@ from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import AdminProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
 from shared.utils.address import format_addr
+from shared.utils.fav_currency import (
+    FavCurrencyError,
+    assert_product_favs_mintable,
+)
 from shared.utils.gacha import (
     GachaPoolError,
     build_gacha_result,
@@ -1796,6 +1800,40 @@ def build_grant_memo(external_ref: str, memo: Optional[Dict[str, Any]]) -> str:
     return serialized
 
 
+def _assert_same_grant(existing: GrantOutbox, request, planet) -> None:
+    """멱등 재요청이 **같은 내용**인지. 다르면 409.
+
+    네임스페이스 등록제를 걷어낸 뒤로 `external_ref` 의 유일성 보장이 전적으로 포탈에 있다.
+    포탈 orderId 가 전역이 아니거나(유저별·행성별 시퀀스) 다른 지급원이 같은 접두어를 쓰면,
+    **유저 B 의 주문이 유저 A 의 GRANTED 행을 200 으로 돌려받는다** — 포탈은 주문을 확정하고
+    포인트를 차감하는데 B 에겐 아무것도 안 갔고, 멱등 분기가 로깅 앞이라 IAP 에 흔적조차
+    안 남아 사후 대조도 불가능하다. 멱등은 **같은 내용**일 때만 보장하면 충분하다.
+    """
+    if (
+        existing.planet_id == planet
+        and existing.product_id == request.product_id
+        and existing.avatar_addr == format_addr(request.avatar_address)
+    ):
+        return
+    logger.error(
+        "grant external_ref collision",
+        external_ref=request.external_ref,
+        existing_product_id=existing.product_id,
+        existing_avatar_addr=existing.avatar_addr,
+        existing_planet_id=str(existing.planet_id),
+        requested_product_id=request.product_id,
+        requested_avatar_addr=format_addr(request.avatar_address),
+        requested_planet_id=request.planet_id,
+    )
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"externalRef {request.external_ref!r} already exists with different"
+            " content — externalRef must be globally unique"
+        ),
+    )
+
+
 @router.post("/grant", response_model=GrantSchema, status_code=201)
 def create_grant(
     request: GrantRequestSchema, response: Response, sess=Depends(session)
@@ -1806,8 +1844,12 @@ def create_grant(
     포탈 포인트샵 주문 1건을 온체인 `grant_items` 대기열(아웃박스)에 넣는다.
 
     - **201**: 새 아웃박스 행 생성 + 워커 큐 발행
-    - **200**: 같은 `externalRef` 재요청 — **새 tx 를 만들지 않고** 기존 행을 그대로 반환
-      (그래서 409 를 쓰지 않는다. 포탈은 재시도해도 안전하다)
+    - **200**: 같은 `externalRef` **로 같은 내용**을 재요청 — **새 tx 를 만들지 않고** 기존 행을
+      그대로 반환. 포탈은 재시도해도 안전하다
+    - **409**: 같은 `externalRef` 인데 `planetId`/`productId`/`avatarAddress` 가 **다르다**.
+      멱등은 같은 내용일 때만 보장한다 — 다른 내용을 200 으로 받아주면 유저 B 의 주문이
+      유저 A 의 지급 행을 돌려받고(포인트는 차감, 아이템은 A 에게), 그 사실이 IAP 어디에도
+      안 남는다. 재시도해도 같으므로 포탈은 **환급하지 말고 사람에게 올릴 것**
     - **400**: 검증 실패(형식·미존재 productId·구성품 없는 상품·긴 memo·잘못된 뽑기 풀) 또는
       **화이트리스트 밖 상품**. 거절은 **행을 만들지 않는다** — 아웃박스에 FAILED 를 남기면
       포탈이 환급을 트리거하는데, 지급이 시작되지도 않았기 때문이다(계약 v1.1).
@@ -1834,28 +1876,7 @@ def create_grant(
         #   돌려받는다.** 포탈은 주문을 확정하고 포인트를 차감하는데 B 에게는 아무것도 안 갔고,
         #   멱등 분기가 로깅 앞이라 IAP 에 흔적조차 안 남아 사후 대조도 불가능하다.
         #   같은 내용일 때만 멱등을 보장하면 충분하고, 다르면 409 로 시끄럽게 실패해야 한다.
-        if (
-            existing.planet_id != planet
-            or existing.product_id != request.product_id
-            or existing.avatar_addr != format_addr(request.avatar_address)
-        ):
-            logger.error(
-                "grant external_ref collision",
-                external_ref=request.external_ref,
-                existing_product_id=existing.product_id,
-                existing_avatar_addr=existing.avatar_addr,
-                existing_planet_id=str(existing.planet_id),
-                requested_product_id=request.product_id,
-                requested_avatar_addr=format_addr(request.avatar_address),
-                requested_planet_id=request.planet_id,
-            )
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"externalRef {request.external_ref!r} already exists with different"
-                    " content — externalRef must be globally unique"
-                ),
-            )
+        _assert_same_grant(existing, request, planet)
         response.status_code = 200
         return _grant_schema(existing)
 
@@ -1944,6 +1965,18 @@ def create_grant(
                 status_code=400,
                 detail=f"product {request.product_id} gacha pool is unusable: {e}",
             )
+    else:
+        # 고정 상품도 같은 검증을 받아야 한다. 등록 시점 CSV 검증이 유일한 방어면
+        #   `scripts/fungible_asset.py`(검증 없는 복사본)나 직접 DB 편집이 그대로 체인으로
+        #   흐른다 — 그리고 이 엔드포인트가 여는 게 바로 그 상품의 **무상** 지급이다.
+        #   추첨이 없으니 여기서 400 으로 끊는 비용도 없다.
+        try:
+            assert_product_favs_mintable(product)
+        except FavCurrencyError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"product {request.product_id} has an unmintable FAV: {e}",
+            )
 
     namespace = namespace_of(request.external_ref)
 
@@ -1971,6 +2004,10 @@ def create_grant(
         )
         if existing is None:
             raise
+        # **경합 경로도 같은 대조를 해야 한다.** 안 하면 순차로 오면 409, 동시에 오면 200 이라
+        #   같은 충돌인데 결말이 갈리고, 막으려던 시나리오(유저 B 가 A 의 행을 받는 것)가
+        #   경합 시엔 그대로 남는다.
+        _assert_same_grant(existing, request, planet)
         response.status_code = 200
         return _grant_schema(existing)
     sess.refresh(row)

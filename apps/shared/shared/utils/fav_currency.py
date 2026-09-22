@@ -44,8 +44,8 @@ _FIXED_DECIMALS = {
 }
 
 #: 접두어로 판별하는 계열. 전부 `Currency.Legacy(ticker, 0)` 이라 자릿수가 0 이다.
-#: lib9c 의 `IsRuneTicker` / `IsSoulstoneTicker` 가 소문자로 내려 비교하므로 여기서도 그렇게 한다.
-_ZERO_DECIMAL_PREFIXES = ("rune_", "runestone_", "soulstone_")
+#: lib9c 는 소문자로 내려 비교하지만 우리는 **대문자만** 받는다 — 아래 `decimal_places_of` 주석 참고.
+_ZERO_DECIMAL_PREFIXES = ("RUNE_", "RUNESTONE_", "SOULSTONE_")
 
 
 class FavCurrencyError(ValueError):
@@ -67,9 +67,14 @@ def decimal_places_of(ticker: str) -> int:
         raise FavCurrencyError("FAV 티커가 비었다")
     if bare in _FIXED_DECIMALS:
         return _FIXED_DECIMALS[bare]
-    lowered = bare.lower()
+    # **대문자로 못박는다.** lib9c 의 `IsRuneTicker` 는 `ToLower()` 후 판정하지만
+    #   `GetRune(ticker)` 는 **원래 대소문자 그대로** `Currency.Legacy(ticker, 0)` 을 만든다.
+    #   즉 `runestone_hp` 는 `RUNESTONE_HP` 와 **다른 통화**이고, tx 는 SUCCESS 로 끝나고
+    #   유저는 아무 데서도 안 쓰이는 잔고를 받는다 — 이 모듈이 막겠다고 한 바로 그 부류다.
+    #   lib9c 판정을 그대로 흉내 내면(소문자 비교) 그 오타가 통과하므로 일부러 좁힌다.
+    #   라이브 티커는 전부 대문자다(CRYSTAL / RUNE_GOLDENLEAF / RUNESTONE_* 실측).
     for prefix in _ZERO_DECIMAL_PREFIXES:
-        if lowered.startswith(prefix) and len(lowered) > len(prefix):
+        if bare.startswith(prefix) and len(bare) > len(prefix):
             return 0
     raise FavCurrencyError(
         f"lib9c 가 모르는 FAV 티커다: {ticker!r} — "
@@ -94,4 +99,28 @@ def assert_fav_decimal_places(ticker: str, decimal_places: int, where: str = "")
             f"{ticker} 의 자릿수는 {expected} 인데 {decimal_places} 로 적혀 있다{suffix} — "
             f"그 차이가 그대로 발행 배율이 된다(10^{abs(decimal_places - expected)} 배). "
             "체인 발행은 되돌릴 수 없다"
+        )
+
+
+def assert_product_favs_mintable(product, where: str = "") -> None:
+    """고정 상품의 `fav_list` 전체가 발행 가능한 티커·자릿수인지.
+
+    **가챠의 `claim_from_result` 에 대응하는 고정 상품 쪽 이중 방어다.** 등록 시점 CSV 검증만
+    있으면 충분해 보이지만 우회로가 실재한다:
+
+      · `CLAUDE.md` 가 상품 추가 경로로 "관리자 CSV 임포트, **또는 직접 DB**" 를 적어 뒀다
+      · `scripts/fungible_asset.py` 는 `process_fungible_asset_row` 의 **복사본**인데 검증이
+        한 줄도 없다 — `DATABASE_URL` 만 있으면 돈다
+
+    그리고 이 PR 이 여는 것이 바로 그 고정 상품의 **무상** 지급이다. 고정 상품엔 추첨이
+    없으므로 "당첨될수록 실패하는 분포" 비용도 없다 — 요청 시점에 400 으로 끊으면 된다.
+
+    유상 결제 경로(`send_product_task`)는 일부러 건드리지 않는다. 그쪽은 이 PR 이 여는 것이
+    아니고, 레거시 행 하나로 기존 결제를 깨뜨릴 위험이 이득보다 크다. 대신 배포 전에
+    `fungible_asset_product` 를 실제로 훑어 위반 행이 있는지 확인해야 한다(있다면 그 상품은
+    지금까지 잘못된 배율로 지급돼 온 것이므로 **별건의 사고**다).
+    """
+    for fav in getattr(product, "fav_list", None) or []:
+        assert_fav_decimal_places(
+            fav.ticker, fav.decimal_places, where or f"product {product.id}"
         )

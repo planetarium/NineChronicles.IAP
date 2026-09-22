@@ -56,6 +56,10 @@ from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import Product
 from shared.schemas.message import SendGrantMessage
 from shared.utils.gacha import GachaPoolError, claim_from_result
+from shared.utils.fav_currency import (
+    FavCurrencyError,
+    assert_product_favs_mintable,
+)
 from shared.utils.grant import build_claim_data, create_grant_items_tx
 from shared.utils.nonce import as_bytes, lock_planet_nonce, max_db_nonce, pick_nonce
 from sqlalchemy import create_engine, func, or_, select, update
@@ -76,6 +80,9 @@ engine = create_engine(
 MAX_ATTEMPTS = 20
 # 이 횟수 이상 재시도 중인 PENDING 은 stall 로 보고 알림 — 종단시키지 않는 행이 조용히 침전하지 않게.
 ALERT_ATTEMPTS = 5
+
+#: 직전 회차의 침전/결번 수. 같은 상태를 매분 반복해 알리지 않기 위한 것이다.
+_last_alert_levels = {"stalled": 0, "gaps": 0}
 DISPATCH_BATCH = 50
 TRACK_BATCH = 50
 ERROR_MAX_LEN = 500
@@ -334,6 +341,12 @@ def process_grant(
                 except GachaPoolError as e:
                     return _commit(sess, _fail(row, f"gacha result unusable: {e}"))
             else:
+                # 요청 시점에도 봤지만 여기서 다시 본다 — 그 사이 운영이 구성품을 고쳤을 수
+                #   있고, tx 조립 **직전**이 마지막 기회다. 발행은 되돌릴 수 없다.
+                try:
+                    assert_product_favs_mintable(product)
+                except FavCurrencyError as e:
+                    return _commit(sess, _fail(row, f"unmintable FAV: {e}"))
                 claim_data = build_claim_data(product, multiplier=GRANT_MULTIPLIER)
             if not claim_data:
                 # 빈 지급 tx 는 "성공했는데 아무것도 안 준" 최악의 결과가 된다 → 종단 실패.
@@ -606,11 +619,21 @@ def track_grants(self) -> str:
             f" nonce_gap={gaps}"
         )
         logger.info("grant track run", result=result)
-        if newly_failed or stalled:
+        # **엣지 트리거.** stalled·gaps 는 사람이 고치기 전엔 안 없어지는 상태인데 beat 는
+        #   1분마다 돈다 — 조건 없이 쏘면 행 하나가 박힐 때마다 하루 1,440건이고, 그러면
+        #   아무도 안 본다(이 조직은 dcc-bridge 에서 같은 걸 겪었다). 직전 회차보다 늘었을
+        #   때만 알린다. 새 종단(newly_failed)은 그 회차에만 생기는 값이라 그대로 쓴다.
+        global _last_alert_levels
+        grew = (
+            stalled > _last_alert_levels["stalled"]
+            or gaps > _last_alert_levels["gaps"]
+        )
+        _last_alert_levels = {"stalled": stalled, "gaps": gaps}
+        if newly_failed or grew:
             # newly_failed = 종단(포탈이 환급). stalled = 종단시키지 않는 재시도 침전
             #   (nonce 보유 행 포함 — 방치하면 지급 지갑 nonce 가 막힌다). 둘 다 사람이 봐야 한다.
             _alert(f"[grant] 지급 주의: 종단 {newly_failed}건 / 침전 {stalled}건. {result}")
-        if gaps:
+        if gaps and grew:
             # 결번은 다른 어떤 경보보다 급하다 — 지급 지갑 전체(유상 결제 포함)가 서 있다.
             _alert(
                 f"[grant] 🔴 nonce 결번 {gaps}건 (FAILED + nonce 보유 + tx 없음). "
