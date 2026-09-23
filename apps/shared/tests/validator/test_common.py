@@ -54,6 +54,35 @@ class TestGetOrderData:
         assert product_id == "google_test_product_789"
         assert purchased_at == datetime.fromtimestamp(1640995200, tz=timezone.utc)
 
+    def test_get_order_data_onestore(self):
+        receipt_data = Mock(spec=ReceiptSchema)
+        receipt_data.store = Store.ONESTORE
+        receipt_data.order = {
+            "orderId": "OS20260902000000001",
+            "purchaseId": "17070421461015116878",
+            "productId": "g_pkg_worldclearpass1premium",
+            "purchaseTime": 1640995200000,
+        }
+
+        order_id, product_id, purchased_at = get_order_data(receipt_data)
+
+        # orderId 가 아니라 purchaseId 다 — 원스토어 구매 조회 응답에 orderId 가 없어서
+        # 대조가 안 되고, 클라이언트도 봉투 TransactionID 로 purchaseId 를 보낸다.
+        assert order_id == "17070421461015116878"
+        assert product_id == "g_pkg_worldclearpass1premium"
+        assert purchased_at == datetime.fromtimestamp(1640995200, tz=timezone.utc)
+
+    def test_get_order_data_onestore_missing_purchase_time(self):
+        receipt_data = Mock(spec=ReceiptSchema)
+        receipt_data.store = Store.ONESTORE
+        receipt_data.order = {
+            "purchaseId": "17070421461015116878",
+            "productId": "g_pkg_worldclearpass1premium",
+        }
+
+        with pytest.raises(TypeError):
+            get_order_data(receipt_data)
+
     def test_get_order_data_apple_store(self):
         receipt_data = Mock(spec=ReceiptSchema)
         receipt_data.store = Store.APPLE

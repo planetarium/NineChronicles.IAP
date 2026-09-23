@@ -36,6 +36,24 @@ class Settings(BaseSettings):
     apple_issuer_id: str
     apple_validation_url: str
 
+    # ONE Store (원스토어). 셋 다 없으면 검증기가 거절로 끝낸다(fail-closed) — 필수로 두면
+    #   시크릿을 아직 안 넣은 배포가 기동조차 못 한다. client_id/secret 은 개발자센터
+    #   공통정보 > 라이선스 관리에서 확인하고 환경별로 같은 값이며, 갈리는 건 호스트다:
+    #     검증(개발) https://sbpp.onestore.net / 상용 https://iap-apis.onestore.net
+    onestore_client_id: Optional[str] = None
+    onestore_client_secret: Optional[str] = None
+    onestore_host: Optional[str] = None
+    # 샌드박스 전용 호스트. **설정하면 fail-closed 장치가 열린다** — purchaseToken 이
+    #   `SANDBOX` 로 시작하는 구매를 이 호스트에 물어본다(validator.onestore.resolve_host).
+    #   검증 환경만 설정한다. 메인넷은 비워 두어야 공짜인 샌드박스 구매가 지급으로 새지 않는다.
+    #   검증 환경이 둘 다 필요한 이유는 PLD-1616 참고.
+    onestore_sandbox_host: Optional[str] = None
+    # 마켓 구분 코드. 배포국가가 글로벌이면 MKT_GLB, 한국이면 MKT_ONE.
+    #   **헤더를 안 보내면 원스토어가 한국 마켓에서 조회해 모든 구매가 NoSuchData 로
+    #   보인다**(2026-09-02 실측). 우리 앱은 배포국가가 미국이라 MKT_GLB 가 기본이다.
+    #   비밀이 아니므로 코드 기본값을 두고, 필요하면 env 로 덮는다.
+    onestore_market_code: str = "MKT_GLB"
+
     # Stripe configuration (기존 web_payment_* 설정 대체)
     stripe_secret_key: str
     stripe_test_secret_key: str

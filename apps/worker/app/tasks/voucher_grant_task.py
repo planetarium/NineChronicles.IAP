@@ -51,10 +51,19 @@ engine = create_engine(
     config.pg_dsn, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True
 )
 
-# 실 결제 스토어 → 바우처 플랫폼. WEB=PC, APPLE/GOOGLE=MOBILE.
-_PROD_STORES = {Store.APPLE, Store.GOOGLE, Store.WEB}
+# 실 결제 스토어 → 바우처 플랫폼. WEB=PC, APPLE/GOOGLE/ONESTORE=MOBILE.
+#   ONESTORE 에는 샌드박스 짝(_TEST)이 없다 — 영수증으로 환경을 구분할 수 없어 만들지
+#   않았고(enums.py), 대신 검증기가 배포별 호스트를 쓴다. 샌드박스 구매는 상용 호스트에
+#   기록이 없어 검증 단계에서 INVALID 로 걸러지므로 여기까지 오지 않는다.
+_PROD_STORES = {Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE}
 _TEST_STORES = {Store.APPLE_TEST, Store.GOOGLE_TEST, Store.WEB_TEST}
-_MOBILE_STORES = {Store.APPLE, Store.APPLE_TEST, Store.GOOGLE, Store.GOOGLE_TEST}
+_MOBILE_STORES = {
+    Store.APPLE,
+    Store.APPLE_TEST,
+    Store.GOOGLE,
+    Store.GOOGLE_TEST,
+    Store.ONESTORE,
+}
 _PC_STORES = {Store.WEB, Store.WEB_TEST}
 
 HTTP_TIMEOUT = 10
