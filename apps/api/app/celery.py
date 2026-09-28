@@ -18,6 +18,18 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
+    # (2026-09-29) 결과 백엔드를 발행 경로에서 뗀다 — 근거·사고 경위는
+    #   apps/worker/app/celery_app.py 의 같은 설정 주석에 있다.
+    #   여기가 더 급한 이유: send_to_worker() 는 **구매 요청을 처리하는 중에** 불린다.
+    #   이 프로세스가 같은 PubSub 재진입에 걸리면 그 순간 유저의 결제 요청이 응답 없이 매달린다.
+    #   ⚠️ 단, 이 프로세스에는 등록된 Task 가 없고 전부 send_task 다. conf 의 이 값은
+    #      send_task 에 적용되지 않으므로(celery 가 options 만 본다) 실제 차단은
+    #      send_to_worker() 의 ignore_result=True 인자가 한다. 이 값은 정합성용이다.
+    task_ignore_result=True,
+    redis_socket_timeout=5.0,
+    redis_socket_connect_timeout=5.0,
+    redis_socket_keepalive=True,
+    redis_retry_on_timeout=True,
     timezone="UTC",
     enable_utc=True,
 )
@@ -38,7 +50,13 @@ def send_to_worker(task_name: str, message: Dict[str, Any]) -> str:
         logger.info(f"Sending task to Celery worker: {task_name}", message=message)
         queue = "product_queue"
 
-        task = celery_app.send_task(task_name, args=[message], queue=queue)
+        # ⚠️ ignore_result 는 **여기서 명시해야** 한다. celery 의 send_task 는
+        #   `options.pop('ignore_result', False)` 라 conf.task_ignore_result 를 읽지 않는다
+        #   (conf 를 보는 건 등록된 Task 의 apply_async 뿐이다). 이걸 빼면 구매 1건마다
+        #   결과 백엔드에 PubSub SUBSCRIBE 가 걸려 아래 주석의 재진입 데드락 경로가 살아 있다.
+        task = celery_app.send_task(
+            task_name, args=[message], queue=queue, ignore_result=True
+        )
         logger.info(
             f"Task sent to Celery worker: {task_name}", task_id=task.id, queue=queue
         )
