@@ -52,7 +52,9 @@ def send_to_worker(task_name: str, payload: Dict[str, Any]) -> Optional[str]:
 
     # 작업 보내기
     try:
-        task = app.send_task(task_name, args=[payload], queue="product_queue")
+        task = app.send_task(
+            task_name, args=[payload], queue="product_queue", ignore_result=True
+        )
         logger.info(
             f"작업 {task_name}을(를) Celery 워커에 전송했습니다. 작업 ID: {task.id}"
         )

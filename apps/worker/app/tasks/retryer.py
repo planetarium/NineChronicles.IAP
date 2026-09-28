@@ -89,6 +89,11 @@ def send_uuid_to_worker(uuid: str) -> bool:
             "iap.send_product",
             args=[send_product_message.model_dump()],
             queue="product_queue",
+            # conf.task_ignore_result 는 send_task 에 적용되지 않는다(celery 가 options 만 본다).
+            #   빼면 이 루프가 영수증 1건마다 결과 백엔드에 PubSub SUBSCRIBE 를 걸고,
+            #   거기서 재진입 데드락이 나면 concurrency=1 인 background 워커가 통째로 선다.
+            #   beat 은 멀쩡하므로 beat liveness probe 로도 안 잡히는 사각지대다.
+            ignore_result=True,
         )
         logger.info(f"UUID {uuid}를 워커에 전송했습니다. task_id: {task.id}")
         return True

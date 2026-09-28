@@ -39,7 +39,8 @@ def send_message(url: str, title: str, blocks: List):
         ],
         "attachments": [{"blocks": blocks}],
     }
-    resp = requests.post(url, json=message)
+    # 알람 경로가 무한 대기하면 이 PR 이 고치는 것과 같은 유형의 사고가 된다.
+    resp = requests.post(url, json=message, timeout=10)
     logger.info(f"{title} :: Sent {len(blocks)} :: {resp.status_code} :: {resp.text}")
 
 
@@ -109,7 +110,7 @@ def _stuck_tx_stats(sess, now: datetime):
     """
     VALID 인데 tx 가 INVALID/STAGED 로 멈춘 영수증을 나이로 갈라 센다.
 
-    한 번의 쿼리로 (최근, 오래된, 가장 오래된 시각) 을 같이 얻는다. 셋을 따로 세면
+    한 번의 쿼리로 (최근, 오래된, 전체 최고령, 최근 최고령) 을 같이 얻는다. 따로 세면
     그 사이에 트래커가 상태를 바꿔 숫자끼리 안 맞는 보고가 나간다.
     """
     return (
@@ -119,6 +120,11 @@ def _stuck_tx_stats(sess, now: datetime):
                 Receipt.created_at <= now - STUCK_STALE_AFTER
             ),
             func.min(Receipt.created_at),
+            # recent 버킷만의 최고령. 전역 min 은 3일 묵은 한 건이 있으면 계속 그 값이라
+            #   "지금 막 막힌 게 얼마나 됐나"를 못 알려준다.
+            func.min(Receipt.created_at).filter(
+                Receipt.created_at > now - STUCK_STALE_AFTER
+            ),
         )
         .filter(
             Receipt.status == ReceiptStatus.VALID,
@@ -129,10 +135,15 @@ def _stuck_tx_stats(sess, now: datetime):
     )
 
 
+def _stale_hours() -> int:
+    """메시지에 쓰는 경계 시간. 상수와 따로 놀면 메시지가 거짓말을 한다."""
+    return int(STUCK_STALE_AFTER.total_seconds() // 3600)
+
+
 def check_halt_tx(sess):
     """Notify when STAGED|INVALID tx over 5min."""
     now = datetime.now(tz=timezone.utc)
-    recent, stale, oldest = _stuck_tx_stats(sess, now)
+    recent, stale, oldest, recent_oldest = _stuck_tx_stats(sess, now)
 
     if not recent:
         # 오래 박힌 건만 남은 상태. 여기서 쏘면 그 건이 수동 처리될 때까지
@@ -144,12 +155,16 @@ def check_halt_tx(sess):
 
     # ⚠️ 여기서 막는 건 "오래된 건의 영구 반복"까지다. 같은 건이 풀릴 때까지
     #   10분마다 반복되는 것 자체는 이 함수로는 못 막는다(발화 이력을 들고 있지 않다).
-    #   반복 억제와 해소(resolved) 알림은 Grafana 알림 규칙 쪽에서 붙인다.
+    #   이 메시지는 Slack incoming webhook 으로 직행하므로 dedup·resolved 가 없다 —
+    #   그건 Grafana 알림 규칙으로 옮겨야 붙는다(아직 미구현).
     detail = f"최근 {recent}건"
+    if recent_oldest is not None:
+        detail += f", 최장 {int((now - recent_oldest).total_seconds() // 60)}분"
     if stale:
-        detail += f" (+ 6시간 이상 박힌 {stale}건)"
-    if oldest is not None:
-        detail += f", 최장 {int((now - oldest).total_seconds() // 60)}분"
+        stale_min = int((now - oldest).total_seconds() // 60) if oldest else 0
+        detail += (
+            f" / {_stale_hours()}시간 이상 박힌 {stale}건(최장 {stale_min // 60}시간)"
+        )
 
     send_message(
         config.iap_alert_webhook_url,
@@ -165,20 +180,35 @@ def check_halt_tx(sess):
 def report_stale_halt_tx(sess):
     """하루 한 번, 수동 개입이 필요한 장기 정체 건을 보고한다."""
     now = datetime.now(tz=timezone.utc)
-    _, stale, oldest = _stuck_tx_stats(sess, now)
+    _, stale, oldest, _ = _stuck_tx_stats(sess, now)
     if not stale:
         return
 
+    # 멘션을 단다. 반복 알람에서 넘겨받은 "수동 확인" 책임이 이 하루 한 번짜리에 있는데
+    #   조용하기까지 하면 아무도 안 본다.
     send_message(
         config.iap_alert_webhook_url,
         "[NineChronicles.IAP] Stale Tx. Receipt Digest",
         [
             create_block(
-                f"6시간 이상 tx 가 INVALID/STAGED 로 멈춘 영수증 {stale}건 "
+                f"<@U03DRL8R1FE> <@UCKUGBH37> {_stale_hours()}시간 이상 tx 가 "
+                f"INVALID/STAGED 로 멈춘 영수증 {stale}건 "
                 f"(최장 {int((now - oldest).total_seconds() // 3600)}시간). 수동 확인이 필요합니다."
             )
         ],
     )
+
+
+def is_daily_slot(now: datetime) -> bool:
+    """
+    하루 1회 보고 슬롯(12:00 KST)인가.
+
+    이 태스크가 10분 간격이라 minute < 10 이어도 하루 한 번이 유지된다. minute == 0 으로
+    좁히면 정각에 due 가 몰려(track_tx·retryer·voucher_* 동시) 워커가 60초만 밀려도 그날
+    슬롯이 통째로 사라진다 — 그 슬롯이 장기 정체를 보고하는 유일한 경로라 실패 방향이
+    '침묵' 이 된다. 그래서 함수로 빼 테스트로 고정한다.
+    """
+    return now.hour == 3 and now.minute < 10
 
 
 def check_no_tx(sess):
@@ -249,17 +279,15 @@ def status_monitor(self):
     sess = scoped_session(sessionmaker(bind=engine))
 
     try:
-        daily_slot = (
-            datetime.utcnow().hour == 3 and datetime.now().minute == 0
-        )  # 12:00 KST
-        if daily_slot:
+        if is_daily_slot(datetime.now(tz=timezone.utc)):
+            # ⚠️ GQL 루프보다 **먼저** 부른다. check_token_balance 는 timeout 없는
+            #   requests.post 라, 한 번 흔들리면 예외가 올라가 이 회차가 통째로 날아간다.
+            report_stale_halt_tx(sess)
             for planet_id in config.converted_gql_url_map.keys():
                 # Token balance report should exclude Thor network.
                 if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
                     continue
                 check_token_balance(planet_id)
-            # 장기 정체 건은 check_halt_tx 가 매 회차 쏘지 않으므로 여기서 하루 한 번 본다.
-            report_stale_halt_tx(sess)
 
         check_halt_tx(sess)
         # check_tx_failure(sess)
