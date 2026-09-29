@@ -42,7 +42,7 @@ Nine Chronicles 인앱결제(IAP) 백엔드. 스토어 영수증을 검증하고
 ## 주요 API ([apps/api/app/api/](apps/api/app/api/))
 
 ### Product ([product.py](apps/api/app/api/product.py))
-- `GET /api/product` — 카테고리별 상품. `planet_id`, `agent_addr` 기준 구매 제한 적용
+- `GET /api/product` — 카테고리별 상품. `planet_id`, `agent_addr` 기준 구매 제한 적용. **`catalog=cash|point`(기본 `cash`)** — 기본은 현금 상품만이고 포인트샵 전용 상품(`product.point_shop_grantable=true`)은 `catalog=point` 로만 나온다 (PLD-1575)
 - `GET /api/product/all` — 전체 상품 (캐시 1h)
 
 ### Purchase ([purchase.py](apps/api/app/api/purchase.py))
@@ -63,7 +63,7 @@ Nine Chronicles 인앱결제(IAP) 백엔드. 스토어 영수증을 검증하고
 
 ### Admin ([admin.py](apps/api/app/api/admin.py))
 > 상품/가격/재화 등록은 운영자가 `9C_IAP_list` 시트를 작성 → **NineChronicles.Backoffice** "IAP 상품 임포트" UI가 아래 import 엔드포인트들을 호출하는 흐름.
-- `GET /api/admin/products` · `POST /api/admin/products/import` — 상품 일괄 CSV 임포트
+- `GET /api/admin/products` · `POST /api/admin/products/import` — 상품 일괄 CSV 임포트 (목록 응답은 `AdminProductSchema` = 유저용 + `point_shop_grantable`)
 - `POST /api/admin/products/categories/import` · `/api/admin/products/fungible-assets/import` · `/api/admin/products/fungible-items/import`
 - `POST /api/admin/prices/import`
 - `GET /api/admin/receipts` — 영수증 검색

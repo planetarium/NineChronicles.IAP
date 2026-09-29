@@ -35,20 +35,23 @@ celery_app.conf.update(
 )
 
 
-def send_to_worker(task_name: str, message: Dict[str, Any]) -> str:
+def send_to_worker(
+    task_name: str, message: Dict[str, Any], queue: str = "product_queue"
+) -> str:
     """
     Send a task to the Celery worker
 
     Args:
         task_name: The name of the task to execute
         message: The message data to send with the task
+        queue: 대상 큐. 기본은 결제 지급 큐(`product_queue`). 무상 지급(PLD-1564)처럼 결제
+            지급을 뒤로 밀면 안 되는 작업은 `background_job_queue` 로 보낸다.
 
     Returns:
         str: Task ID
     """
     try:
         logger.info(f"Sending task to Celery worker: {task_name}", message=message)
-        queue = "product_queue"
 
         # ⚠️ ignore_result 는 **여기서 명시해야** 한다. celery 의 send_task 는
         #   `options.pop('ignore_result', False)` 라 conf.task_ignore_result 를 읽지 않는다

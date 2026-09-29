@@ -3,12 +3,22 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple, Union
 
 from fastapi import HTTPException
+from shared.utils.fav_currency import (
+    FAV_PREFIX,
+    FavCurrencyError,
+    assert_fav_decimal_places,
+)
 from shared.models.product import (
     FungibleAssetProduct,
     FungibleItemProduct,
     Price,
+    GACHA_KIND_FAV,
+    GACHA_KIND_ITEM,
+    PAYABLE_ANY,
+    PAYABLE_NCG,
     Product,
     ProductAssetUISize,
+    ProductGachaEntry,
     ProductRarity,
     ProductType,
     Store,
@@ -18,6 +28,10 @@ from shared.models.product_voucher_grant import ProductVoucherGrant
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.grant_guard import (
+    parse_point_shop_grantable,
+    validate_point_shop_grantable_eligible,
+)
 from app.voucher_validation import (
     parse_voucher_columns,
     validate_product_voucher_eligible,
@@ -25,6 +39,31 @@ from app.voucher_validation import (
 
 # (C1b) CSV의 voucher (type, count) 고정 쌍 슬롯 수. voucher_ticket_type_1..N / voucher_count_1..N.
 VOUCHER_SLOTS = 3
+
+# (PLD-1575) 포인트샵 지급 화이트리스트 컬럼. **선택 컬럼**이다 — 없는 시트도 그대로 임포트된다
+#   (파서는 app/grant_guard.py 의 3상태 parse_point_shop_grantable).
+POINT_SHOP_GRANTABLE_COLUMN = "point_shop_grantable"
+# (PLD-1561) 포인트 판매가 컬럼. 헤더 없음=유지 / 빈칸=해제(NULL) / 값=양의 정수.
+POINT_PRICE_COLUMN = "point_price"
+# (PLD-1562) 10연뽑. 헤더 없음=유지 / 빈칸=유지 / 값=1 이상 정수.
+GACHA_DRAW_COUNT_COLUMN = "gacha_draw_count"
+# (PLD-1562) 뽑기 풀 칸의 정체성. 헤더 없음/빈칸=티커를 키로(옛 시트 호환).
+#   값을 주면 **같은 티커를 수량만 다르게 여러 칸** 둘 수 있다(상품표 v0.9 재료 티어).
+GACHA_SLOT_KEY_COLUMN = "slot_key"
+# (PLD-1564) 결제 가능 포인트 종류. 헤더 없음/빈칸=유지 / 'ANY'|'NCG'.
+POINT_PAYABLE_KINDS_COLUMN = "point_payable_kinds"
+#: CSV 입력 → 저장값. 문서 어휘(PP-X)와 코드 어휘(NCG)를 **둘 다 받고 하나로 저장**한다.
+PAYABLE_ALIASES = {
+    PAYABLE_ANY: PAYABLE_ANY,
+    "BOTH": PAYABLE_ANY,  # "PP-S·PP-X 모두" 를 그대로 옮겨 적는 경우
+    PAYABLE_NCG: PAYABLE_NCG,
+    "PP_X": PAYABLE_NCG,
+    "PP-X": PAYABLE_NCG,
+    "PPX": PAYABLE_NCG,
+}
+# 추첨은 전역 advisory lock 안에서 돈다 — 큰 값은 그 구간을 늘려 모든 지급 요청을 줄 세우고
+# 결과 JSON 도 주문마다 영구 저장된다. 실무상 10연이 최대이므로 넉넉히 100.
+MAX_GACHA_DRAW_COUNT = 100
 
 
 def parse_boolean(value: str) -> bool:
@@ -98,6 +137,76 @@ def process_csv_row(row: dict, is_internal: bool) -> dict:
         "mileage": parse_int(row["mileage"], default=0),
         "mileage_price": parse_int(row["mileage_price"]),
     }
+
+    # (PLD-1564) 결제 가능 포인트 종류. **선택 컬럼 + 3상태**다 — 헤더 없음/빈칸은 유지.
+    #   2상태로 읽으면 이 컬럼 없는 기존 시트를 재임포트하는 순간 가챠의 'NCG' 제약이
+    #   조용히 'ANY' 로 풀린다. 그건 봇이 무상 포인트로 가챠를 도는 문이 열리는 것이다.
+    if POINT_PAYABLE_KINDS_COLUMN in row:
+        raw = (row.get(POINT_PAYABLE_KINDS_COLUMN) or "").strip().upper()
+        if raw:
+            # 기획 문서는 PP-S / **PP-X** 로 말하고 값을 넣는 사람은 그 문서를 본다.
+            #   저장은 `NCG` 하나로 하되(코드의 RewardKind 와 같은 이름) **입력은 문서 어휘도
+            #   받는다** — 번역이 필요한 경계가 곧 실수가 나는 자리다.
+            #   반대 방향(PP_S)은 별칭을 두지 않는다: 'PP_S 전용' 값 자체가 없다.
+            canonical = PAYABLE_ALIASES.get(raw)
+            if canonical is None:
+                raise ValueError(
+                    f"product {csv_data['id']}: {POINT_PAYABLE_KINDS_COLUMN} 는"
+                    f" {sorted(PAYABLE_ALIASES)} 중 하나여야 한다 (got {raw!r})"
+                )
+            csv_data[POINT_PAYABLE_KINDS_COLUMN] = canonical
+
+    # (PLD-1562) 10연뽑. **선택 컬럼**이다 — 헤더가 없으면 건드리지 않는다(기존 시트가
+    #   전 상품의 추첨 횟수를 1 로 되돌리면 10연이 조용히 단연이 된다).
+    if GACHA_DRAW_COUNT_COLUMN in row:
+        raw = (row.get(GACHA_DRAW_COUNT_COLUMN) or "").strip()
+        if raw:
+            draws = parse_int(raw)
+            if draws is None or not 1 <= draws <= MAX_GACHA_DRAW_COUNT:
+                # 상한이 필요한 이유: 추첨은 전 네임스페이스를 직렬화하는 advisory lock
+                #   **안**에서 돈다. 오타 `100000` 하나면 그 1초짜리 CPU 구간 동안 모든
+                #   지급 요청이 줄을 서고, 결과 JSON 도 주문마다 수 MB 씩 영구 저장된다.
+                raise ValueError(
+                    f"product {csv_data['id']}: {GACHA_DRAW_COUNT_COLUMN} 는"
+                    f" 1~{MAX_GACHA_DRAW_COUNT} 정수여야 한다 (got {raw!r})"
+                )
+            csv_data[GACHA_DRAW_COUNT_COLUMN] = draws
+
+    # (PLD-1561) 포인트샵 판매가. **선택 컬럼**이다 — 헤더가 없으면 csv_data 에 넣지 않아
+    #   compare_and_update_product 가 이 컬럼을 아예 건드리지 않는다(기존 값 유지).
+    #   빈 칸은 "포인트로 팔지 않음"(NULL)로 **명시적 해제**다 — 값을 지우는 유일한 방법이라
+    #   유지와 구분되어야 하므로, 헤더 유무로 갈린다.
+    if POINT_PRICE_COLUMN in row:
+        raw = (row.get(POINT_PRICE_COLUMN) or "").strip()
+        if raw == "":
+            csv_data[POINT_PRICE_COLUMN] = None
+        else:
+            price = parse_int(raw)
+            # 0·음수는 "공짜 주문 + 원장 0행"(감사 불가) 또는 마이너스 차감이 된다.
+            if price is None or price <= 0:
+                raise ValueError(
+                    f"product {csv_data['id']}: {POINT_PRICE_COLUMN} 는 양의 정수여야 한다"
+                    f" (got {raw!r}). 팔지 않으려면 빈 칸으로 둘 것."
+                )
+            csv_data[POINT_PRICE_COLUMN] = price
+
+    # (PLD-1575) 포인트샵 지급 화이트리스트. 값이 있을 때만 csv_data 에 넣는다 —
+    #   키가 없으면 compare_and_update_product 가 이 컬럼을 아예 건드리지 않고(유지),
+    #   신규 상품이면 모델 default(False)로 들어간다(화이트리스트 밖에서 시작 = fail-closed).
+    grantable = parse_point_shop_grantable(row.get(POINT_SHOP_GRANTABLE_COLUMN))
+    if grantable is not None:
+        if grantable:
+            # 켜는 경우에만 상품유형 검사(끄는 건 항상 허용 — 킬스위치를 막으면 안 된다).
+            #   이 행이 **쓰려는** product_type/sku 기준이다(같은 임포트에서 유형이 바뀔 수 있다).
+            try:
+                validate_point_shop_grantable_eligible(
+                    csv_data["id"], csv_data["product_type"], csv_data["google_sku"]
+                )
+            except HTTPException as e:
+                raise ValueError(f"product {csv_data['id']}: {e.detail}")
+        # ⚠️ 이 플래그를 켜면 **그 상품은 곧바로 지급 가능**해진다. 예전에는 뒤에 발행량
+        #   상한이 한 겹 더 있었지만 지금은 없다(제거 근거는 app/grant_guard.py 도커스트링).
+        csv_data[POINT_SHOP_GRANTABLE_COLUMN] = grantable
 
     # For internal environment, adjust open_timestamp if it's in the future
     current_time_utc = datetime.now(timezone.utc)
@@ -241,9 +350,6 @@ def import_products_from_csv(
         csv_path: CSV 파일 경로
         environment: 'internal' 또는 'mainnet'
         interactive: 사용자 입력을 받을지 여부
-
-    Returns:
-        tuple[int, int]: (처리된 상품 수, 업데이트된 상품 수)
     """
     if environment not in ["internal", "mainnet"]:
         raise ValueError("environment must be either 'internal' or 'mainnet'")
@@ -365,6 +471,18 @@ def process_fungible_asset_row(db: Session, row: dict) -> bool:
         "amount": parse_float(row["amount"]),
         "decimal_places": parse_int(row["decimal_places"]),
     }
+
+    # 여기엔 티커·자릿수 검증이 **한 건도 없었다.** 유상 결제 경로라 지금까지는 상품 등록이
+    #   곧 기획 검수였지만, 지급 API(PLD-1564)가 같은 상품을 무상으로 열기 때문에 가챠와
+    #   같은 검사가 필요하다. 근거는 fav_currency 모듈 참조.
+    try:
+        assert_fav_decimal_places(
+            csv_data["ticker"],
+            csv_data["decimal_places"],
+            f"product {csv_data['product_id']}",
+        )
+    except FavCurrencyError as e:
+        raise ValueError(f"fungible_asset_product: {e}")
 
     # 기존 데이터 확인
     existing_asset = (
@@ -509,10 +627,19 @@ def import_fungible_items_from_csv(db: Session, csv_path: str) -> Tuple[int, int
     try:
         with open(csv_path, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
+            touched_products = set()
             for row in reader:
                 processed_count += 1
+                touched_products.add(parse_int(row["product_id"]))
                 if process_fungible_item_row(db, row):
                     changed_count += 1
+
+            # (PLD-1562) 반대 방향의 배타 검사. 이미 뽑기 풀이 있는 상품에 고정 구성품을
+            #   붙이면 그 상품은 등록 시점에 조용히 통과하고 **주문 시점에 400** 이 된다 —
+            #   등록 시점 검사를 만든 이유 그 자체다.
+            db.flush()
+            for product_id in touched_products:
+                assert_not_mixed_components(db, product_id)
 
             db.commit()
             print(
@@ -603,6 +730,433 @@ def import_prices_from_csv(db: Session, csv_path: str) -> Tuple[int, int]:
             db.commit()
             print(f"\n✅ 가격 정보 동기화 완료! (처리: {processed_count}, 업데이트: {updated_count})")
             return processed_count, updated_count
+
+    except Exception as e:
+        db.rollback()
+        raise e
+
+
+# ── (PLD-1562) 뽑기 풀 CSV ────────────────────────────────────────────────────
+# 컬럼: product_id, name, weight, kind, ticker, amount, sheet_item_id, decimal_places,
+#       slot_key
+#   · kind           = ITEM | FAV (생략 시 ITEM — 기존 시트 하위호환)
+#   · ticker         = Item_NT_400000 / FAV__RUNESTONE_HP
+#   · sheet_item_id  = 아이템 아이콘용(ITEM 필수 / FAV 는 비워 둘 것)
+#   · decimal_places = FAV 자릿수(생략 시 0). 아이템은 항상 0
+#   · slot_key       = **칸의 정체성**(생략 시 티커). 같은 아이템을 수량만 다르게 여러 칸
+#                      두려면 필요하다. 한 상품 안에서는 **전부 쓰거나 전부 안 쓴다**
+#
+# `fungible-items/import` 와 같은 모양(상품당 여러 행)을 따른다. voucher 처럼 고정 슬롯을
+# 쓰지 않는 이유: 풀은 수십 칸이 될 수 있어 `gacha_item_1..N` 으로는 표가 못 넘어간다.
+#
+# ⚠️ **REPLACE 가 아니라 upsert 다.** 행을 지우려면 CSV 가 아니라 명시적으로 지워야 한다.
+#    REPLACE 로 만들면 부분 CSV 를 올리는 순간 나머지 칸이 조용히 사라지고, 그건 확률이
+#    통째로 바뀌는 사고다(그리고 이미 뽑힌 주문은 동결돼 있어 대조로도 안 드러난다).
+
+
+def assert_not_mixed_components(db: Session, product_id: int) -> None:
+    """
+    한 상품이 **고정 구성품과 뽑기 풀을 동시에** 갖지 못하게 한다.
+
+    "둘 다 주나 하나만 주나"가 정의되지 않아 지급 API 가 400 으로 끊는 상태다. 그걸
+    **등록 시점에** 알려야 한다 — 지급 시점에만 걸리면 유저가 포인트를 쓴 뒤에 실패한다.
+
+    ⚠️ 양방향이어야 한다. 뽑기 import 만 검사하면 반대 경로(이미 풀이 있는 상품에
+       `fungible-items/import` 로 고정 구성품을 붙이는 것)가 조용히 통과한다.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise ValueError(f"product {product_id} 가 존재하지 않는다")
+    has_fixed = bool(product.fav_list or product.fungible_item_list)
+    has_pool = bool(product.gacha_entry_list)
+    if has_fixed and has_pool:
+        raise ValueError(
+            f"product {product_id} 는 고정 구성품과 뽑기 풀을 동시에 가질 수 없다"
+            " (지급 시점에 400 으로 끊긴다 — 한쪽을 비울 것)"
+        )
+
+
+def _row_ticker(row: dict) -> str:
+    """CSV 행의 티커. `fungible_item_id` 는 옛 컬럼명이다(불일치는 행 단위 검사가 끊는다)."""
+    return (row.get("ticker") or row.get("fungible_item_id") or "").strip()
+
+
+def _effective_slot_key(row: dict) -> str:
+    """실제 upsert 키. 명시 `slot_key`, 없으면 티커 폴백 — process_gacha_entry_row 와 같다."""
+    return (row.get(GACHA_SLOT_KEY_COLUMN) or "").strip() or _row_ticker(row)
+
+
+def _claim_id(entry: ProductGachaEntry) -> int:
+    """
+    이번 임포트에서 이 칸을 이미 썼는지 가리는 키 = **PK**.
+
+    ⚠️ 파이썬 객체 id 를 쓰면 안 된다. SQLAlchemy 의 identity map 은 **약한 참조**라
+    지역 변수가 사라진 뒤 GC 되면 같은 행이라도 다음 쿼리가 **새 인스턴스**를 만든다
+    (실측: claimed 에 넣은 id 와 다음 쿼리가 돌려준 객체의 id 가 달랐다). 게다가 해제된
+    id 는 재사용될 수 있어 엉뚱한 행을 '이미 썼다'고 볼 수도 있다.
+
+    그래서 신규 행은 `add()` 직후 flush 해 PK 를 받고 그 값을 기록한다.
+    """
+    assert entry.id is not None, "flush 전 행을 claim 하려 한다 — PK 가 없다"
+    return entry.id
+
+
+def gacha_pool_summary(
+    db: Session, product_id: int, file_keys: Optional[set] = None
+) -> str:
+    """풀 한 줄 요약 — **칸 수와 Σweight**, 그리고 파일에 없던 기존 칸.
+
+    확률을 바꾸는 사고(칸 복제·칸 합쳐짐)는 전부 이 두 숫자로 드러난다. "변경 N건" 만으로는
+    운영이 알아챌 수 없다 — 사고 났을 때도 변경 건수는 정상값이기 때문이다.
+
+    `file_keys` 를 주면 **이번 파일에 없던 기존 칸**도 적는다. 전환이 끝난 뒤에는 "부분
+    시트 = 담긴 칸만 갱신" 이 정상 동작이라 칸 이름 오타·리네임과 구분할 방법이 없다 —
+    막을 게 아니라 **보이게** 할 문제다(`mat_s` 를 `mat_hourglass_s` 로 고쳐 올리면
+    옛 칸이 그대로 남아 표가 한 칸 늘어난다).
+    """
+    rows = (
+        db.query(ProductGachaEntry)
+        .filter(ProductGachaEntry.product_id == product_id)
+        .all()
+    )
+    total = sum(r.weight for r in rows)
+    line = f"product {product_id}: {len(rows)}칸 / Σweight {total}"
+    if file_keys is not None:
+        absent = sorted({r.slot_key for r in rows} - file_keys)
+        if absent:
+            line += f" / 파일에 없는 기존 칸: {absent}"
+    return line
+
+
+def assert_slot_keys_consistent(db: Session, rows: list) -> None:
+    """
+    (PLD-1562) `slot_key` 파일 단위 선행 검사. 전부 **확률을 조용히 바꾸는** 사고들이다.
+
+    풀 CSV 는 upsert-only(삭제가 없다)라 잘못 들어간 칸은 DB 를 직접 고쳐야 없어진다.
+    그래서 "틀린 채로 성공" 을 한 줄도 허용하지 않는다.
+
+    막는 것:
+      1. **한 상품 안에서 slot_key 전부/전무** — 섞이면 무키 행이 레거시 칸을 갱신하고,
+         뒤 행이 그 칸을 또 입양해 두 행이 한 칸으로 합쳐진다(9칸 표가 5칸).
+      2. **파일 안 중복 키** — 오타·복붙, 그리고 **slot_key 컬럼을 깜빡한 재료 시트**.
+         판정은 실효 키(명시값 or 티커 폴백) 기준이다 — 키 있는 행만 보면 후자가 샌다.
+      3. **이미 키잉된 상품에 무키 시트** — 옛 시트 탭이 남아 있는 전환 직후가 제일 위험하다.
+         티커로 폴백해 INSERT 되고, 칸이 복제돼 공시 확률이 절반이 된다.
+      4. **레거시 칸을 덮지 않는 부분 시트** — 새 행만 올리면 남은 레거시 칸이 그 행으로
+         **변신**한다(추가가 아니라 재정의). 전환 임포트는 풀 전체를 한 번에 올려야 한다.
+    """
+    by_product: dict = {}
+    for row in rows:
+        by_product.setdefault(parse_int(row["product_id"]), []).append(row)
+
+    for product_id, product_rows in by_product.items():
+        keyed = [r for r in product_rows if (r.get(GACHA_SLOT_KEY_COLUMN) or "").strip()]
+        if keyed and len(keyed) != len(product_rows):
+            raise ValueError(
+                f"gacha product {product_id}: {GACHA_SLOT_KEY_COLUMN} 는 그 상품의 행"
+                " **전부**에 있거나 전부 없어야 한다 — 섞이면 두 행이 한 칸으로 합쳐진다"
+            )
+
+        # 중복은 **실효 키**(명시값 or 티커 폴백) 기준으로 본다. 키 있는 행만 보면
+        #   무키 시트의 티커 중복 — 재료 9행을 쓰면서 slot_key 컬럼을 깜빡하는, 전환기
+        #   1순위 실수 — 이 그대로 통과해 9칸이 5칸이 된다(이 티켓의 원래 사고다).
+        keys = [_effective_slot_key(r) for r in product_rows]
+        dups = sorted({k for k in keys if keys.count(k) > 1})
+        if dups:
+            raise ValueError(
+                f"gacha product {product_id}: 같은 칸이 파일에 두 번 있다 {dups} —"
+                f" 뒤 행이 앞 행을 덮어써 칸이 사라진다."
+                f" 같은 아이템을 수량만 다르게 두려면 {GACHA_SLOT_KEY_COLUMN} 를 다르게 줄 것"
+            )
+
+        if keyed:
+            # 칸 이름을 남의 티커로 지으면 그 칸을 집는다(백필 때문에 레거시 칸의 키가
+            #   곧 티커다). 자기 티커와 같은 건 폴백과 구분이 안 되므로 허용한다.
+            #   ⚠️ 이건 **보증이 아니라 벨트**다 — 접두어 없는 티커(예: `CRYSTAL`)는 못
+            #   거른다. 실제 방어는 위 중복 검사와 아래 커버 검사이고, 그 둘을 손댈 때
+            #   이 검사에 기대지 말 것.
+            for r in keyed:
+                key = (r.get(GACHA_SLOT_KEY_COLUMN) or "").strip()
+                ticker = _row_ticker(r)
+                if not ticker:
+                    continue  # 원인은 빈 티커다 — 행 단위 검사가 제대로 된 메시지를 낸다
+                if key != ticker and (key.startswith("Item_") or key.startswith("FAV__")):
+                    raise ValueError(
+                        f"gacha product {product_id}: {GACHA_SLOT_KEY_COLUMN}={key!r} 는"
+                        " 티커 형태다 — 다른 칸을 덮어쓴다. 칸 이름은 티커로 짓지 말 것"
+                    )
+
+        existing = (
+            db.query(ProductGachaEntry)
+            .filter(ProductGachaEntry.product_id == product_id)
+            .all()
+        )
+        # ⚠️ 커버는 티커가 아니라 **(티커, 수량)** 으로 잰다. 이 티켓의 전제가 "티커 하나가
+        #   수량별로 여러 칸" 이라, 티커로 재면 **티커는 전부 덮으면서 칸은 절반만 담은**
+        #   시트가 통과한다(작은 수량 칸들이 통째로 큰 수량으로 재정의된다).
+        #   정상 전환 행은 레거시 칸과 수량이 같으므로 오탐이 없다.
+        legacy = {(e.ticker, e.amount) for e in existing if e.slot_key == e.ticker}
+
+        if not keyed:
+            if len(legacy) < len(existing):
+                raise ValueError(
+                    f"gacha product {product_id}: 이 상품은 이미"
+                    f" {GACHA_SLOT_KEY_COLUMN} 로 관리된다 — 칸 이름 없는 옛 시트로"
+                    " 덮어쓸 수 없다(칸이 복제돼 확률이 어긋난다)"
+                )
+            continue
+
+        # 전환 임포트(레거시 칸이 남아 있는데 키를 붙이는 중)는 **풀 전체**여야 한다.
+        csv_slots = {
+            (_row_ticker(r), parse_int((r.get("amount") or "").replace(",", "")))
+            for r in product_rows
+        }
+        missing = sorted(legacy - csv_slots)
+        if missing:
+            shown = ", ".join(f"{t} x{a}" for t, a in missing)
+            raise ValueError(
+                f"gacha product {product_id}: 아직 칸 이름이 없는 기존 칸 [{shown}] 이"
+                " 이 파일에 없다 — 전환 임포트는 풀 전체를 한 번에 올려야 한다"
+                " (빠진 칸이 이 파일의 다른 행으로 변신한다)"
+            )
+
+
+def process_gacha_entry_row(db: Session, row: dict, claimed: Optional[set] = None) -> bool:
+    """뽑기 풀 한 칸 upsert. upsert 키는 (product_id, slot_key) — 테이블 UNIQUE 와 같다."""
+    weight = parse_int((row.get("weight") or "").replace(",", ""))
+    amount = parse_int((row.get("amount") or "").replace(",", ""))
+    product_id = parse_int(row["product_id"])
+    # kind 는 **3상태**다 — 빈칸/컬럼 부재는 "변경 없음"이지 ITEM 이 아니다.
+    #   2상태로 읽으면 kind 컬럼 없는 옛 시트를 재임포트하는 순간 **기존 FAV 칸이 ITEM 으로
+    #   내려앉고**, 그 칸은 지급 tx 에서 아이템으로 취급돼 발행이 깨진다.
+    #   같은 리포의 선례: parse_point_shop_grantable 의 "머니 플래그는 3상태여야 한다".
+    raw_kind = (row.get("kind") or "").strip().upper()
+    if raw_kind and raw_kind not in (GACHA_KIND_ITEM, GACHA_KIND_FAV):
+        raise ValueError(
+            f"gacha product {product_id}: kind 는 ITEM 또는 FAV 여야 한다 (got {raw_kind!r})"
+        )
+    # `ticker` 가 정본이고 `fungible_item_id` 는 옛 컬럼명이다(기존 시트가 그대로 돈다).
+    #   둘 다 있고 값이 다르면 조용히 ticker 가 이기는 대신 끊는다(어느 쪽 의도인지 모른다).
+    ticker = (row.get("ticker") or "").strip()
+    legacy = (row.get("fungible_item_id") or "").strip()
+    if ticker and legacy and ticker != legacy:
+        raise ValueError(
+            f"gacha product {product_id}: ticker({ticker!r}) 와"
+            f" fungible_item_id({legacy!r}) 가 다르다 — 한쪽만 쓸 것"
+        )
+    ticker = ticker or legacy
+    if not ticker:
+        raise ValueError(f"gacha product {product_id}: ticker 가 비어 있다")
+
+    # `slot_key` 는 **칸의 정체성**이고 티커는 산출물이다. 컬럼이 없거나 빈칸이면 티커를
+    #   키로 쓴다 — 옛 시트가 그대로 돌아야 하고, 마이그레이션이 기존 행을 정확히 그 값
+    #   (slot_key = ticker)으로 백필해 뒀다.
+    slot_key = (row.get(GACHA_SLOT_KEY_COLUMN) or "").strip() or ticker
+    claimed_ids = claimed if claimed is not None else set()
+    existing = (
+        db.query(ProductGachaEntry)
+        .filter(
+            ProductGachaEntry.product_id == product_id,
+            ProductGachaEntry.slot_key == slot_key,
+        )
+        .first()
+    )
+    if existing is None and slot_key != ticker:
+        # 옛 시트에 slot_key 를 **처음 붙이는** 재임포트. 그냥 INSERT 하면 22칸 표가 44칸이
+        #   되고 확률이 절반으로 어긋난다(가장 흔한 사고 경로다). 아직 아무도 이름표를 붙이지
+        #   않은 칸(slot_key == ticker)이 있으면 그 칸을 **입양**해 이름표만 갈아 끼운다.
+        #   이번 임포트가 이미 쓴 칸은 제외한다 — 그래야 같은 티커의 두 번째 행이 첫 번째
+        #   행의 칸을 다시 집지 않고 새 칸이 된다(둘이 한 칸으로 합쳐지면 표가 줄어든다).
+        existing = next(
+            (
+                e
+                for e in db.query(ProductGachaEntry)
+                .filter(
+                    ProductGachaEntry.product_id == product_id,
+                    ProductGachaEntry.ticker == ticker,
+                    ProductGachaEntry.slot_key == ProductGachaEntry.ticker,
+                )
+                .order_by(ProductGachaEntry.id)
+                .all()
+                if _claim_id(e) not in claimed_ids
+            ),
+            None,
+        )
+    if existing is not None:
+        if _claim_id(existing) in claimed_ids:
+            # 선행 검사가 파일 안 중복 키를 이미 막지만, 이 함수를 직접 부르는 경로
+            #   (스크립트·테스트)까지 같은 보장을 준다.
+            raise ValueError(
+                f"gacha product {product_id}: 칸 {slot_key} 를 이번 임포트에서 두 번 쓴다"
+            )
+        claimed_ids.add(_claim_id(existing))
+    # 빈칸이면 기존 행의 kind 유지, 신규면 ITEM(옛 시트 하위호환).
+    kind = raw_kind or (existing.kind if existing else GACHA_KIND_ITEM)
+    sheet_item_id = parse_int((row.get("sheet_item_id") or "").strip() or "0") or None
+    decimal_places = parse_int((row.get("decimal_places") or "").strip() or "0") or 0
+
+    if kind == GACHA_KIND_ITEM:
+        # **kind 와 티커가 어긋나면 체인이 우리 분류를 무시한다.** 체인은 kind 가 아니라
+        #   `Currencies.IsWrappedCurrency`(= 티커가 `FAV` 로 시작하는지)로 갈린다. 그래서
+        #   ITEM 칸에 `FAV__CRYSTAL` 을 적으면 여기 ITEM 분기가 dp=0 을 강제한 채 FAV 로
+        #   발행된다 — CRYSTAL 이 10^-18 로 나가고(under-grant 라 민팅 사고는 아니다),
+        #   아이콘용 sheet_item_id 를 요구하는 칸에 통화가 들어앉는다.
+        if ticker.startswith(FAV_PREFIX):
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 칸에 FAV 티커를 적었다 ({ticker})"
+                " — 체인은 kind 가 아니라 티커 접두어로 갈린다. kind 를 FAV 로 바꿀 것"
+            )
+        if sheet_item_id is None:
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 칸은 sheet_item_id 가 필요하다"
+                f" ({ticker}) — 화면 아이콘이 이걸로 그려진다"
+            )
+        if decimal_places != 0:
+            raise ValueError(
+                f"gacha product {product_id}: ITEM 의 decimal_places 는 0 이어야 한다"
+                f" ({ticker}) — 아이템에 소수 자릿수가 없다"
+            )
+    else:
+        # 반대 방향도 막는다. 접두어 없는 `CRYSTAL` 은 체인에서 아이템으로 읽혀
+        #   `ParseItemCurrency` 예외 → tx FAILURE 다. 요란하긴 하지만, 등록 때 잡을 수 있는
+        #   걸 유저가 포인트를 쓴 뒤에 잡는 셈이라 여기서 끊는다.
+        if not ticker.startswith(FAV_PREFIX):
+            raise ValueError(
+                f"gacha product {product_id}: FAV 칸의 티커는 {FAV_PREFIX} 로 시작해야 한다"
+                f" ({ticker}) — 체인이 그 접두어로 통화/아이템을 가른다"
+            )
+        if sheet_item_id is not None:
+            raise ValueError(
+                f"gacha product {product_id}: FAV 칸에 sheet_item_id 를 두지 말 것"
+                f" ({ticker}) — 화면이 없는 아이콘을 그린다"
+            )
+        # 0 이상만 보면 **아무것도 못 막는다.** 실발행량은 `amount × 10**decimal_places` 이고
+        #   통화의 진짜 자릿수는 lib9c 가 정하므로, 우리가 적은 자릿수가 다르면 그 차이가
+        #   그대로 배율이 된다 — 룬스톤(실제 0)에 18 을 적으면 1 개가 10^18 개로 나간다.
+        #   옳은 불변식은 "dp <= 18" 이 아니라 "dp == 그 통화의 dp" 다. 티커 오타도 같이 막힌다
+        #   (lib9c 는 접두어만 맞으면 없는 룬도 즉석에서 만들어 주고, tx 는 SUCCESS 로 끝난다).
+        try:
+            assert_fav_decimal_places(
+                ticker, decimal_places, f"gacha product {product_id}"
+            )
+        except FavCurrencyError as e:
+            raise ValueError(f"gacha product {product_id}: {e}")
+
+    # 0·음수는 DB CheckConstraint 도 막지만, 여기서 끊어야 **어느 행이** 틀렸는지 말해줄 수
+    # 있다(제약 위반은 IntegrityError 문자열만 남아 운영이 CSV 를 못 찾는다).
+    if weight is None or weight <= 0:
+        raise ValueError(
+            f"gacha product {product_id}: weight 는 양의 정수여야 한다 (got {row.get('weight')!r})."
+            " 0 을 넣으면 '넣었는데 절대 안 나오는 칸'이 된다"
+        )
+    if amount is None or amount <= 0:
+        raise ValueError(
+            f"gacha product {product_id}: amount 는 양의 정수여야 한다 (got {row.get('amount')!r})"
+        )
+
+    csv_data = {
+        "product_id": product_id,
+        "slot_key": slot_key,
+        "name": row["name"],
+        "weight": weight,
+        "kind": kind,
+        "ticker": ticker,
+        "decimal_places": decimal_places,
+        "sheet_item_id": sheet_item_id,
+        "amount": amount,
+    }
+
+    if existing:
+        changes = {
+            key: (getattr(existing, key), value)
+            for key, value in csv_data.items()
+            if getattr(existing, key) != value
+        }
+        if not changes:
+            return False
+        print(
+            f"\n🔍 Gacha entry (product {csv_data['product_id']} /"
+            f" 칸 {csv_data['slot_key']}) 변경:"
+        )
+        for field, (old, new) in changes.items():
+            print(f"  - {field}: 기존({old}) → 변경({new})")
+            setattr(existing, field, new)
+        return True
+
+    entry = ProductGachaEntry(**csv_data)
+    db.add(entry)
+    db.flush()  # PK 를 받아야 claim 할 수 있다(아래 주석) — 롤백 경계는 그대로다
+    # 이번 임포트가 **새로 만든** 칸도 입양 대상에서 빼야 한다. 빼지 않으면 뒤 행이
+    #   (slot_key == ticker 로 들어간) 이 칸을 집어 두 행이 한 칸으로 합쳐진다 —
+    #   "기존 칸은 이름 그대로 두고 새 칸만 이름 붙인다" 는 가장 자연스러운 시트 쓰기가
+    #   바로 그 조합이라, 회피 경로가 아니라 주 경로다.
+    claimed_ids.add(_claim_id(entry))
+    print(
+        f"🆕 Gacha entry 추가: product {csv_data['product_id']} /"
+        f" 칸 {csv_data['slot_key']} = [{csv_data['kind']}] {csv_data['ticker']}"
+        f" x{csv_data['amount']}"
+        f" (weight {csv_data['weight']})"
+    )
+    return True
+
+
+def import_gacha_entries_from_csv(
+    db: Session,
+    csv_path: str,
+    summary_out: Optional[list] = None,
+) -> Tuple[int, int]:
+    """
+    뽑기 풀 CSV 임포트.
+
+    ⚠️ 임포트가 끝나고 **등록 시점 검증 2종**을 돈다(둘 다 지급 시점에만 걸리면 유저가
+       포인트를 쓴 뒤에 실패하는 것들이다):
+         · 고정 구성품과의 배타 — assert_not_mixed_components
+       실패는 전체 롤백이다(부분 반영된 풀은 확률이 기획과 다른 표가 된다).
+    """
+    processed_count = 0
+    changed_count = 0
+    touched_products = set()
+    # 이번 임포트가 이미 쓴 칸. 입양 후보에서 빼고, 같은 칸을 두 번 쓰는 것도 여기서 잡는다.
+    #   (autoflush 에 기대지 않는다 — 배치화·autoflush=False 한 번에 조용히 깨진다)
+    claimed: set = set()
+
+    try:
+        with open(csv_path, mode="r", encoding="utf-8") as file:
+            rows = list(csv.DictReader(file))
+
+        # 행을 하나라도 쓰기 전에 **파일 전체**를 본다. 아래 규칙들은 행 단위로는 판정이
+        #   불가능하고(앞뒤 행과 DB 상태를 같이 봐야 한다), 반쯤 반영된 풀은 확률이 기획과
+        #   다른 표다.
+        assert_slot_keys_consistent(db, rows)
+
+        for row in rows:
+            processed_count += 1
+            touched_products.add(parse_int(row["product_id"]))
+            if process_gacha_entry_row(db, row, claimed=claimed):
+                changed_count += 1
+
+        db.flush()
+        for product_id in touched_products:
+            assert_not_mixed_components(db, product_id)
+
+        db.commit()
+        print(
+            f"\n✅ Gacha 풀 동기화 완료! (처리: {processed_count}, 변경: {changed_count})"
+        )
+        # 요약은 **임포터가 만든다.** 호출부가 CSV 를 다시 파싱하면 파서가 갈리고
+        #   (예: 콤마 낀 product_id) 그 상품이 요약에서 조용히 빠지는데, 지금은 이 요약이
+        #   사고를 잡는 유일한 신호다.
+        keys_by_product: dict = {}
+        for row in rows:
+            keys_by_product.setdefault(parse_int(row["product_id"]), set()).add(
+                _effective_slot_key(row)
+            )
+        for product_id in sorted(touched_products):
+            line = gacha_pool_summary(db, product_id, keys_by_product.get(product_id))
+            print(f"   {line}")
+            if summary_out is not None:
+                summary_out.append(line)
+        return processed_count, changed_count
 
     except Exception as e:
         db.rollback()

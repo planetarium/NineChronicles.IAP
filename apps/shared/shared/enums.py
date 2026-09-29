@@ -432,3 +432,23 @@ class VoucherGrantStatus(IntEnum):
     REVOKE_PENDING = 2  # 환불 감지, revoke 대기
     REVOKED = 3  # 포탈 revoke 성공
     FAILED = 4  # 재시도 소진(수동 개입)
+
+
+class GrantStatus(IntEnum):
+    """
+    (PLD-1564) 영수증 없는 범용 지급 아웃박스 상태 — 포탈 포인트샵 등 무상 지급의 멱등·재시도 추적.
+
+    `VoucherGrantStatus` 의 형제지만 방향이 반대다(그쪽은 IAP→포탈, 이쪽은 포탈→체인).
+    권위 있는 "왜 줬나"(포인트 차감·추첨 결과)는 포탈에 있고, 이 상태는 "온체인에 넣었나"만 말한다.
+
+    - **0: `PENDING`** 아웃박스 행 생성됨. tx 미전송 또는 전송 후 확정 대기
+    - **1: `GRANTED`** tx_status == SUCCESS. `granted_at` 세팅(종단)
+    - **2: `FAILED`** 재시도 소진(attempts >= MAX) 또는 tx FAILURE/INVALID 확정(종단)
+
+    포탈은 PENDING 을 계속 폴링하고 GRANTED 에서만 주문을 확정한다. FAILED 는 포탈이 자동 환급한다
+    (IAP 는 환급하지 않는다 — 포인트 원장은 포탈 소유).
+    """
+
+    PENDING = 0
+    GRANTED = 1
+    FAILED = 2
