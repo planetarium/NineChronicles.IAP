@@ -91,9 +91,20 @@ class Settings(BaseSettings):
     # C3-lite 상한: 1 grant 최악 지급(count×최대상금 NCG) 상한. None=미강제(런칭게이트서 숫자 주입).
     voucher_grant_max_ncg_per_grant: Optional[int] = None
 
+    # 운영 알림(화이트리스트 변경·뽑기 풀 변경). 워커의 WORKER_IAP_ALERT_WEBHOOK_URL 과
+    #   **같은 값**(같은 Slack 채널)을 넣는다.
+    iap_alert_webhook_url: Optional[str] = None
+
     @property
     def converted_gql_url_map(self) -> dict[PlanetID, str]:
         return {PlanetID(k.encode()): v for k, v in self.gql_url_map.items()}
+
+    @property
+    def is_production(self) -> bool:
+        """운영 배포인가. ⚠️ 지금은 **쓰는 곳이 없다** — 머니 가드의 prod fail-closed 게이트가
+        유일한 사용처였고 그게 제거됐다(app/grant_guard.py). voucher 쪽 게이트가 같은 집합을
+        쓰므로 정의는 남겨 둔다."""
+        return self.stage in ("production", "mainnet")
 
     model_config = SettingsConfigDict(env_file=(".env"), env_prefix="API_")
 

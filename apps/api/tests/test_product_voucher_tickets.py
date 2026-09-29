@@ -15,7 +15,6 @@ import importlib.util
 import sys
 import types
 from collections import defaultdict
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,7 @@ from shared.models.base import Base
 from shared.models.product import Category, Product
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.schemas.product import SimpleProductSchema
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -41,6 +40,9 @@ _TABLES = (
     "fungible_item_product",
     "price",
     "product_voucher_grant",
+    # (PLD-1562) Product.gacha_entry_list 가 joinedload 대상이라, 없으면 상품 조회가
+    #   통째로 "no such table" 로 죽는다(뽑기를 안 쓰는 테스트도 같이).
+    "product_gacha_entry",
 )
 
 
@@ -145,30 +147,6 @@ def add_grant(sess, product: Product, ticket_type: str, count: int = 1, active=T
     sess.commit()
 
 
-@contextmanager
-def count_select(engine, table: str = ""):
-    """
-    블록 안에서 나간 SELECT 수. N+1 회귀를 숫자로 못박는 용도.
-
-    `table` 을 주면 그 테이블을 건드린 SELECT 만 센다 — 엔드포인트에는 이 변경과 무관한 선행
-    lazy load(예: `price_list`)가 있어서, 전체 수를 세면 이 PR 이 보증하려는 것과 다른 걸 재게 된다.
-    """
-    counter = {"n": 0}
-
-    def _before(conn, cursor, statement, parameters, context, executemany):
-        if not statement.lstrip().upper().startswith("SELECT"):
-            return
-        if table and table not in statement:
-            return
-        counter["n"] += 1
-
-    event.listen(engine, "before_cursor_execute", _before)
-    try:
-        yield counter
-    finally:
-        event.remove(engine, "before_cursor_execute", _before)
-
-
 class TestActiveTicketsByProduct:
     def test_only_active_mappings_are_exposed(self, sess):
         """active=false 는 placeholder(=킬스위치)라 발급되지 않는다 → 응답에도 없어야 한다."""
@@ -242,7 +220,7 @@ class TestActiveTicketsByProduct:
 
         assert active_tickets_by_product(sess, [product.id]) == {}
 
-    def test_empty_input_does_not_query(self, sess, engine):
+    def test_empty_input_does_not_query(self, sess, engine, count_select):
         with count_select(engine) as counter:
             assert active_tickets_by_product(sess, []) == {}
         assert counter["n"] == 0
@@ -271,7 +249,8 @@ class TestAttachVoucherTickets:
         attach_voucher_tickets(sess, schemas.items())
 
         assert [
-            (t.ticket_type, t.count) for t in schemas[with_mapping.id].voucher_ticket_list
+            (t.ticket_type, t.count)
+            for t in schemas[with_mapping.id].voucher_ticket_list
         ] == [("STANDARD", 2)]
         # 매핑 없는 상품은 기본값 그대로 — "매핑 없음"과 "필드 없음"이 같게 보인다(하위호환).
         assert schemas[without_mapping.id].voucher_ticket_list == []
@@ -288,7 +267,7 @@ class TestAttachVoucherTickets:
         assert second.voucher_ticket_list[0].ticket_type == "STANDARD"
         assert first.voucher_ticket_list is not second.voucher_ticket_list
 
-    def test_single_query_regardless_of_product_count(self, sess, engine):
+    def test_single_query_regardless_of_product_count(self, sess, engine, count_select):
         """
         N+1 금지. 상품 수를 늘려도 티켓 조회는 항상 SELECT 1회여야 한다
         (상품마다 조회하면 `GET /api/product/all` 이 그대로 수백 쿼리가 된다).
@@ -306,7 +285,7 @@ class TestAttachVoucherTickets:
         assert counter["n"] == 1
         assert all(len(schema.voucher_ticket_list) == 2 for _, schema in schemas)
 
-    def test_empty_targets_does_not_query(self, sess, engine):
+    def test_empty_targets_does_not_query(self, sess, engine, count_select):
         with count_select(engine) as counter:
             attach_voucher_tickets(sess, [])
         assert counter["n"] == 0
@@ -329,7 +308,9 @@ class TestEndpoints:
         sess.commit()
         return products
 
-    def test_product_list_single_voucher_query(self, product_api, sess, engine):
+    def test_product_list_single_voucher_query(
+        self, product_api, sess, engine, count_select
+    ):
         """
         상품이 12개여도 `product_voucher_grant` 조회는 1회. 상품 루프 안으로 옮기면 여기서 깨진다.
         (전체 SELECT 를 세지 않는 이유는 count_select 주석 참고 — price_list 선행 lazy load 가 있다.)
@@ -348,7 +329,9 @@ class TestEndpoints:
         ] == [("GOLD", 1), ("STANDARD", 2)]
         assert by_name["p11"].voucher_ticket_list == []
 
-    def test_all_product_list_single_voucher_query(self, product_api, sess, engine):
+    def test_all_product_list_single_voucher_query(
+        self, product_api, sess, engine, count_select
+    ):
         """`/all` 도 마찬가지. (`@cache` 데코레이터를 벗겨 본체를 직접 부른다.)"""
         self._catalog(sess)
 
@@ -400,7 +383,8 @@ class TestEndpoints:
 
         with TestClient(app) as client:
             categories = client.get(
-                "/product", params={"agent_addr": self.AGENT, "planet_id": "0x000000000000"}
+                "/product",
+                params={"agent_addr": self.AGENT, "planet_id": "0x000000000000"},
             ).json()
             all_products = client.get("/product/all").json()
 
