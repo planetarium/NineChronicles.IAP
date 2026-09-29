@@ -37,6 +37,7 @@ from shared.models.product import (
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
+from shared.consts import PROD_STAGES
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
 from sqlalchemy import and_, create_engine, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -79,7 +80,8 @@ _TRANSIENT_STATUS = {401, 403, 408, 429}
 #   라이브 API 파드도 API_STAGE=mainnet). 반면 바우처 코드는 "production" 으로 짜였다.
 #   admin.py 의 머니 가드가 이미 `in ("production", "mainnet")` 로 양쪽을 보므로 그 패턴에 맞춘다.
 #   한쪽만 보면 실 운영에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다(아래 참고).
-_PROD_STAGES = ("production", "mainnet")
+# 어휘는 shared.consts 한 곳에서 온다 — onestore 의 샌드박스 호스트 가드도 같은 것을 본다.
+_PROD_STAGES = PROD_STAGES
 # Settings 의 stage 기본값. 이 값이 그대로 보이면 STAGE env 가 주입되지 않았다는 뜻이다.
 _DEFAULT_STAGE = "development"
 

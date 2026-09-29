@@ -29,3 +29,9 @@ ITEM_FUNGIBLE_ID_DICT = {
     "CRYSTAL": "FAV__CRYSTAL",
     "RUNE_GOLDENLEAF": "FAV__RUNE_GOLDENLEAF",
 }
+
+# 실 운영으로 간주하는 stage 라벨. 저장소 대부분은 `stage == "mainnet"` 을 직접 비교하지만,
+#   **안전 가드**는 넓게 잡아야 한다 — "production" 으로 배포되는 순간 가드만 풀리고
+#   바우처는 실지급으로 판정되는 fail-open 조합이 생긴다(voucher_grant_task._PROD_STAGES 가
+#   이미 둘 다 본다). 가드 쪽 어휘를 여기로 모은다.
+PROD_STAGES = ("production", "mainnet")

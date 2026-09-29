@@ -40,9 +40,6 @@ import requests
 from shared.enums import OneStoreConsumptionState, OneStorePurchaseState
 from shared.schemas.receipt import OneStorePurchaseSchema
 
-# 이 호출은 `/purchase/request` 안에서, 그것도 pg_advisory_xact_lock 을 잡은 뒤에 일어난다
-#   (purchase.py 의 dedup 주석 참조). 스레드와 DB 커넥션을 물고 기다리는 시간이라
-#   짧게 잡는다. 최악 경로는 토큰 발급 + 조회 + (401 이면) 재발급 + 재조회 = 4×timeout.
 # 마켓 구분 코드. **없으면 원스토어가 한국 마켓(MKT_ONE)에서 조회한다** — 문서상 선택
 #   항목이지만 글로벌 배포에는 사실상 필수다. 2026-09-02 실측:
 #
@@ -60,6 +57,9 @@ MARKET_CODE_GLOBAL = "MKT_GLB"
 MARKET_CODE_KOREA = "MKT_ONE"
 DEFAULT_MARKET_CODE = MARKET_CODE_GLOBAL
 
+# 이 호출은 `/purchase/request` 안에서, 그것도 pg_advisory_xact_lock 을 잡은 뒤에 일어난다
+#   (purchase.py 의 dedup 주석 참조). 스레드와 DB 커넥션을 물고 기다리는 시간이라
+#   짧게 잡는다. 최악 경로는 토큰 발급 + 조회 + (401 이면) 재발급 + 재조회 = 4×timeout.
 HTTP_TIMEOUT = 5
 # 문서: "기본적으로 3600초의 유효기간이 있으며, 유효기간이 만료되거나 600초 미만으로 남은 경우"
 #   신규 발급 가능. 그래서 잔여 600초를 캐시 만료선으로 쓴다.

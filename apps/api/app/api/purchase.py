@@ -11,6 +11,7 @@ import requests
 import structlog
 from fastapi import APIRouter, Depends, Header, Query
 from shared._graphql import GQL
+from shared.consts import PROD_STAGES
 from shared.enums import (
     PackageName,
     PlanetID,
@@ -522,7 +523,7 @@ def request_product(
                 config.onestore_host,
                 config.onestore_sandbox_host,
                 receipt_data.order["purchaseToken"],
-                config.stage == "mainnet",
+                config.stage in PROD_STAGES,
             ),
             config.onestore_client_id,
             config.onestore_client_secret,
@@ -821,13 +822,24 @@ def request_product(
     #   지급이 막힌 건(TIME_LIMIT·구매제한·시즌패스 실패 등)은 환불되게 두려는 것이다 —
     #   그 경로들은 위에서 raise_error 로 빠져나가 여기까지 오지 않는다.
     #   실패해도 지급은 이미 나갔으므로 로그만 남기고 진행한다.
+    receipt = upsert_mileage(sess, product, receipt)
+    sess.add(receipt)
+    sess.commit()
+    sess.refresh(receipt)
+
+    #   ⚠️ commit **뒤**에 둔다. 이 호출은 외부 HTTP 왕복(최악 토큰 5s + POST 5s)인데,
+    #   커밋 전에 두면 그동안 트랜잭션과 `pg_advisory_xact_lock`(#482)을 계속 쥔다.
+    #   #482 가 lock_timeout 을 10s 로 고른 근거가 "dedup SELECT 는 웜 0.2s" 였으니
+    #   원스토어 경로가 그 예산을 혼자 넘긴다. API 풀은 기본(5+10)이라 원스토어가 느려지면
+    #   Google/Apple 요청까지 커넥션 체크아웃에서 대기한다.
+    #   순서를 바꿔도 안전한 이유: 실패해도 로그만 남기고 진행하므로 DB 상태에 의존하지 않는다.
     if receipt.store == Store.ONESTORE:
         acked, ack_msg = acknowledge_onestore(
             resolve_host(
                 config.onestore_host,
                 config.onestore_sandbox_host,
                 receipt_data.order["purchaseToken"],
-                config.stage == "mainnet",
+                config.stage in PROD_STAGES,
             ),
             config.onestore_client_id,
             config.onestore_client_secret,
@@ -840,11 +852,6 @@ def request_product(
                 f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
                 "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나감)"
             )
-
-    receipt = upsert_mileage(sess, product, receipt)
-    sess.add(receipt)
-    sess.commit()
-    sess.refresh(receipt)
 
     return receipt
 
