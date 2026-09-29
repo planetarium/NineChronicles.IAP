@@ -37,6 +37,7 @@ from shared.models.product import (
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
 from shared.models.receipt import Receipt
+from shared.consts import PROD_STAGES
 from shared.models.voucher_grant_outbox import VoucherGrantOutbox
 from sqlalchemy import and_, create_engine, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -51,10 +52,19 @@ engine = create_engine(
     config.pg_dsn, pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True
 )
 
-# 실 결제 스토어 → 바우처 플랫폼. WEB=PC, APPLE/GOOGLE=MOBILE.
-_PROD_STORES = {Store.APPLE, Store.GOOGLE, Store.WEB}
+# 실 결제 스토어 → 바우처 플랫폼. WEB=PC, APPLE/GOOGLE/ONESTORE=MOBILE.
+#   ONESTORE 에는 샌드박스 짝(_TEST)이 없다 — 영수증으로 환경을 구분할 수 없어 만들지
+#   않았고(enums.py), 대신 검증기가 배포별 호스트를 쓴다. 샌드박스 구매는 상용 호스트에
+#   기록이 없어 검증 단계에서 INVALID 로 걸러지므로 여기까지 오지 않는다.
+_PROD_STORES = {Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE}
 _TEST_STORES = {Store.APPLE_TEST, Store.GOOGLE_TEST, Store.WEB_TEST}
-_MOBILE_STORES = {Store.APPLE, Store.APPLE_TEST, Store.GOOGLE, Store.GOOGLE_TEST}
+_MOBILE_STORES = {
+    Store.APPLE,
+    Store.APPLE_TEST,
+    Store.GOOGLE,
+    Store.GOOGLE_TEST,
+    Store.ONESTORE,
+}
 _PC_STORES = {Store.WEB, Store.WEB_TEST}
 
 HTTP_TIMEOUT = 10
@@ -70,7 +80,8 @@ _TRANSIENT_STATUS = {401, 403, 408, 429}
 #   라이브 API 파드도 API_STAGE=mainnet). 반면 바우처 코드는 "production" 으로 짜였다.
 #   admin.py 의 머니 가드가 이미 `in ("production", "mainnet")` 로 양쪽을 보므로 그 패턴에 맞춘다.
 #   한쪽만 보면 실 운영에서 샌드박스 영수증이 진짜 NCG 바우처를 받는다(아래 참고).
-_PROD_STAGES = ("production", "mainnet")
+# 어휘는 shared.consts 한 곳에서 온다 — onestore 의 샌드박스 호스트 가드도 같은 것을 본다.
+_PROD_STAGES = PROD_STAGES
 # Settings 의 stage 기본값. 이 값이 그대로 보이면 STAGE env 가 주입되지 않았다는 뜻이다.
 _DEFAULT_STAGE = "development"
 

@@ -12,6 +12,9 @@ from shared.enums import (
     GoogleConsumptionState,
     GooglePurchaseState,
     GooglePurchaseType,
+    OneStoreAckState,
+    OneStoreConsumptionState,
+    OneStorePurchaseState,
     PlanetID,
     ReceiptStatus,
     Store,
@@ -38,6 +41,38 @@ class GooglePurchaseSchema(BaseSchema):
     productId: Optional[str] = None
     obfuscatedExternalAccountId: Optional[str] = None
     obfuscatedExternalProfileId: Optional[str] = None
+
+
+class OneStorePurchaseSchema(BaseSchema):
+    """원스토어 구매 단건 조회 응답.
+
+    https://onestore-dev.gitbook.io/dev/tools/billing/v21/serverapi
+
+    Google 응답과 달리 **`productId` 도 `orderId` 도 들어 있지 않다.** 둘 다 요청 경로와
+    영수증에만 있다. 그래서 서버 응답으로 대조할 수 있는 식별자는 `purchaseId` 뿐이고,
+    영수증의 `order_id` 로도 그것을 쓴다(`validator/common.py`).
+    """
+
+    # 상태값은 enum 이 아니라 int 로 받는다. 문서에 없는 값이 오면 enum 검증이 먼저 터져서
+    #   "Malformed ONE Store purchase data" 로 묻히는데, 그러면 CS 때 원인을 오해한다.
+    #   비교는 `OneStorePurchaseState` 등으로 하고(IntEnum 이라 int 와 그대로 비교된다),
+    #   모르는 값은 검증기가 UNKNOWN(n) 으로 풀어서 알려 준다.
+    purchaseState: int
+    purchaseTime: int  # 밀리초
+    purchaseId: str
+    consumptionState: int = OneStoreConsumptionState.YET_BE_CONSUMED
+    acknowledgeState: int = OneStoreAckState.YET_TO_BE_ACKNOWLEDGED
+    # **상용은 null 을 준다** — 검증환경(sbpp)은 `""` 를 준다. 기본값은 키가 없을 때만
+    #   먹고 명시적 null 에는 안 먹어서, str 로 두면 상용 구매가 전부
+    #   "Malformed ONE Store purchase data" 로 떨어져 INVALID 로 굳는다(= 영영 지급 불가).
+    #   샌드박스로는 못 잡는 차이다. 2026-09-21 상용 호스트 실측으로 확인.
+    developerPayload: Optional[str] = ""
+    quantity: int = 1
+
+    @property
+    def json_data(self) -> dict:
+        """`receipt.data` 에 합쳐 넣을 형태. JSONB 라 enum 은 정수로 편다."""
+        return self.model_dump(mode="json")
 
 
 class ApplePurchaseSchema(BaseSchema):
@@ -108,7 +143,7 @@ class SimpleReceiptSchema:
     data: Union[str, Dict, object]
     store: Optional[Store] = None
 
-    # Google
+    # Google / ONE Store (봉투 모양이 같다)
     payload: Optional[Dict] = None
     order: Optional[Dict] = None
 
@@ -126,10 +161,16 @@ class SimpleReceiptSchema:
                 self.store = Store.GOOGLE
             elif "WebPayment" in self.data.get("Store", ""):
                 self.store = Store.WEB
+            elif "OneStore" in self.data.get("Store", ""):
+                # 봉투 문자열이 상용/검증 환경 동일이라 여기서 둘을 구분할 수 없다. 그래서
+                # ONESTORE 하나뿐이고, 환경 분리는 배포별 credential 로 한다(enums.py 참조).
+                self.store = Store.ONESTORE
             else:
                 self.store = Store.TEST
 
-        if self.store in (Store.GOOGLE, Store.GOOGLE_TEST):
+        # 원스토어 봉투는 Google 과 같은 모양이다: Payload 안이 {json, signature} 이고
+        # json 이 구매 데이터다(클라이언트 `BuildOneStoreReceipt`). 그래서 분기를 공유한다.
+        if self.store in (Store.GOOGLE, Store.GOOGLE_TEST, Store.ONESTORE):
             self.payload = json.loads(self.data["Payload"])
             self.order = json.loads(self.payload["json"])
         elif self.store in (Store.APPLE, Store.APPLE_TEST):
