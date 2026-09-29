@@ -114,13 +114,34 @@ INVALID 로 굳는다. 돈은 3일 뒤 자동 환불되지만 **그 구매를 �
   (`_unqueryable_reason`). 비-JSON 응답 본문을 영수증 `msg` 에 그대로 넣던 것도 고쳤다
   (HTML 덩어리가 들어갔다).
 
-**아직 남은 실측** (마켓 코드가 해결돼서 이제 실제 토큰으로 판별 가능하다)
+**오픈 전 실측** (1번은 2026-09-29 완료, 2·3번 남음)
 
 1. **상품 치환이 막히는지** — 서명을 검증하지 않으므로, 싼 상품 토큰에 비싼 `productId` 를
    붙이는 치환을 막는 건 "토큰과 안 맞는 productId 로 조회하면 404" 하나뿐이다. 상품 2개로
    A 토큰 + B productId 를 조회해 확인하고 결과를 여기 적어라. 깨지면 열려 있는 것이다.
    (존재하지 않는 토큰으로는 판별이 안 된다 — 어느 쪽이든 NoSuchData 다. 마켓 코드가
    맞아서 200 이 나오는 토큰이 생긴 지금은 판별이 된다.)
+
+   ✅ **실측 완료 (2026-09-29, 인터널 영수증의 실제 토큰 4개) — 막힌다.**
+   같은 토큰으로 경로의 productId 만 바꿔 조회했다. 대조군(제 상품)은 전부 200, 치환은 전부
+   `404 NoSuchData` 다. 원스토어는 **URL 의 productId 와 토큰을 함께 묶어 조회**한다.
+
+   | 토큰(receipt) | 종류 | 대조 `products/A/토큰A` | 치환 `products/B/토큰A` |
+   |---|---|---|---|
+   | #9296 `g_single_ap01` | 샌드박스 | 200 | `g_pkg_couragepass35premium` → 404 |
+   | #9320 `g_pkg_dailycourage` | 샌드박스 | 200 | `g_pkg_essten` → 404 |
+   | #9321 `g_pkg_essone` | 샌드박스 | 200 | `g_pkg_adventurebosspass23premium` → 404 |
+   | #9330 `g_single_golddust01` | **상용** | 200 | `g_pkg_goldleaf` → 404 |
+
+   그래서 검증기가 경로에 **클라가 보낸 productId 를 그대로 넣는 것 자체가 대조**다 — 치환하면
+   조회가 실패하고 `validate_onestore` 가 INVALID 로 떨어진다. 아래 대안(unconfirmed-purchases·
+   서명 검증)은 **이 동작이 바뀌지 않는 한 필요 없다.** 다만 이건 원스토어가 문서로 보장한 계약이
+   아니라 관측이라, 검증 경로를 바꿀 때(예: productId 없이 토큰만으로 조회하는 API 로 옮길 때)
+   이 방어가 조용히 사라진다는 점은 기억할 것.
+
+   재현: iap-api 파드에서 `shared.validator.onestore._fetch_purchase(host, cid, secret, <B>, <토큰A>,
+   market)` — GET 만 하고 ack/consume 은 안 한다. 대조군이 200 이 아니면(자동환불·만료) 그 토큰으론
+   판별 불가다.
 
    ⚠️ **왜 코드로 못 막는지, 그리고 실측 말고 뭘 할 수 있는지(2026-09-22 리뷰)**
    `getPurchaseDetails` 응답 필드는 `consumptionState / developerPayload / purchaseState /
