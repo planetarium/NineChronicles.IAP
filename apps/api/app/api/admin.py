@@ -24,6 +24,9 @@ from pydantic.alias_generators import to_camel
 from shared.enums import GrantStatus, PackageName, PlanetID, ProductType, ReceiptStatus, Store
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import (
+    ADVENTURE_BOSS_PASS_SKU_PATTERN,
+    COURAGE_PASS_SKU_PATTERN,
+    SPEND_EXCLUDED_PASS_SKU_PATTERNS,
     Category,
     FungibleAssetProduct,
     FungibleItemProduct,
@@ -1005,7 +1008,7 @@ def check_courage_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium",
+        sku_pattern=COURAGE_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1078,7 +1081,7 @@ def check_courage_pass_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium",
+        sku_pattern=COURAGE_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1126,7 +1129,7 @@ def check_adventure_boss_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="adventurebosspass\\d+premium",
+        sku_pattern=ADVENTURE_BOSS_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1199,7 +1202,7 @@ def check_non_pass_purchase_amount(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        exclude_sku_patterns=list(SPEND_EXCLUDED_PASS_SKU_PATTERNS),
         planet_id=planet_id,
         # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
         #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
@@ -1289,7 +1292,7 @@ def check_non_pass_purchase_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        exclude_sku_patterns=list(SPEND_EXCLUDED_PASS_SKU_PATTERNS),
         planet_id=planet_id,
         # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
         #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기

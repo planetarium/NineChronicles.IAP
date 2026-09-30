@@ -64,3 +64,38 @@ def test_pass_ownership_endpoints_keep_default_statuses(calls, endpoint):
         pass
     assert calls, f"{endpoint} 가 월별 조회를 안 불렀다"
     assert calls[0].get("statuses") is None
+
+
+# ── 시즌패스 SKU 패턴은 shared 상수 한 곳에서 온다 ─────────────────────────────
+from shared.models.product import (  # noqa: E402
+    ADVENTURE_BOSS_PASS_SKU_PATTERN,
+    COURAGE_PASS_SKU_PATTERN,
+    SPEND_EXCLUDED_PASS_SKU_PATTERNS,
+)
+
+
+@pytest.mark.parametrize(
+    "endpoint,expected",
+    [
+        ("check_courage_pass_purchases", COURAGE_PASS_SKU_PATTERN),
+        ("check_courage_pass_count", COURAGE_PASS_SKU_PATTERN),
+        ("check_adventure_boss_pass_purchases", ADVENTURE_BOSS_PASS_SKU_PATTERN),
+    ],
+)
+def test_pass_endpoints_use_shared_kind_patterns(calls, endpoint, expected):
+    try:
+        getattr(admin, endpoint)(
+            agent_address=AGENT, avatar_address=AVATAR, year=2026, month=10,
+            planet_id=None, sess=object(),
+        )
+    except Exception:
+        pass
+    assert calls[0]["sku_pattern"] == expected
+
+
+@pytest.mark.parametrize("endpoint", ["check_non_pass_purchase_amount", "check_non_pass_purchase_count"])
+def test_spend_endpoints_use_shared_exclusions(calls, endpoint):
+    kwargs = dict(agent_address=AGENT, avatar_address=AVATAR, year=2026, month=10, planet_id=None, sess=object())
+    kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
+    getattr(admin, endpoint)(**kwargs)
+    assert list(calls[0]["exclude_sku_patterns"]) == list(SPEND_EXCLUDED_PASS_SKU_PATTERNS)

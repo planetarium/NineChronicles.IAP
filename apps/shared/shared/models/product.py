@@ -1,4 +1,5 @@
-from typing import Any, List
+import re
+from typing import Any, List, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -468,3 +469,76 @@ def is_season_pass_product(product: "Product") -> bool:
 def season_pass_sku_filter():
     """`is_season_pass_product` 의 SQL 판(같은 토큰·같은 대소문자 규칙)."""
     return Product.google_sku.like(f"%{SEASON_PASS_SKU_TOKEN}%")
+
+
+# ── 시즌패스 **종류** 패턴(유저 영수증 집계용) ──────────────────────────────────
+#
+# admin.py 의 /user-receipts/* 5곳이 이걸 쓴다 — 패스 종류별 보유 판정(courage-pass 등, 포탈
+# 결제 직전 게이트)과 결제 미션용 지출 판정(non-pass-*)의 제외 목록.
+#
+# `\d*` 인 이유: 고정 SKU(`g_pkg_couragepasspremium`, docs/specs/2026-09-18-season-pass-fixed-sku.md)
+#   를 받아야 한다. 예전 `\d+` 는 숫자를 **요구**해서 고정 SKU 가 매치 실패 → 빈 결과 →
+#   보유 판정이 "미보유"로 오답(= 같은 시즌 중복 결제 통과)하고 지출 판정엔 패스가 섞였다.
+#   `\w*` 보다 좁게 둔다 — 숫자만 허용해야 `couragepass_x_premium` 같은 엉뚱한 SKU 가 안 걸린다.
+#   2026-09-30 메인넷·인터널 전 상품에서 `\d+` 와 결과가 동일함을 확인했다.
+#
+# ⚠️ `%pass%` 로 통일하지 말 것 — 종류 구분(courage vs adventureboss)이 사라지고,
+#    worldclearpass 가 지출 누적에서 빠진다(월드클리어패스는 **포함**이 기획 결정이다).
+COURAGE_PASS_SKU_PATTERN = r"couragepass\d*premium"
+ADVENTURE_BOSS_PASS_SKU_PATTERN = r"adventurebosspass\d*premium"
+#: 결제 미션(지출) 누적에서 뺄 패스. worldclearpass 는 일부러 없다.
+SPEND_EXCLUDED_PASS_SKU_PATTERNS = (ADVENTURE_BOSS_PASS_SKU_PATTERN, COURAGE_PASS_SKU_PATTERN)
+
+
+def sku_matches(pattern: str, sku: Optional[str]) -> bool:
+    """영수증 집계와 **같은 규칙**(부분 일치, 대소문자 무시)으로 매치한다."""
+    return bool(sku) and re.search(pattern, sku, re.IGNORECASE) is not None
+
+
+# ── 상품 등록 가드 ────────────────────────────────────────────────────────────
+#
+# SKU 형식이 조용히 어긋나면 세 군데가 **예외 없이** 틀린다:
+#   · purchase.py 시즌패스 분기는 `'pass' in google_sku`(대소문자 구분)로 탄다 — 대문자 PASS 는
+#     일반 상품 경로로 새서 온체인 tx 를 만든다.
+#   · 같은 분기가 종류를 SKU 접두어로, **시즌 번호를 SKU 의 숫자로** 읽는다 — 숫자가 없거나
+#     종류를 모르면 except 가 삼키고 pass_type=None / season_index=0 으로 시즌패스 서버를 부른다
+#     (결제는 되고 패스는 안 켜진다).
+#   · 영수증 집계 패턴(위)에 안 걸리면 보유·지출 판정이 틀린다.
+# 상품이 들어오는 경로는 CSV 임포트 하나뿐이라 거기서 끊는다.
+#
+# 허용 형식 = 2026-09-30 메인넷·인터널에 실재하는 6 종 전부(두 환경 동일).
+_REGISTRABLE_PASS_SKU = re.compile(
+    r"[a-z0-9]+_pkg_(?:"
+    r"seasonpass(?:plus|all)?\d+"
+    r"|couragepass\d+premium"
+    r"|adventurebosspass\d+premium"
+    r"|worldclearpass\d+premium"
+    r")"
+)
+#: 고정 SKU 형태(숫자 없음). 집계 패턴은 이미 받지만 **결제 경로가 아직 못 받는다.**
+_FIXED_PASS_SKU = re.compile(r"[a-z0-9]+_pkg_(?:couragepass|adventurebosspass|worldclearpass)premium")
+
+
+class SeasonPassSkuError(ValueError):
+    """시즌패스 SKU 가 지금 코드가 처리할 수 있는 형식이 아니다."""
+
+
+def assert_season_pass_sku_registrable(google_sku: Optional[str]) -> None:
+    """'pass' 가 든 SKU(대소문자 무시)는 알려진 형식이어야 등록할 수 있다. 아니면 SeasonPassSkuError."""
+    if not google_sku or "pass" not in google_sku.lower():
+        return
+    if _REGISTRABLE_PASS_SKU.fullmatch(google_sku):
+        return
+    if _FIXED_PASS_SKU.fullmatch(google_sku):
+        raise SeasonPassSkuError(
+            f"고정 시즌패스 SKU {google_sku!r} 는 아직 등록할 수 없다 — purchase.py 가 시즌 번호를 "
+            "SKU 의 숫자에서 읽어서, 숫자가 없으면 season_index=0 으로 시즌패스 서버를 부른다"
+            "(결제는 되고 패스는 안 켜진다). 결제 경로가 시즌 정의에서 번호를 읽도록 바뀐 뒤 "
+            "이 가드의 _REGISTRABLE_PASS_SKU 에 고정 형식을 추가할 것"
+            "(docs/specs/2026-09-18-season-pass-fixed-sku.md)."
+        )
+    raise SeasonPassSkuError(
+        f"시즌패스로 보이는 SKU {google_sku!r} 가 알려진 형식이 아니다 — "
+        "{store}_pkg_ + (seasonpass[plus|all]N | couragepassNpremium | adventurebosspassNpremium | "
+        "worldclearpassNpremium), 소문자만. 형식이 어긋나면 결제 분기·영수증 집계가 예외 없이 틀린다."
+    )
