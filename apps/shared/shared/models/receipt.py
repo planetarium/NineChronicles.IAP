@@ -169,7 +169,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             #
             #   ⚠️ 지급까지 끝난 뒤 환불된 건은 여기서 안 걸러진다. REFUNDED_BY_ADMIN/BUYER를
             #     기록하는 경로가 아직 없어 그런 영수증은 VALID로 남는다.
-            cls.status.in_(tuple(statuses)),
+            cls.status.in_(statuses),
         ]
 
         # avatar_addr이 제공되면 필터링 조건에 추가
