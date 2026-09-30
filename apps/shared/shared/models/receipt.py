@@ -22,6 +22,21 @@ MONTHLY_OWNERSHIP_STATUSES = (
 )
 
 
+#: 지출(보상) 판정이 "결제"로 세는 스토어. 쿠폰(REDEEM)은 유료 SKU 로 매핑돼 VALID 로 들어오지만
+#:   돈을 낸 게 아니다 — 세면 쿠폰이 **환전 가능 포인트**가 된다. 테스트 스토어는 결제가 아니다.
+_PAYMENT_STORES = (Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE)
+#: 비프로덕션은 테스트 스토어도 센다 — 인터널 QA 가 WEB_TEST/TEST 로 결제 미션을 시험한다.
+_TEST_STORES = (Store.TEST, Store.APPLE_TEST, Store.GOOGLE_TEST, Store.WEB_TEST)
+
+
+def spend_counted_stores(stage: Optional[str]) -> tuple:
+    """이 환경에서 지출 판정이 세는 스토어. REDEEM 은 어떤 환경에서도 안 센다."""
+    from shared.consts import PROD_STAGES
+
+    if stage in PROD_STAGES:
+        return _PAYMENT_STORES
+    return _PAYMENT_STORES + _TEST_STORES
+
 class Receipt(AutoIdMixin, TimeStampMixin, Base):
     __tablename__ = "receipt"
     store = Column(
@@ -111,6 +126,7 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         exclude_sku_patterns: Optional[List[str]] = None,
         planet_id: Optional[bytes] = None,
         statuses: Optional[Iterable[ReceiptStatus]] = None,
+        stores: Optional[Iterable[Store]] = None,
     ) -> List["Receipt"]:
         """
         특정 유저의 특정 월 구매 영수증 목록을 조회합니다.
@@ -133,6 +149,8 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
                 막힌다. **보상을 주는 지출 판정은 `(ReceiptStatus.VALID,)` 를 넘길 것** —
                 검증 전 영수증을 세면 가짜 영수증을 넣고 검증이 끝나기 전에 수령하는
                 경로가 열린다. 빈 집합은 호출 실수로 보고 ValueError.
+            stores: 집계할 스토어(기본 None = 거르지 않음). 지출 판정은
+                `spend_counted_stores(stage)` 를 넘길 것 — 쿠폰(REDEEM)·테스트 스토어 제외.
 
         Returns:
             List[Receipt]: 해당 월에 해당 유저가 구매한 영수증 목록 (product 정보 포함)
@@ -171,6 +189,12 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             #     기록하는 경로가 아직 없어 그런 영수증은 VALID로 남는다.
             cls.status.in_(statuses),
         ]
+
+        if stores is not None:
+            stores = tuple(stores)
+            if not stores:
+                raise ValueError("stores 가 비었다 — 아무것도 안 세려는 게 아니라면 호출 실수다")
+            filter_conditions.append(cls.store.in_(stores))
 
         # avatar_addr이 제공되면 필터링 조건에 추가
         if avatar_addr is not None:

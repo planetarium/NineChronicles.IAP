@@ -35,7 +35,7 @@ from shared.models.product import (
     category_product_table,
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
-from shared.models.receipt import Receipt
+from shared.models.receipt import Receipt, spend_counted_stores
 from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import AdminProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
@@ -1212,6 +1212,8 @@ def check_non_pass_purchase_amount(
         #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
         #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
         statuses=(ReceiptStatus.VALID,),
+        # 결제만 센다 — 쿠폰(REDEEM)은 유료 SKU 로 VALID 가 되지만 돈을 낸 게 아니다.
+        stores=spend_counted_stores(config.stage),
     )
 
     # 총 금액 계산
@@ -1305,6 +1307,8 @@ def check_non_pass_purchase_count(
         #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
         #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
         statuses=(ReceiptStatus.VALID,),
+        # 결제만 센다 — 쿠폰(REDEEM)은 유료 SKU 로 VALID 가 되지만 돈을 낸 게 아니다.
+        stores=spend_counted_stores(config.stage),
     )
 
     # 총 금액 계산

@@ -153,3 +153,46 @@ def test_empty_statuses_is_rejected():
             month=10,
             statuses=(),
         )
+
+
+# ── 스토어 필터(지출 판정용) ──────────────────────────────────────────────────
+from shared.enums import Store  # noqa: E402
+from shared.models.receipt import spend_counted_stores  # noqa: E402
+
+
+def _stores_in(conditions):
+    found = set()
+    for compiled in _compiled(conditions):
+        for value in compiled.params.values():
+            if isinstance(value, Store):
+                found.add(value)
+            elif isinstance(value, (list, tuple)):
+                found.update(v for v in value if isinstance(v, Store))
+    return found
+
+
+def test_stores_filter_is_applied_when_given():
+    session = _CapturingSession()
+    Receipt.get_user_receipts_by_month(
+        session, agent_addr="0x0000000000000000000000000000000000000000", year=2026, month=10,
+        stores=(Store.GOOGLE, Store.APPLE),
+    )
+    assert _stores_in(session.conditions) == {Store.GOOGLE, Store.APPLE}
+
+
+def test_no_store_filter_by_default(captured):
+    """보유 판정 등 기존 호출부는 스토어를 거르지 않는다(동작 불변)."""
+    assert _stores_in(captured) == set()
+
+
+def test_spend_stores_mainnet_are_real_payments_only():
+    """메인넷: 쿠폰(REDEEM)·테스트 스토어는 '지출'이 아니다 — 세면 쿠폰이 환전 가능 포인트가 된다."""
+    for stage in ("mainnet", "production"):
+        assert set(spend_counted_stores(stage)) == {Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE}
+
+
+def test_spend_stores_non_prod_include_test_stores_but_never_redeem():
+    """인터널 QA 는 WEB_TEST/TEST 로 결제한다 — 막으면 결제 미션을 시험할 수 없다. REDEEM 은 어디서도 안 센다."""
+    got = set(spend_counted_stores("internal"))
+    assert {Store.TEST, Store.WEB_TEST, Store.GOOGLE_TEST, Store.APPLE_TEST, Store.GOOGLE, Store.APPLE, Store.WEB, Store.ONESTORE} <= got
+    assert Store.REDEEM not in got

@@ -121,3 +121,22 @@ def test_spend_endpoints_still_filter_by_avatar_when_given(calls, endpoint):
     kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
     getattr(admin, endpoint)(**kwargs)
     assert calls[0]["avatar_addr"] == AVATAR  # 0x 접두·소문자 정규화 유지
+
+
+@pytest.mark.parametrize("endpoint", ["check_non_pass_purchase_amount", "check_non_pass_purchase_count"])
+def test_spend_endpoints_count_only_payment_stores(calls, endpoint, monkeypatch):
+    from shared.enums import Store
+    monkeypatch.setattr(admin.config, "stage", "mainnet", raising=False)
+    kwargs = dict(agent_address=AGENT, avatar_address=None, year=2026, month=10, planet_id=None, sess=object())
+    kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
+    getattr(admin, endpoint)(**kwargs)
+    assert set(calls[0]["stores"]) == {Store.APPLE, Store.GOOGLE, Store.WEB, Store.ONESTORE}
+
+
+@pytest.mark.parametrize("endpoint", ["check_courage_pass_purchases", "check_courage_pass_count", "check_adventure_boss_pass_purchases"])
+def test_pass_endpoints_do_not_filter_stores(calls, endpoint):
+    try:
+        getattr(admin, endpoint)(agent_address=AGENT, avatar_address=AVATAR, year=2026, month=10, planet_id=None, sess=object())
+    except Exception:
+        pass
+    assert calls[0].get("stores") is None
