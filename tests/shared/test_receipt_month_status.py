@@ -107,3 +107,49 @@ def test_refunded_and_invalid_are_excluded(captured):
         ReceiptStatus.REFUNDED_BY_BUYER,
     ):
         assert status not in found, f"{status.name}이 집계에 포함돼 있다"
+
+
+# ── 지출 판정용 좁은 상태 집합 ────────────────────────────────────────────────
+#   보유 판정(재구매 차단)은 결제 진행 중(INIT/VALIDATION_REQUEST)도 "샀음"으로 봐야 맞다.
+#   하지만 **보상을 주는** 지출 판정은 스토어 검증이 끝난 VALID 만 세야 한다 — 검증 전
+#   영수증을 세면 가짜 영수증을 넣고 검증이 끝나기 전에 수령하는 경로가 열린다.
+
+
+def _statuses_in(conditions):
+    found = set()
+    for compiled in _compiled(conditions):
+        for value in compiled.params.values():
+            if isinstance(value, ReceiptStatus):
+                found.add(value)
+            elif isinstance(value, (list, tuple)):
+                found.update(v for v in value if isinstance(v, ReceiptStatus))
+    return found
+
+
+def test_statuses_override_narrows_to_exactly_that_set():
+    session = _CapturingSession()
+    Receipt.get_user_receipts_by_month(
+        session,
+        agent_addr="0x0000000000000000000000000000000000000000",
+        year=2026,
+        month=10,
+        statuses=(ReceiptStatus.VALID,),
+    )
+    assert _statuses_in(session.conditions) == {ReceiptStatus.VALID}
+
+
+def test_default_statuses_unchanged_for_ownership_checks(captured):
+    """기본값은 보유 판정용 집합 그대로 — 좁히면 결제 중인 유저가 패스를 또 살 수 있다."""
+    assert _statuses_in(captured) == SETTLED
+
+
+def test_empty_statuses_is_rejected():
+    """빈 집합은 '아무것도 안 셈'이 아니라 호출 실수다 — 조용히 0건을 돌려주지 않는다."""
+    with pytest.raises(ValueError):
+        Receipt.get_user_receipts_by_month(
+            _CapturingSession(),
+            agent_addr="0x0000000000000000000000000000000000000000",
+            year=2026,
+            month=10,
+            statuses=(),
+        )

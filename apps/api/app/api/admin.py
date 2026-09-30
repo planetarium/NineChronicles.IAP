@@ -1201,6 +1201,10 @@ def check_non_pass_purchase_amount(
         only_paid_products=True,
         exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
         planet_id=planet_id,
+        # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
+        #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
+        #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
+        statuses=(ReceiptStatus.VALID,),
     )
 
     # 총 금액 계산
@@ -1287,6 +1291,10 @@ def check_non_pass_purchase_count(
         only_paid_products=True,
         exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
         planet_id=planet_id,
+        # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
+        #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
+        #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
+        statuses=(ReceiptStatus.VALID,),
     )
 
     # 총 금액 계산

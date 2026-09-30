@@ -1,7 +1,7 @@
 import uuid
 import re
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from sqlalchemy import UUID, Column, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, extract, func
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
@@ -10,6 +10,16 @@ from sqlalchemy.orm import backref, relationship, joinedload
 from shared.enums import PlanetID, ReceiptStatus, Store, TxStatus
 from shared.models.base import AutoIdMixin, Base, TimeStampMixin
 from shared.models.product import Product
+
+
+#: 월별 **보유** 판정(패스 재구매 차단)이 세는 상태 — get_purchase_count(구매 제한)와 동일.
+#:   결제 진행 중(INIT/VALIDATION_REQUEST)도 샀음으로 봐야 중복 구매가 안 열린다.
+#:   보상을 주는 지출 판정은 이걸 쓰면 안 된다 → `get_user_receipts_by_month(statuses=(VALID,))`.
+MONTHLY_OWNERSHIP_STATUSES = (
+    ReceiptStatus.INIT,
+    ReceiptStatus.VALIDATION_REQUEST,
+    ReceiptStatus.VALID,
+)
 
 
 class Receipt(AutoIdMixin, TimeStampMixin, Base):
@@ -99,7 +109,8 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
         only_paid_products: bool = True,
         sku_pattern: Optional[str] = None,
         exclude_sku_patterns: Optional[List[str]] = None,
-        planet_id: Optional[bytes] = None
+        planet_id: Optional[bytes] = None,
+        statuses: Optional[Iterable[ReceiptStatus]] = None,
     ) -> List["Receipt"]:
         """
         특정 유저의 특정 월 구매 영수증 목록을 조회합니다.
@@ -117,11 +128,20 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             sku_pattern: 포함할 google_sku 패턴 (정규표현식, 예: "adventurebosspass\\d+premium")
             exclude_sku_patterns: 제외할 google_sku 패턴 리스트 (정규표현식 리스트)
             planet_id: 행성 ID로 필터링 (옵셔널)
+            statuses: 집계할 영수증 상태. 기본값(None)은 보유 판정용
+                `MONTHLY_OWNERSHIP_STATUSES` — 결제 진행 중도 "샀음"으로 봐야 재구매가
+                막힌다. **보상을 주는 지출 판정은 `(ReceiptStatus.VALID,)` 를 넘길 것** —
+                검증 전 영수증을 세면 가짜 영수증을 넣고 검증이 끝나기 전에 수령하는
+                경로가 열린다. 빈 집합은 호출 실수로 보고 ValueError.
 
         Returns:
             List[Receipt]: 해당 월에 해당 유저가 구매한 영수증 목록 (product 정보 포함)
         """
         from shared.models.product import Price
+
+        statuses = MONTHLY_OWNERSHIP_STATUSES if statuses is None else tuple(statuses)
+        if not statuses:
+            raise ValueError("statuses 가 비었다 — 아무것도 안 세려는 게 아니라면 호출 실수다")
 
         # UTC 기준 해당 월의 시작과 끝 시간
         utc_start = datetime(year, month, 1)
@@ -141,19 +161,15 @@ class Receipt(AutoIdMixin, TimeStampMixin, Base):
             #   상태를 안 보면 INVALID(스토어 검증 실패 — 예: 이미 환불된 결제) 영수증까지
             #   보유로 잡혀 재구매가 막힌다.
             #
-            #   상태 집합만 get_purchase_count(구매 제한)와 일치시킨다. 시간 기준은 여전히 다르다 —
+            #   기본 상태 집합(MONTHLY_OWNERSHIP_STATUSES)은 get_purchase_count(구매 제한)와 같고,
+            #   보상을 주는 지출 판정(non-pass-amount/count)은 호출부에서 VALID 로 좁힌다.
+            #   시간 기준은 여전히 다르다 —
             #   저쪽은 purchased_at(KST 일/주), 여기는 created_at(UTC 월). 그래서 결제와 영수증
             #   생성이 다른 달로 갈리면 이 필터로도 못 거른다(후속 과제).
             #
             #   ⚠️ 지급까지 끝난 뒤 환불된 건은 여기서 안 걸러진다. REFUNDED_BY_ADMIN/BUYER를
             #     기록하는 경로가 아직 없어 그런 영수증은 VALID로 남는다.
-            cls.status.in_(
-                (
-                    ReceiptStatus.INIT,
-                    ReceiptStatus.VALIDATION_REQUEST,
-                    ReceiptStatus.VALID,
-                )
-            ),
+            cls.status.in_(tuple(statuses)),
         ]
 
         # avatar_addr이 제공되면 필터링 조건에 추가
