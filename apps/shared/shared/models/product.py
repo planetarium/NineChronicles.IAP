@@ -504,7 +504,8 @@ def sku_matches(pattern: str, sku: Optional[str]) -> bool:
 #     종류를 모르면 except 가 삼키고 pass_type=None / season_index=0 으로 시즌패스 서버를 부른다
 #     (결제는 되고 패스는 안 켜진다).
 #   · 영수증 집계 패턴(위)에 안 걸리면 보유·지출 판정이 틀린다.
-# 상품이 들어오는 경로는 CSV 임포트 하나뿐이라 거기서 끊는다.
+# 상품 CSV 를 쓰는 두 경로(API/백오피스 임포트 = apps/api import_utils, CLI = scripts/products.py)에
+# 건다. psql 직접 수정은 못 막는다.
 #
 # 허용 형식 = 2026-09-30 메인넷·인터널에 실재하는 6 종 전부(두 환경 동일).
 _REGISTRABLE_PASS_SKU = re.compile(
@@ -527,12 +528,16 @@ def assert_season_pass_sku_registrable(google_sku: Optional[str]) -> None:
     """'pass' 가 든 SKU(대소문자 무시)는 알려진 형식이어야 등록할 수 있다. 아니면 SeasonPassSkuError."""
     if not google_sku or "pass" not in google_sku.lower():
         return
+    if google_sku != google_sku.strip():
+        # 임포트는 셀 값을 strip 하지 않고 그대로 저장한다 — 공백이 붙으면 결제 시
+        #   `Product.google_sku == productId` 조회가 깨진다. 원인을 바로 알 수 있게 따로 알린다.
+        raise SeasonPassSkuError(f"SKU {google_sku!r} 앞뒤에 공백·개행이 있다 — 셀 값을 정리할 것")
     if _REGISTRABLE_PASS_SKU.fullmatch(google_sku):
         return
     if _FIXED_PASS_SKU.fullmatch(google_sku):
         raise SeasonPassSkuError(
             f"고정 시즌패스 SKU {google_sku!r} 는 아직 등록할 수 없다 — purchase.py 가 시즌 번호를 "
-            "SKU 의 숫자에서 읽어서, 숫자가 없으면 season_index=0 으로 시즌패스 서버를 부른다"
+            "SKU 의 숫자에서 읽어서, 숫자가 없으면 pass_type=None·season_index=0 으로 시즌패스 서버를 부른다"
             "(결제는 되고 패스는 안 켜진다). 결제 경로가 시즌 정의에서 번호를 읽도록 바뀐 뒤 "
             "이 가드의 _REGISTRABLE_PASS_SKU 에 고정 형식을 추가할 것"
             "(docs/specs/2026-09-18-season-pass-fixed-sku.md)."

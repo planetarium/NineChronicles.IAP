@@ -90,3 +90,9 @@ def test_fixed_sku_blocked_until_purchase_path_supports_it(sku):
 def test_unknown_or_malformed_pass_skus_are_rejected(sku):
     with pytest.raises(SeasonPassSkuError):
         assert_season_pass_sku_registrable(sku)
+
+
+@pytest.mark.parametrize("sku", [" g_pkg_couragepass36premium", "g_pkg_couragepass36premium\n"])
+def test_whitespace_around_pass_sku_is_rejected_with_its_own_reason(sku):
+    with pytest.raises(SeasonPassSkuError, match="공백"):
+        assert_season_pass_sku_registrable(sku)

@@ -110,8 +110,8 @@ def parse_datetime(value: str):
 def process_csv_row(row: dict, is_internal: bool) -> dict:
     """CSV 행을 파싱하여 Product 모델에 맞는 데이터로 변환합니다."""
     # 시즌패스 SKU 형식 가드 — 형식이 어긋나면 결제 분기·영수증 집계가 **예외 없이** 틀린다
-    #   (근거는 shared.models.product.assert_season_pass_sku_registrable). 상품이 들어오는 경로는
-    #   이 임포트 하나뿐이라 여기서 끊는다.
+    #   (근거는 shared.models.product.assert_season_pass_sku_registrable). ⚠️ 한 행이라도 거절되면
+    #   import_products_from_csv 가 **시트 전체를 롤백**한다(부분 반영보다 낫다 — 사유는 400 detail 로 보인다).
     try:
         assert_season_pass_sku_registrable(row.get("google_sku"))
     except SeasonPassSkuError as e:
