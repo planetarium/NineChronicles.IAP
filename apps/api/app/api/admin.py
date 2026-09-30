@@ -195,7 +195,8 @@ class AdventureBossPassCheckResponse(BaseModel):
 
 class NonPassPurchaseCheckResponse(BaseModel):
     agent_address: str
-    avatar_address: str
+    #: None = 계정(agent) 전체 합산으로 조회했다.
+    avatar_address: Optional[str] = None
     year: int
     month: int
     total_amount: Decimal
@@ -1162,7 +1163,10 @@ def check_adventure_boss_pass_purchases(
 )
 def check_non_pass_purchase_amount(
     agent_address: str = Query(..., description="9c agent 주소"),
-    avatar_address: str = Query(..., description="9c avatar 주소"),
+    avatar_address: Optional[str] = Query(
+        None,
+        description="9c avatar 주소. 생략하면 계정(agent) 전체 합산 — 결제 미션은 계정 누적이다",
+    ),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     amount_threshold: Decimal = Query(
@@ -1187,11 +1191,11 @@ def check_non_pass_purchase_amount(
     # 주소 형식 정규화
     if not agent_address.startswith("0x"):
         agent_address = "0x" + agent_address
-    if not avatar_address.startswith("0x"):
+    if avatar_address and not avatar_address.startswith("0x"):
         avatar_address = "0x" + avatar_address
 
     agent_address = agent_address.lower()
-    avatar_address = avatar_address.lower()
+    avatar_address = avatar_address.lower() if avatar_address else None
 
     # 패스 제외 구매 내역 조회
     non_pass_receipts = Receipt.get_user_receipts_by_month(
@@ -1254,7 +1258,10 @@ def check_non_pass_purchase_amount(
 )
 def check_non_pass_purchase_count(
     agent_address: str = Query(..., description="9c agent 주소"),
-    avatar_address: str = Query(..., description="9c avatar 주소"),
+    avatar_address: Optional[str] = Query(
+        None,
+        description="9c avatar 주소. 생략하면 계정(agent) 전체 합산 — 결제 미션은 계정 누적이다",
+    ),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     count_threshold: int = Query(1, ge=1, description="구매 건수 임계값 (기본값: 1)"),
@@ -1277,11 +1284,11 @@ def check_non_pass_purchase_count(
     # 주소 형식 정규화
     if not agent_address.startswith("0x"):
         agent_address = "0x" + agent_address
-    if not avatar_address.startswith("0x"):
+    if avatar_address and not avatar_address.startswith("0x"):
         avatar_address = "0x" + avatar_address
 
     agent_address = agent_address.lower()
-    avatar_address = avatar_address.lower()
+    avatar_address = avatar_address.lower() if avatar_address else None
 
     # 패스 제외 구매 내역 조회
     non_pass_receipts = Receipt.get_user_receipts_by_month(

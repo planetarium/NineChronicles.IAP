@@ -99,3 +99,25 @@ def test_spend_endpoints_use_shared_exclusions(calls, endpoint):
     kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
     getattr(admin, endpoint)(**kwargs)
     assert list(calls[0]["exclude_sku_patterns"]) == list(SPEND_EXCLUDED_PASS_SKU_PATTERNS)
+
+
+# ── 계정 단위 합산 ────────────────────────────────────────────────────────────
+#   애니버서리 결제 미션은 **계정 누적**이다(기획 결정). 아바타별로 따로 물어 포탈에서 더하면
+#   삭제된 아바타·다른 플래닛 아바타의 결제가 빠진다 — 아바타를 생략하면 agent 전체를 센다.
+
+@pytest.mark.parametrize("endpoint", ["check_non_pass_purchase_amount", "check_non_pass_purchase_count"])
+def test_spend_endpoints_aggregate_whole_agent_when_avatar_omitted(calls, endpoint):
+    kwargs = dict(agent_address=AGENT, avatar_address=None, year=2026, month=10, planet_id=None, sess=object())
+    kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
+    resp = getattr(admin, endpoint)(**kwargs)
+    assert calls[0]["avatar_addr"] is None
+    assert calls[0]["agent_addr"] == AGENT
+    assert resp.avatar_address is None
+
+
+@pytest.mark.parametrize("endpoint", ["check_non_pass_purchase_amount", "check_non_pass_purchase_count"])
+def test_spend_endpoints_still_filter_by_avatar_when_given(calls, endpoint):
+    kwargs = dict(agent_address=AGENT, avatar_address=AVATAR.upper().replace("0X", ""), year=2026, month=10, planet_id=None, sess=object())
+    kwargs["amount_threshold" if "amount" in endpoint else "count_threshold"] = Decimal("1.9") if "amount" in endpoint else 1
+    getattr(admin, endpoint)(**kwargs)
+    assert calls[0]["avatar_addr"] == AVATAR  # 0x 접두·소문자 정규화 유지
