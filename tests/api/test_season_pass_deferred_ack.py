@@ -293,6 +293,12 @@ class TestGoogleSeasonPass:
         with pytest.raises(requests.ConnectionError):
             call(purchase_api, sess)
 
+        assert sess.receipt.status == ReceiptStatus.VALID
+        assert sess.receipt.msg.startswith("request failed ::")
+        # commit(락 해제) 뒤에 확정한다.
+        assert events.index("commit", events.index("sp_post")) < events.index(
+            "google_ack"
+        )
         assert events.count("google_ack") == 1
 
     def test_판매기간_밖이면_ack_안_한다(self, purchase_api, env):

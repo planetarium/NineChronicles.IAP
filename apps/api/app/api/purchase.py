@@ -935,14 +935,17 @@ def request_product(
                 },
                 headers={"Authorization": f"Bearer {create_season_pass_jwt()}"},
             )
-        except requests.RequestException:
+        except requests.RequestException as e:
             # 요청이 시즌패스에 닿았는지 모른다(연결 중 끊김 등) → 지급됐을 수 있다.
-            #   결제를 확정해 둔다(무료 지급을 막는 쪽 — Google 은 예전과 같은 결과). 영수증은
-            #   이 요청에서 다시 commit 되지 않아 DB 에 INIT 으로 남고, 운영 확인 대상이다.
+            #   아래 "불확실" non-200 과 똑같이 VALID+msg 로 commit 하고 결제를 확정한다(무료
+            #   지급을 막는 쪽). commit 을 먼저 해서 advisory 락을 푼 뒤에 외부 왕복을 한다.
             #   연결 자체가 안 된 경우(ConnectTimeout 등)도 구분하지 않고 보수적으로 확정한다.
+            receipt.msg = f"request failed :: {e}"
             logger.error(
-                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: season-pass request failed"
+                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: season-pass request failed: {e}"
             )
+            sess.add(receipt)
+            sess.commit()
             confirm_store_purchase()
             raise
         if resp.status_code != 200:
