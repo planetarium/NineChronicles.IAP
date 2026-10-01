@@ -33,7 +33,7 @@ from shared.models.product import (
 )
 from shared.schemas.product import FungibleAssetValueSchema, FungibleItemSchema
 from shared.models.receipt import Receipt
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import joinedload
 
 from app.config import config
@@ -306,25 +306,34 @@ def drop_shadowed_pass_rows(category_schema_list) -> None:
 FIXED_PASS_LIMIT_PER_SEASON = 1
 
 
-def count_granted_in_season(sess, product: Product, receipt, window: SeasonWindow) -> int:
-    """이 아바타가 이 시즌 창 안에서 이 고정 상품을 **지급까지 받은** 횟수(현재 영수증 제외).
+def count_granted_in_season(
+    sess, product: Product, receipt, season_index: int, component: Product
+) -> int:
+    """이 아바타가 이 시즌 패스를 **지급까지 받은** 횟수(현재 영수증 제외).
+
+    시즌은 영수증에 기록한 `data.SeasonPassGrant.season_index` 로 가른다. `purchased_at` 은
+    Google 에서 클라가 보낸 값 그대로라 시즌 키로 믿을 수 없고, 시즌 창이 나중에 수정되면
+    소급해서 바뀐다. 전환 시즌에 **회차 SKU 로 산 건**(같은 시즌의 회차 행 = `component`)도 센다.
 
     `VALID` 이면서 `msg` 가 비어 있는 것만 센다 — 시즌패스 영수증은 성공하면 msg 가 없고,
     실패·불확실 건(VALID+msg)은 지급 여부를 모르니 재구매를 막지 않는다(실제로 지급됐다면
     시즌패스가 중복으로 거절한다). INIT 등 미완료 건을 세지 않는 것도 같은 이유다 — 멈춘
     영수증 하나가 그 시즌 구매를 영영 막으면 안 된다.
+
+    ⚠️ receipt 에 (product_id, avatar_addr) 인덱스가 없어 seq scan 이다 — 회차 SKU 의
+    `check_purchase_limit` 도 같은 비용이라 회귀는 아니지만, 인덱스 추가는 후속 과제다.
     """
+    granted_season = Receipt.data["SeasonPassGrant"]["season_index"].as_integer()
     stmt = select(func.count(Receipt.id)).where(
-        Receipt.product_id == product.id,
         Receipt.planet_id == receipt.planet_id,
         Receipt.avatar_addr == receipt.avatar_addr,
         Receipt.status == ReceiptStatus.VALID,
         Receipt.msg.is_(None),
+        or_(
+            and_(Receipt.product_id == product.id, granted_season == int(season_index)),
+            Receipt.product_id == component.id,
+        ),
     )
     if receipt.id is not None:
         stmt = stmt.where(Receipt.id != receipt.id)
-    if window.start is not None:
-        stmt = stmt.where(Receipt.purchased_at >= window.start)
-    if window.end is not None:
-        stmt = stmt.where(Receipt.purchased_at <= window.end)
     return sess.scalar(stmt) or 0

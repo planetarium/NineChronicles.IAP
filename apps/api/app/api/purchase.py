@@ -959,26 +959,35 @@ def request_product(
                 # 결제 시각에 진행 중인 시즌이 없다(경계 공백·시즌 미등록). 회차 SKU 시절에
                 #   끝난 시즌 결제가 /upgrade 404 로 끝나던 것과 같은 결과다.
                 reject_not_granted(f"no season at {granted_at.isoformat()}")
-            # 아바타당 시즌당 1회 — 시즌패스가 중복을 거절하기 전에 IAP 가 먼저 막는다(결제 확정 전이라
-            #   Google/원스토어는 자동환불, 재진입 시 dedup 게이트는 200 PURCHASE_LIMIT_EXCEED →
-            #   클라 IsDelivered=false 로 consume 안 함).
-            if (
-                count_granted_in_season(sess, product, receipt, window)
-                >= FIXED_PASS_LIMIT_PER_SEASON
-            ):
-                receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
-                receipt.msg = f"already purchased in season {window.season_index}"
-                raise_error(
-                    sess,
-                    receipt,
-                    ValueError("Season pass already purchased for this season."),
-                )
             reward_product = find_component_product(
                 sess, product, fixed_kind, window.season_index
             )
             if reward_product is None:
                 reject_not_granted(
                     f"no component row for season {window.season_index}"
+                )
+            # 아바타당 시즌당 1회 — 시즌패스가 중복을 거절하기 전에 IAP 가 먼저 막는다. 결제 확정
+            #   전이다. Google/원스토어는 INVALID 로 닫는다(재진입 400 → 어떤 클라도 consume 안 함 →
+            #   자동환불). PURCHASE_LIMIT_EXCEED 는 재진입 때 200 이라 구버전 클라(470.0.11 前)가
+            #   consume 해 버린다. Apple/WEB 은 기존 한도 초과와 같은 PURCHASE_LIMIT_EXCEED(400).
+            if (
+                count_granted_in_season(
+                    sess, product, receipt, window.season_index, reward_product
+                )
+                >= FIXED_PASS_LIMIT_PER_SEASON
+            ):
+                reason = f"already purchased in season {window.season_index}"
+                receipt.msg = reason
+                logger.info(f"[FIXED_PASS_LIMIT] {receipt.uuid} :: {reason}")
+                receipt.status = (
+                    ReceiptStatus.INVALID
+                    if receipt.store in DEFERRED_ACK_STORES
+                    else ReceiptStatus.PURCHASE_LIMIT_EXCEED
+                )
+                raise_error(
+                    sess,
+                    receipt,
+                    ValueError("Season pass already purchased for this season."),
                 )
             pass_type = fixed_kind.pass_type
             season_index = window.season_index

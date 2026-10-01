@@ -527,20 +527,28 @@ class TestPurchaseMore:
 
 
 class TestSeasonLimit:
+    @pytest.mark.parametrize(
+        "store,status",
+        [
+            pytest.param(Store.GOOGLE, ReceiptStatus.INVALID, id="google-invalid"),
+            pytest.param(Store.ONESTORE, ReceiptStatus.INVALID, id="onestore-invalid"),
+            pytest.param(Store.APPLE, ReceiptStatus.PURCHASE_LIMIT_EXCEED, id="apple-ple"),
+        ],
+    )
     def test_같은_시즌에_이미_받았으면_시즌패스_전에_막는다(
-        self, purchase_api, fixed_env, monkeypatch
+        self, purchase_api, fixed_env, monkeypatch, store, status
     ):
+        """Google/원스토어는 INVALID — 재진입 400 이라 구버전 클라도 consume 하지 않는다."""
         events, _, calls = fixed_env
         monkeypatch.setattr(purchase_api, "count_granted_in_season", lambda *a: 1)
-        sess = FakeSession(fixed_product(), events)
+        sess = FakeSession(fixed_product(apple_sku="a_pkg_couragepasspremium"), events)
 
         with pytest.raises(ValueError, match="already purchased"):
-            call(purchase_api, sess, sku=FIXED_SKU)
+            call(purchase_api, sess, store=store, sku=FIXED_SKU)
 
-        assert sess.receipt.status == ReceiptStatus.PURCHASE_LIMIT_EXCEED
+        assert sess.receipt.status == status
         assert calls["upgrade"] == []
-        # 확정 전이라 자동환불된다.
-        assert "google_ack" not in events
+        assert "google_ack" not in events and "onestore_ack" not in events
 
     def test_처음이면_통과한다(self, purchase_api, fixed_env, monkeypatch):
         events, _, calls = fixed_env
@@ -548,44 +556,46 @@ class TestSeasonLimit:
         monkeypatch.setattr(
             purchase_api,
             "count_granted_in_season",
-            lambda sess, product, receipt, window: seen.append(window.season_index) or 0,
+            lambda sess, product, receipt, idx, comp: seen.append((idx, comp.id)) or 0,
         )
         sess = FakeSession(fixed_product(), events)
 
         call(purchase_api, sess, sku=FIXED_SKU)
 
-        assert seen == [36]
+        assert seen == [(36, 536)]
         assert len(calls["upgrade"]) == 1
 
-    def test_집계_쿼리는_아바타_시즌창_지급완료만_센다(self, purchase_api):
+    def test_집계_쿼리는_시즌번호와_전환시즌_회차행을_센다(self, purchase_api):
         from app import fixed_pass
+        from sqlalchemy.dialects import postgresql
 
         captured = {}
 
         class S:
             def scalar(self, stmt):
-                captured["sql"] = str(
-                    stmt.compile(compile_kwargs={"literal_binds": False})
-                )
+                compiled = stmt.compile(dialect=postgresql.dialect())
+                captured["sql"] = str(compiled)
+                captured["params"] = compiled.params
                 return 0
 
         receipt = SimpleNamespace(id=7, planet_id=b"0x000000000000", avatar_addr="0xav")
-        win = purchase_api_window(36)
-        assert fixed_pass.count_granted_in_season(S(), fixed_product(), receipt, win) == 0
+        assert (
+            fixed_pass.count_granted_in_season(
+                S(), fixed_product(), receipt, 36, component_row(36)
+            )
+            == 0
+        )
         sql = captured["sql"]
         for frag in (
-            "receipt.product_id =",
             "receipt.avatar_addr =",
             "receipt.status =",
             "receipt.msg IS NULL",
             "receipt.id !=",
-            "receipt.purchased_at >=",
-            "receipt.purchased_at <=",
+            "->>",
+            " OR receipt.product_id =",
         ):
             assert frag in sql, frag
-
-        # 무기한 시즌(월드클리어 시즌 1)은 창 조건 없이 전체를 센다.
-        fixed_pass.count_granted_in_season(
-            S(), fixed_product(), receipt, fixed_pass.SeasonWindow(1, None, None)
-        )
-        assert "purchased_at" not in captured["sql"]
+        params = set(map(str, captured["params"].values()))
+        assert {"SeasonPassGrant", "season_index", "36"} <= params
+        # 시즌 키는 영수증 기록이지 purchased_at 이 아니다.
+        assert "purchased_at" not in sql
