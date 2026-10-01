@@ -147,7 +147,9 @@ def make_schema(store=Store.GOOGLE, sku=PASS_SKU):
         planetId=PlanetID.ODIN,
         data=json.dumps(
             {
-                "Store": "GooglePlay" if store != Store.ONESTORE else "OneStore",
+                "Store": {Store.ONESTORE: "OneStore", Store.APPLE: "AppleAppStore"}.get(
+                    store, "GooglePlay"
+                ),
                 "TransactionID": ORDER_ID,
                 "Payload": json.dumps(payload),
             }
@@ -190,6 +192,19 @@ def env(purchase_api, monkeypatch):
         lambda *_a, **_kw: (events.append("onestore_ack"), (True, ""))[1],
     )
     monkeypatch.setattr(purchase_api, "is_onestore_configured", lambda *_a: True)
+
+    class ApplePurchase:
+        json_data = {}
+        originalPurchaseDate = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        productId = "a_pkg_pass"
+
+    monkeypatch.setattr(
+        purchase_api, "validate_apple", lambda *_a, **_kw: (True, "", ApplePurchase())
+    )
+    monkeypatch.setattr(purchase_api, "get_jwt", lambda *_a, **_kw: "jwt")
+    monkeypatch.setattr(
+        purchase_api.config, "apple_credential", "eA==", raising=False
+    )
     monkeypatch.setattr(purchase_api, "create_season_pass_jwt", lambda: "jwt")
     monkeypatch.setattr(purchase_api, "check_required_level", lambda s, r, p: r)
     monkeypatch.setattr(
@@ -294,6 +309,18 @@ class TestGoogleSeasonPass:
         assert "google_ack" not in events
 
 
+    def test_GOOGLE_TEST_도_같은_규칙이다(self, purchase_api, env):
+        events, state = env
+        state["sp"] = FakeResp(500, DUPLICATED)
+        sess = FakeSession(make_product(PASS_SKU), events)
+
+        with pytest.raises(ValueError):
+            call(purchase_api, sess, store=Store.GOOGLE_TEST)
+
+        assert sess.receipt.status == ReceiptStatus.INVALID
+        assert "google_ack" not in events
+
+
 class TestUnchanged:
     def test_일반_상품은_검증_직후에_ack_한다(self, purchase_api, env):
         events, _ = env
@@ -314,6 +341,37 @@ class TestUnchanged:
 
         assert sess.receipt.status == ReceiptStatus.INVALID
         assert "onestore_ack" not in events
+
+    def test_원스토어_시즌패스_불확실하면_확정한다(self, purchase_api, env):
+        events, state = env
+        state["sp"] = FakeResp(502, "bad gateway")
+        sess = FakeSession(make_product(PASS_SKU), events)
+
+        with pytest.raises(Exception, match="SeasonPass Upgrade Failed"):
+            call(purchase_api, sess, store=Store.ONESTORE)
+
+        assert sess.receipt.status == ReceiptStatus.VALID
+        assert events.count("onestore_ack") == 1
+
+    @pytest.mark.parametrize(
+        "resp",
+        [
+            pytest.param(FakeResp(500, DUPLICATED), id="duplicated-500"),
+            pytest.param(FakeResp(404, "{}"), id="404"),
+        ],
+    )
+    def test_Apple_시즌패스_실패는_예전처럼_VALID_msg(self, purchase_api, env, resp):
+        """Apple 은 자동환불이 없다 — INVALID(400)로 닫으면 결제만 계속 재전달된다."""
+        events, state = env
+        state["sp"] = resp
+        sess = FakeSession(make_product(PASS_SKU, apple_sku="a_pkg_pass"), events)
+
+        with pytest.raises(Exception, match="SeasonPass Upgrade Failed") as ei:
+            call(purchase_api, sess, store=Store.APPLE)
+
+        assert not isinstance(ei.value, ValueError)
+        assert sess.receipt.status == ReceiptStatus.VALID
+        assert sess.receipt.msg
 
     def test_원스토어_시즌패스_성공은_예전처럼_커밋_뒤_ack(self, purchase_api, env):
         events, _ = env

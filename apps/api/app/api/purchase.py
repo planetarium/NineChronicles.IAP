@@ -496,7 +496,10 @@ def request_product(
         #   TIME_LIMIT / REQUIRED_LEVEL / PURCHASE_LIMIT_EXCEED / REFUNDED_* — these are
         #     set after validation, and on Google `ack_google` has already run by then
         #     (except for season-pass products, whose ack is deferred until the grant
-        #     succeeds), so refusing returns nothing to the buyer. REFUNDED_* also has to stay
+        #     succeeds), so refusing returns nothing to the buyer. For those deferred
+        #     season-pass receipts a 400 here *would* keep the store refund alive for
+        #     old clients (470.0.11+ already skip confirming non-VALID); left as 200
+        #     for now — widen only after checking the old-client share. REFUNDED_* also has to stay
         #     reachable as an operator release valve.
         if prev_receipt.status == ReceiptStatus.INVALID:
             raise ValueError(
@@ -604,9 +607,35 @@ def request_product(
     receipt.status = ReceiptStatus.VALIDATION_REQUEST
     deferred_google_ack = None  # (sku, token) — 시즌패스 Google 결제의 미뤄둔 ack
 
-    def ack_deferred_google():
+    def confirm_store_purchase():
+        """스토어에 결제를 확정한다(= 자동환불을 끈다). 지급이 나갔거나 나갔을 수 있을 때만 부른다.
+
+        - Google: 시즌패스만 여기로 미뤄 온다. 일반 상품은 검증 직후에 이미 ack 했다.
+        - 원스토어: 모든 상품이 여기서 확정한다(아래 commit 뒤 블록 주석).
+        - Apple/WEB: 서버 확정이 없다.
+        실패해도 로그만 남긴다 — 지급 상태는 이미 DB 에 있다.
+        """
         if deferred_google_ack:
             ack_google(config.google_credential, x_iap_packagename, *deferred_google_ack)
+        if receipt.store == Store.ONESTORE:
+            acked, ack_msg = acknowledge_onestore(
+                resolve_host(
+                    config.onestore_host,
+                    config.onestore_sandbox_host,
+                    receipt_data.order["purchaseToken"],
+                    config.stage in PROD_STAGES,
+                ),
+                config.onestore_client_id,
+                config.onestore_client_secret,
+                product_id,
+                receipt_data.order["purchaseToken"],
+                config.onestore_market_code,
+            )
+            if not acked:
+                logger.error(
+                    f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
+                    "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나갔을 수 있음)"
+                )
 
     # validate
     ## Google
@@ -908,9 +937,13 @@ def request_product(
             )
         except requests.RequestException:
             # 요청이 시즌패스에 닿았는지 모른다(연결 중 끊김 등) → 지급됐을 수 있다.
-            #   예전처럼 ack 해서 결제를 확정해 둔다(무료 지급을 막는 쪽). 영수증은 이 요청에서
-            #   commit 되지 않아 VALIDATION_REQUEST 로 남고, 운영 확인 대상이다.
-            ack_deferred_google()
+            #   결제를 확정해 둔다(무료 지급을 막는 쪽 — Google 은 예전과 같은 결과). 영수증은
+            #   이 요청에서 다시 commit 되지 않아 DB 에 INIT 으로 남고, 운영 확인 대상이다.
+            #   연결 자체가 안 된 경우(ConnectTimeout 등)도 구분하지 않고 보수적으로 확정한다.
+            logger.error(
+                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: season-pass request failed"
+            )
+            confirm_store_purchase()
             raise
         if resp.status_code != 200:
             receipt.msg = f"{resp.status_code} :: {resp.text}"
@@ -920,16 +953,25 @@ def request_product(
                 resp.status_code, resp.text
             ):
                 # 지급이 없었음이 확실하다 → 결제를 확정하지 않고(ack 안 함) INVALID 로 닫는다.
+                #   설정 오류(JWT 시크릿·시계 차이 401, 라우트 404)면 **모든** 시즌패스 결제가
+                #   여기로 와서 조용히 환불된다 — 태그로 급증 알람을 붙일 수 있게 남긴다.
                 #   스토어가 3일 뒤 자동환불하고, 같은 결제로 다시 들어오면 dedup 게이트가
                 #   400 으로 거절해 클라이언트도 consume 하지 않는다. 예전엔 VALID+msg 로 남아
                 #   재진입 시 200 VALID → 클라 consume → 돈만 내고 끝났다(중복 구매 사례).
+                logger.error(
+                    f"[SP_REJECTED_BEFORE_GRANT] {receipt.uuid} :: "
+                    f"status={resp.status_code} store={receipt.store.name}"
+                )
                 receipt.status = ReceiptStatus.INVALID
                 raise_error(sess, receipt, ValueError(msg))
-            # 지급 여부가 불확실하다 → 예전과 같이 결제를 확정하고 VALID+msg 로 남긴다
-            #   (운영 확인 대상, /retry 는 msg 를 보고 거절한다). Google 은 commit 뒤에 ack.
+            # 지급 여부가 불확실하다(Apple/WEB 은 전부 여기) → 예전과 같이 VALID+msg 로 남기고
+            #   결제를 확정한다(운영 확인 대상, /retry 는 msg 를 보고 거절한다). commit 뒤에 확정.
+            logger.error(
+                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: status={resp.status_code}"
+            )
             sess.add(receipt)
             sess.commit()
-            ack_deferred_google()
+            confirm_store_purchase()
             logger.error(f"[{receipt.uuid}] :: {msg}")
             raise Exception(msg)
     else:
@@ -981,26 +1023,7 @@ def request_product(
     #   Google/Apple 요청까지 커넥션 체크아웃에서 대기한다.
     #   순서를 바꿔도 안전한 이유: 실패해도 로그만 남기고 진행하므로 DB 상태에 의존하지 않는다.
     #   시즌패스 Google 결제의 미뤄둔 ack 도 같은 이유로 여기서 친다(시즌패스 지급 성공 뒤).
-    ack_deferred_google()
-    if receipt.store == Store.ONESTORE:
-        acked, ack_msg = acknowledge_onestore(
-            resolve_host(
-                config.onestore_host,
-                config.onestore_sandbox_host,
-                receipt_data.order["purchaseToken"],
-                config.stage in PROD_STAGES,
-            ),
-            config.onestore_client_id,
-            config.onestore_client_secret,
-            product_id,
-            receipt_data.order["purchaseToken"],
-            config.onestore_market_code,
-        )
-        if not acked:
-            logger.error(
-                f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
-                "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나감)"
-            )
+    confirm_store_purchase()
 
     return receipt
 
