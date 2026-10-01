@@ -72,10 +72,32 @@ def test_live_skus_and_non_pass_skus_are_registrable(sku):
     assert_season_pass_sku_registrable(sku)
 
 
-@pytest.mark.parametrize("sku", [FIXED_COURAGE, FIXED_ADVENTURE])
-def test_fixed_sku_blocked_until_purchase_path_supports_it(sku):
-    with pytest.raises(SeasonPassSkuError, match="season_index"):
-        assert_season_pass_sku_registrable(sku)
+@pytest.mark.parametrize("sku", [FIXED_COURAGE, FIXED_ADVENTURE, "g_pkg_worldclearpasspremium"])
+def test_fixed_sku_registrable_now_that_purchase_path_supports_it(sku):
+    """결제 경로가 시즌 번호를 시즌패스에서, 구성품을 회차 행에서 읽게 된 뒤 허용했다."""
+    assert_season_pass_sku_registrable(sku)
+
+
+def test_fixed_pass_kind_and_component_sku():
+    from shared.models.product import (
+        fixed_pass_display_name,
+        fixed_pass_kind,
+        season_component_sku,
+    )
+
+    kind = fixed_pass_kind(FIXED_COURAGE)
+    assert kind.pass_type == "CouragePass"
+    assert season_component_sku(FIXED_COURAGE, 36) == "g_pkg_couragepass36premium"
+    # 클라 GetProductKey 와 바이트 단위로 같아야 한다(DB 의 회차 행 name 실측과 동일 형식).
+    assert fixed_pass_display_name(kind, 35) == "COURAGEPASS35Premium"
+    adv = fixed_pass_kind(FIXED_ADVENTURE)
+    assert fixed_pass_display_name(adv, 23) == "ADVENTUREBOSSPASS23Premium"
+    wcp = fixed_pass_kind("g_pkg_worldclearpasspremium")
+    assert fixed_pass_display_name(wcp, 1) == "WORLDCLEARPASS1Premium"
+    # 회차 SKU·일반 SKU 는 고정이 아니다.
+    assert fixed_pass_kind("g_pkg_couragepass35premium") is None
+    assert fixed_pass_kind("g_pkg_daily01") is None
+    assert fixed_pass_kind(None) is None
 
 
 @pytest.mark.parametrize(
