@@ -69,7 +69,7 @@ def fixed_env(purchase_api, env, monkeypatch):
         calls["find"].append(season_index)
         return state["component"]
 
-    monkeypatch.setattr(purchase_api, "fetch_season", fake_fetch)
+    monkeypatch.setattr(purchase_api, "fetch_season_for_purchase", fake_fetch)
     monkeypatch.setattr(purchase_api, "find_component_product", fake_find)
 
     class GooglePurchase:
@@ -371,7 +371,7 @@ class TestFetchSeason:
         ]
         calls = []
 
-        def fake_fetch(pass_type, planet_id, at=None):
+        def fake_fetch(pass_type, planet_id, at=None, **_kw):
             calls.append(1)
             return windows[min(len(calls) - 1, 1)]
 
@@ -383,3 +383,144 @@ class TestFetchSeason:
         # 유효한 창은 TTL 동안 재사용한다.
         assert fp.current_season_for_listing("CouragePass", PlanetID.ODIN).season_index == 36
         assert len(calls) == 2
+
+    def test_상점_캐시는_조회_실패도_잠깐_기억한다(self, fp, monkeypatch):
+        """시즌패스 장애 때 상점 요청마다 timeout 을 기다리면 스레드풀(결제와 공유)이 막힌다."""
+        calls = []
+
+        def boom(*a, **kw):
+            calls.append(kw.get("timeout"))
+            raise fp.SeasonLookupError("down")
+
+        monkeypatch.setattr(fp, "fetch_season", boom)
+        for _ in range(3):
+            with pytest.raises(fp.SeasonLookupError):
+                fp.current_season_for_listing("CouragePass", PlanetID.ODIN)
+        assert calls == [fp.LISTING_LOOKUP_TIMEOUT]
+
+    def test_모양이_다른_200_은_조회_실패다(self, fp, monkeypatch):
+        def html(*a, **k):
+            def bad_json():
+                raise ValueError("not json")
+
+            return SimpleNamespace(status_code=200, text="<html>", json=bad_json)
+
+        monkeypatch.setattr(fp.requests, "get", html)
+        with pytest.raises(fp.SeasonLookupError, match="malformed"):
+            fp.fetch_season("CouragePass", PlanetID.ODIN)
+
+        monkeypatch.setattr(
+            fp.requests, "get", lambda *a, **k: self._resp(200, {"pass_type": "x"})
+        )
+        with pytest.raises(fp.SeasonLookupError, match="malformed"):
+            fp.fetch_season("CouragePass", PlanetID.ODIN)
+
+    def test_at_을_포함하지_않는_시즌은_조회_실패다(self, fp, monkeypatch):
+        """시즌패스가 `at` 을 모르는 옛 버전이면 지금 시즌을 준다 — 엉뚱한 시즌 지급을 막는다."""
+        monkeypatch.setattr(
+            fp.requests,
+            "get",
+            lambda *a, **k: self._resp(
+                200,
+                {
+                    "season_index": 37,
+                    "start_timestamp": "2026-11-01T00:00:00Z",
+                    "end_timestamp": "2026-11-30T23:59:59Z",
+                },
+            ),
+        )
+        at = datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc)
+        with pytest.raises(fp.SeasonLookupError, match="does not contain"):
+            fp.fetch_season("CouragePass", PlanetID.ODIN, at=at)
+
+    def test_결제_경로는_일시_오류면_한번_더_묻는다(self, fp, monkeypatch):
+        tries = []
+        win = fp.SeasonWindow(36, None, None)
+
+        def flaky(*a, **k):
+            tries.append(1)
+            if len(tries) == 1:
+                raise fp.SeasonLookupError("blip")
+            return win
+
+        monkeypatch.setattr(fp, "fetch_season", flaky)
+        at = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        assert fp.fetch_season_for_purchase("CouragePass", PlanetID.ODIN, at) is win
+        assert len(tries) == 2
+
+        tries.clear()
+        monkeypatch.setattr(
+            fp, "fetch_season", lambda *a, **k: (_ for _ in ()).throw(fp.SeasonLookupError("x"))
+        )
+        with pytest.raises(fp.SeasonLookupError):
+            fp.fetch_season_for_purchase("CouragePass", PlanetID.ODIN, at)
+
+
+class FakeScalarsSession:
+    def __init__(self, rows):
+        self.rows = rows
+        self.stmts = []
+
+    def scalars(self, stmt):
+        self.stmts.append(str(stmt))
+        rows = self.rows
+        return SimpleNamespace(unique=lambda: SimpleNamespace(all=lambda: rows))
+
+
+class TestFindComponent:
+    def _kind(self):
+        from shared.models.product import fixed_pass_kind
+
+        return fixed_pass_kind(FIXED_SKU)
+
+    def test_정확히_한_행이고_구성품이_있어야_한다(self, purchase_api):
+        from app import fixed_pass
+
+        row = component_row(36)
+        sess = FakeScalarsSession([row])
+        assert fixed_pass.find_component_product(sess, fixed_product(), self._kind(), 36) is row
+        assert "google_sku" in sess.stmts[0]
+
+        for rows in ([], [row, component_row(36)], [component_row(36, fav_list=[], fungible_item_list=[])]):
+            assert (
+                fixed_pass.find_component_product(
+                    FakeScalarsSession(rows), fixed_product(), self._kind(), 36
+                )
+                is None
+            )
+
+
+class TestPurchaseMore:
+    def test_원스토어는_원스토어_구매시각으로_귀속하고_못정하면_INVALID(
+        self, purchase_api, fixed_env
+    ):
+        events, state, calls = fixed_env
+        state["window"] = None
+        sess = FakeSession(fixed_product(), events)
+
+        with pytest.raises(ValueError, match="no season"):
+            call(purchase_api, sess, store=Store.ONESTORE, sku=FIXED_SKU)
+
+        assert sess.receipt.status == ReceiptStatus.INVALID
+        assert "onestore_ack" not in events
+        # OneStorePurchase.purchaseTime(1754800000000) 으로 덮인 purchased_at
+        assert calls["fetch"][0][1] == datetime.fromtimestamp(1754800000, tz=timezone.utc)
+
+    def test_THOR_는_회차행_구성품을_2배로_보낸다(self, purchase_api, fixed_env, monkeypatch):
+        events, _, calls = fixed_env
+        import test_season_pass_deferred_ack as base
+
+        orig = base.make_schema
+
+        def thor_schema(store=Store.GOOGLE, sku=base.PASS_SKU):
+            schema = orig(store, sku)
+            schema.planetId = PlanetID.THOR
+            return schema
+
+        monkeypatch.setattr(base, "make_schema", thor_schema)
+        sess = FakeSession(fixed_product(), events)
+
+        base.call(purchase_api, sess, sku=FIXED_SKU)
+
+        amounts = {x["ticker"]: x["amount"] for x in calls["upgrade"][0]["reward_list"]}
+        assert amounts == {"Item_NT_400000": 100000, "FAV__RUNESTONE_HP": 200}

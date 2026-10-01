@@ -4,7 +4,7 @@ import os
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from math import floor
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, NoReturn, Optional
 from uuid import UUID, uuid4
 
 import requests
@@ -21,12 +21,7 @@ from shared.enums import (
     Store,
     TxStatus,
 )
-from shared.models.product import (
-    Price,
-    Product,
-    fixed_pass_kind,
-    is_season_pass_product,
-)
+from shared.models.product import Price, Product, fixed_pass_kind, is_season_pass_product
 from shared.models.purchase_signal import PurchaseSignal
 from shared.models.receipt import Receipt
 from shared.models.user import AvatarLevel
@@ -57,7 +52,11 @@ from app.celery import send_to_worker
 from app.config import config
 from app.dependencies import session
 from app.exceptions import InsufficientUserDataException, ReceiptNotFoundException
-from app.fixed_pass import SeasonLookupError, fetch_season, find_component_product
+from app.fixed_pass import (
+    SeasonLookupError,
+    fetch_season_for_purchase,
+    find_component_product,
+)
 from app.utils import (
     create_season_pass_jwt,
     get_mileage,
@@ -922,7 +921,7 @@ def request_product(
         fixed_kind = fixed_pass_kind(product.google_sku)
         if fixed_kind:
 
-            def reject_not_granted(reason: str):
+            def reject_not_granted(reason: str) -> NoReturn:
                 # 시즌패스를 부르기 전이라 지급이 없었음이 확실하다. #497 의 "지급 전 거절"과
                 #   같은 규칙: Google/원스토어는 INVALID(확정 안 함 → 자동환불), Apple/WEB 은
                 #   예전 시즌패스 실패와 같은 모양(VALID+msg, 500).
@@ -949,8 +948,8 @@ def request_product(
                 granted_at = granted_at.replace(tzinfo=timezone.utc)
 
             try:
-                window = fetch_season(
-                    fixed_kind.pass_type, PlanetID(receipt.planet_id), at=granted_at
+                window = fetch_season_for_purchase(
+                    fixed_kind.pass_type, PlanetID(receipt.planet_id), granted_at
                 )
             except SeasonLookupError as e:
                 reject_not_granted(f"season lookup failed :: {e}")

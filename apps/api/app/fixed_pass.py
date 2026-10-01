@@ -39,13 +39,19 @@ from app.config import config
 
 logger = logging.getLogger(__name__)
 
-#: 시즌패스 조회 timeout(초). 상점 목록과 결제 경로 둘 다 이 호출을 기다린다.
+#: 시즌패스 조회 timeout(초) — 결제 경로. 시즌 조회는 부작용 없는 GET 이라 한 번 더 시도한다
+#:   (`PURCHASE_LOOKUP_TRIES`). 이 호출은 commit 전이라 #482 advisory 락(lock_timeout 10s)을
+#:   쥔 채 기다린다 — 최악 timeout × 시도 횟수만큼 락이 길어진다.
 SEASON_LOOKUP_TIMEOUT = 2
+PURCHASE_LOOKUP_TRIES = 2
+#: 상점 목록용 timeout(초). 상점 요청은 클라 상점 초기화·결제 직전 재확인마다 나가고, 같은
+#:   스레드풀을 결제(/request)와 나눠 쓴다 — 시즌패스가 느려도 상점이 오래 붙잡히지 않게 짧게.
+LISTING_LOOKUP_TIMEOUT = 1
 #: 상점 표시용 캐시 수명(초). 시즌 경계는 아래 `contains` 로 따로 끊으므로, 이 값은 시즌
 #:   정의가 시즌 중간에 고쳐졌을 때(PUT) 얼마나 늦게 따라갈지만 정한다.
 LISTING_CACHE_TTL = 60
-#: 시즌이 없다는 응답(404)을 캐시하는 시간(초). 경계 직후 새 시즌 등록이 늦으면 반복 조회가
-#:   상점 요청마다 나가지 않게 한다.
+#: 시즌이 없다는 응답(404)과 조회 실패를 캐시하는 시간(초). 시즌패스 장애·경계 직후 시즌 미등록
+#:   때 상점 요청마다 timeout 을 기다리지 않게 한다.
 LISTING_NEGATIVE_TTL = 10
 
 
@@ -79,9 +85,17 @@ def _parse_ts(value) -> Optional[datetime]:
 
 
 def fetch_season(
-    pass_type: str, planet_id: PlanetID, at: Optional[datetime] = None
+    pass_type: str,
+    planet_id: PlanetID,
+    at: Optional[datetime] = None,
+    timeout: float = SEASON_LOOKUP_TIMEOUT,
 ) -> Optional[SeasonWindow]:
-    """`at`(기본: 지금)에 진행 중인 시즌. 시즌이 없으면 None, 묻지 못하면 SeasonLookupError."""
+    """`at`(기본: 지금)에 진행 중인 시즌. 시즌이 없으면 None, 묻지 못하면 SeasonLookupError.
+
+    `at` 을 줬으면 돌려받은 시즌이 실제로 `at` 을 포함하는지 확인한다. 시즌패스가 `at` 을 모르는
+    옛 버전이면 모르는 파라미터를 무시하고 **지금** 시즌을 주기 때문이다 — 배포 순서 실수가
+    엉뚱한 시즌 지급이 아니라 조회 실패로 드러나게 한다.
+    """
     params = {"planet_id": planet_id.value.decode("utf-8"), "pass_type": pass_type}
     if at is not None:
         if at.tzinfo is None:
@@ -92,7 +106,7 @@ def fetch_season(
         resp = requests.get(
             f"{config.season_pass_host}/api/season-pass/current",
             params=params,
-            timeout=SEASON_LOOKUP_TIMEOUT,
+            timeout=timeout,
         )
     except requests.RequestException as e:
         raise SeasonLookupError(str(e)) from e
@@ -100,15 +114,39 @@ def fetch_season(
         return None
     if resp.status_code != 200:
         raise SeasonLookupError(f"{resp.status_code} :: {resp.text[:200]}")
-    body = resp.json()
-    return SeasonWindow(
-        season_index=int(body["season_index"]),
-        start=_parse_ts(body.get("start_timestamp")),
-        end=_parse_ts(body.get("end_timestamp")),
-    )
+    try:
+        body = resp.json()
+        window = SeasonWindow(
+            season_index=int(body["season_index"]),
+            start=_parse_ts(body.get("start_timestamp")),
+            end=_parse_ts(body.get("end_timestamp")),
+        )
+    except (ValueError, KeyError, TypeError) as e:
+        # 200 인데 모양이 다르다(점검 페이지·스키마 변경). 상점 전체 500 이 되지 않게 조회 실패로.
+        raise SeasonLookupError(f"malformed season response :: {e}") from e
+    if at is not None and not window.contains(at):
+        raise SeasonLookupError(
+            f"season {window.season_index} does not contain {at.isoformat()} "
+            "(season-pass without `at` support?)"
+        )
+    return window
 
 
-_listing_cache: Dict[Tuple[str, bytes], Tuple[Optional[SeasonWindow], float]] = {}
+def fetch_season_for_purchase(
+    pass_type: str, planet_id: PlanetID, at: datetime
+) -> Optional[SeasonWindow]:
+    """결제 경로용 — 일시 오류면 한 번 더 묻는다. 실패하면 그 결제는 거절(환불)로 끝나기 때문이다."""
+    last = None
+    for _ in range(PURCHASE_LOOKUP_TRIES):
+        try:
+            return fetch_season(pass_type, planet_id, at=at)
+        except SeasonLookupError as e:
+            last = e
+    raise last
+
+
+#: 값: (창 | None(시즌 없음) | SeasonLookupError(조회 실패), 받은 시각)
+_listing_cache: Dict[Tuple[str, bytes], Tuple[object, float]] = {}
 _listing_lock = threading.Lock()
 
 
@@ -126,11 +164,20 @@ def current_season_for_listing(
     with _listing_lock:
         hit = _listing_cache.get(key)
     if hit is not None:
-        window, fetched = hit
-        ttl = LISTING_CACHE_TTL if window else LISTING_NEGATIVE_TTL
-        if mono - fetched < ttl and (window is None or window.contains(now)):
-            return window
-    window = fetch_season(pass_type, planet_id)
+        cached, fetched = hit
+        if isinstance(cached, SeasonWindow):
+            if mono - fetched < LISTING_CACHE_TTL and cached.contains(now):
+                return cached
+        elif mono - fetched < LISTING_NEGATIVE_TTL:
+            if isinstance(cached, SeasonLookupError):
+                raise cached
+            return None
+    try:
+        window = fetch_season(pass_type, planet_id, timeout=LISTING_LOOKUP_TIMEOUT)
+    except SeasonLookupError as e:
+        with _listing_lock:
+            _listing_cache[key] = (e, mono)
+        raise
     if window is not None and not window.contains(now):
         # 받은 시즌이 이미 끝났다(시계 차이 등) — 캐시하지 않는다.
         return window
