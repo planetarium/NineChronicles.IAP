@@ -323,14 +323,16 @@ def count_granted_in_season(
     ⚠️ receipt 에 (product_id, avatar_addr) 인덱스가 없어 seq scan 이다 — 회차 SKU 의
     `check_purchase_limit` 도 같은 비용이라 회귀는 아니지만, 인덱스 추가는 후속 과제다.
     """
-    granted_season = Receipt.data["SeasonPassGrant"]["season_index"].as_integer()
+    # 정수 캐스트 대신 문자열 비교 — data 는 클라 JSON 을 그대로 담으니 숫자가 아닌 값이 든
+    #   행이 있으면 캐스트가 500 을 낸다. 우리가 쓰는 값은 int 라 `->>` 결과가 "36" 이다.
+    granted_season = Receipt.data["SeasonPassGrant"]["season_index"].as_string()
     stmt = select(func.count(Receipt.id)).where(
         Receipt.planet_id == receipt.planet_id,
         Receipt.avatar_addr == receipt.avatar_addr,
         Receipt.status == ReceiptStatus.VALID,
         Receipt.msg.is_(None),
         or_(
-            and_(Receipt.product_id == product.id, granted_season == int(season_index)),
+            and_(Receipt.product_id == product.id, granted_season == str(int(season_index))),
             Receipt.product_id == component.id,
         ),
     )
