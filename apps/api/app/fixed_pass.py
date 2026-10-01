@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 import requests
-from shared.enums import PlanetID
+from shared.enums import PlanetID, ReceiptStatus
 from shared.models.product import (
     SEASON_PASS_SKU_TOKEN,
     FixedPassKind,
@@ -32,7 +32,8 @@ from shared.models.product import (
     season_component_sku,
 )
 from shared.schemas.product import FungibleAssetValueSchema, FungibleItemSchema
-from sqlalchemy import select
+from shared.models.receipt import Receipt
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 from app.config import config
@@ -296,3 +297,34 @@ def drop_shadowed_pass_rows(category_schema_list) -> None:
                 seen_names[p.name] = sku
             kept.append(p)
         cat.product_list = kept
+
+
+# ── 구매 한도 ─────────────────────────────────────────────────────────────────
+
+#: 고정 SKU 시즌패스는 **아바타당 시즌당 1회**. 회차 SKU 시절엔 상품이 시즌마다 달라서 상품 단위
+#:   누적(account_limit)이 곧 시즌 단위였지만, 고정 행은 시즌을 넘어 같은 상품이라 시즌 창으로 센다.
+FIXED_PASS_LIMIT_PER_SEASON = 1
+
+
+def count_granted_in_season(sess, product: Product, receipt, window: SeasonWindow) -> int:
+    """이 아바타가 이 시즌 창 안에서 이 고정 상품을 **지급까지 받은** 횟수(현재 영수증 제외).
+
+    `VALID` 이면서 `msg` 가 비어 있는 것만 센다 — 시즌패스 영수증은 성공하면 msg 가 없고,
+    실패·불확실 건(VALID+msg)은 지급 여부를 모르니 재구매를 막지 않는다(실제로 지급됐다면
+    시즌패스가 중복으로 거절한다). INIT 등 미완료 건을 세지 않는 것도 같은 이유다 — 멈춘
+    영수증 하나가 그 시즌 구매를 영영 막으면 안 된다.
+    """
+    stmt = select(func.count(Receipt.id)).where(
+        Receipt.product_id == product.id,
+        Receipt.planet_id == receipt.planet_id,
+        Receipt.avatar_addr == receipt.avatar_addr,
+        Receipt.status == ReceiptStatus.VALID,
+        Receipt.msg.is_(None),
+    )
+    if receipt.id is not None:
+        stmt = stmt.where(Receipt.id != receipt.id)
+    if window.start is not None:
+        stmt = stmt.where(Receipt.purchased_at >= window.start)
+    if window.end is not None:
+        stmt = stmt.where(Receipt.purchased_at <= window.end)
+    return sess.scalar(stmt) or 0

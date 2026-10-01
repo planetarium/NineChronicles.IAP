@@ -53,7 +53,9 @@ from app.config import config
 from app.dependencies import session
 from app.exceptions import InsufficientUserDataException, ReceiptNotFoundException
 from app.fixed_pass import (
+    FIXED_PASS_LIMIT_PER_SEASON,
     SeasonLookupError,
+    count_granted_in_season,
     fetch_season_for_purchase,
     find_component_product,
 )
@@ -957,6 +959,20 @@ def request_product(
                 # 결제 시각에 진행 중인 시즌이 없다(경계 공백·시즌 미등록). 회차 SKU 시절에
                 #   끝난 시즌 결제가 /upgrade 404 로 끝나던 것과 같은 결과다.
                 reject_not_granted(f"no season at {granted_at.isoformat()}")
+            # 아바타당 시즌당 1회 — 시즌패스가 중복을 거절하기 전에 IAP 가 먼저 막는다(결제 확정 전이라
+            #   Google/원스토어는 자동환불, 재진입 시 dedup 게이트는 200 PURCHASE_LIMIT_EXCEED →
+            #   클라 IsDelivered=false 로 consume 안 함).
+            if (
+                count_granted_in_season(sess, product, receipt, window)
+                >= FIXED_PASS_LIMIT_PER_SEASON
+            ):
+                receipt.status = ReceiptStatus.PURCHASE_LIMIT_EXCEED
+                receipt.msg = f"already purchased in season {window.season_index}"
+                raise_error(
+                    sess,
+                    receipt,
+                    ValueError("Season pass already purchased for this season."),
+                )
             reward_product = find_component_product(
                 sess, product, fixed_kind, window.season_index
             )
