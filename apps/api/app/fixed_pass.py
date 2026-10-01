@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 #: 시즌패스 조회 timeout(초) — 결제 경로. 시즌 조회는 부작용 없는 GET 이라 한 번 더 시도한다
 #:   (`PURCHASE_LOOKUP_TRIES`). 이 호출은 commit 전이라 #482 advisory 락(lock_timeout 10s)을
-#:   쥔 채 기다린다 — 최악 timeout × 시도 횟수만큼 락이 길어진다.
+#:   쥔 채 기다린다. requests 의 timeout 은 연결·읽기에 **각각** 걸려서 한 번에 최악 ~4s,
+#:   두 번이면 ~8s 다 — 10s 예산 안이지만 여유가 작다. 늘리지 말 것.
 SEASON_LOOKUP_TIMEOUT = 2
 PURCHASE_LOOKUP_TRIES = 2
 #: 상점 목록용 timeout(초). 상점 요청은 클라 상점 초기화·결제 직전 재확인마다 나가고, 같은
@@ -145,7 +146,7 @@ def fetch_season_for_purchase(
     raise last
 
 
-#: 값: (창 | None(시즌 없음) | SeasonLookupError(조회 실패), 받은 시각)
+#: 값: (창 | None(시즌 없음) | str(조회 실패 메시지), 받은 시각)
 _listing_cache: Dict[Tuple[str, bytes], Tuple[object, float]] = {}
 _listing_lock = threading.Lock()
 
@@ -169,14 +170,15 @@ def current_season_for_listing(
             if mono - fetched < LISTING_CACHE_TTL and cached.contains(now):
                 return cached
         elif mono - fetched < LISTING_NEGATIVE_TTL:
-            if isinstance(cached, SeasonLookupError):
-                raise cached
+            if isinstance(cached, str):
+                # 같은 예외 객체를 여러 요청이 다시 던지면 traceback 이 계속 쌓인다 → 매번 새로.
+                raise SeasonLookupError(cached)
             return None
     try:
         window = fetch_season(pass_type, planet_id, timeout=LISTING_LOOKUP_TIMEOUT)
     except SeasonLookupError as e:
         with _listing_lock:
-            _listing_cache[key] = (e, mono)
+            _listing_cache[key] = (str(e), mono)
         raise
     if window is not None and not window.contains(now):
         # 받은 시즌이 이미 끝났다(시계 차이 등) — 캐시하지 않는다.
