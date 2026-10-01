@@ -5,7 +5,7 @@ from typing import Annotated, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi_cache.decorator import cache
 from shared.enums import PackageName, PlanetID
-from shared.models.product import Category, Product
+from shared.models.product import Category, Product, fixed_pass_kind
 from shared.schemas.product import CategorySchema, ProductSchema, SimpleProductSchema
 from shared.utils.gacha import build_gacha_pool_schema
 from shared.utils.address import format_addr
@@ -14,6 +14,7 @@ from sqlalchemy.orm import joinedload
 
 from app.config import config
 from app.dependencies import session
+from app.fixed_pass import apply_fixed_pass_listing, drop_shadowed_pass_rows
 from app.utils import get_purchase_history
 from app.voucher_display import attach_voucher_tickets
 
@@ -119,6 +120,7 @@ def product_list(
     #      고치려면 필터된 목록으로 카테고리를 검증해야 한다 — 이 PR 범위 밖.
     want_point_catalog = catalog == ProductCatalog.POINT
     purchase_history = get_purchase_history(sess, planet_id, agent_addr)
+    fixed_pass_memo = {}
     for category in all_category_list:
         cat_schema = CategorySchema.model_validate(category)
         schema_dict = {}
@@ -163,6 +165,15 @@ def product_list(
             else:  # Product with no limitation
                 schema.buyable = True
 
+            # 고정 SKU 시즌패스: 이번 시즌 이름·구성품을 회차 행에서 넣는다(app/fixed_pass.py).
+            #   아래 Thor 2배보다 **앞**이어야 주입한 구성품도 2배로 표시된다(지급도 2배다).
+            #   못 정하면 구매 불가 — 클라가 결제창 전에 막는다(과금 없음).
+            fixed_kind = fixed_pass_kind(product.google_sku)
+            if fixed_kind and not apply_fixed_pass_listing(
+                sess, schema, product, fixed_kind, planet_id, fixed_pass_memo
+            ):
+                schema.buyable = False
+
             # Thor chain
             # (PLD-1575) **현금 카탈로그에만** 적용한다. 이 2배는 THOR 결제 프로모션이고
             #   (`shared/utils/grant.py` `THOR_PROMO_MULTIPLIER` — "결제 프로모션이라 무상
@@ -200,6 +211,9 @@ def product_list(
 
         cat_schema.product_list = list(schema_dict.values())
         category_schema_list.append(cat_schema)
+
+    # 고정 SKU 시즌패스가 응답에 있으면 같은 종류의 회차 행·겹치는 이름을 뺀다(클라 크래시 방지).
+    drop_shadowed_pass_rows(category_schema_list)
 
     # (PLD-1472) 복권 티켓은 응답 전체를 모아 쿼리 한 번으로 붙인다.
     #   ⚠️ 위 Thor 2배(mileage·아이템·FAV)의 대상이 **아니다**. 발급은 워커가 매핑 count 를 그대로

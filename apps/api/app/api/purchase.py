@@ -4,7 +4,7 @@ import os
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from math import floor
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, NoReturn, Optional
 from uuid import UUID, uuid4
 
 import requests
@@ -21,7 +21,7 @@ from shared.enums import (
     Store,
     TxStatus,
 )
-from shared.models.product import Price, Product, is_season_pass_product
+from shared.models.product import Price, Product, fixed_pass_kind, is_season_pass_product
 from shared.models.purchase_signal import PurchaseSignal
 from shared.models.receipt import Receipt
 from shared.models.user import AvatarLevel
@@ -52,6 +52,13 @@ from app.celery import send_to_worker
 from app.config import config
 from app.dependencies import session
 from app.exceptions import InsufficientUserDataException, ReceiptNotFoundException
+from app.fixed_pass import (
+    FIXED_PASS_LIMIT_PER_SEASON,
+    SeasonLookupError,
+    count_granted_in_season,
+    fetch_season_for_purchase,
+    find_component_product,
+)
 from app.utils import (
     create_season_pass_jwt,
     get_mileage,
@@ -606,6 +613,7 @@ def request_product(
 
     receipt.status = ReceiptStatus.VALIDATION_REQUEST
     deferred_google_ack = None  # (sku, token) — 시즌패스 Google 결제의 미뤄둔 ack
+    purchase = None  # 스토어 검증 결과. 스토어마다 아래에서 채운다(TEST 는 없음).
 
     def confirm_store_purchase():
         """스토어에 결제를 확정한다(= 자동환불을 끈다). 지급이 나갔거나 나갔을 수 있을 때만 부른다.
@@ -880,14 +888,18 @@ def request_product(
           - "premium": new premium type. premium & premium+
         """
         # NOTE: Check purchase limit using avatar_addr, not agent_addr
-        receipt = check_purchase_limit(
-            sess,
-            receipt,
-            product,
-            limit_type="account",
-            limit=product.account_limit,
-            use_avatar=True,
-        )
+        #   고정 SKU 행은 account_limit 을 비워 두고 시즌당 1회 제한을 시즌패스 서버에 맡긴다 —
+        #   상품 단위 누적은 시즌을 넘어 쌓여, 고정 SKU 에선 몇 시즌 뒤 영영 못 사게 된다.
+        #   비패스 분기와 같은 가드다(None 이면 `purchase_count > None` 이 TypeError).
+        if product.account_limit:
+            receipt = check_purchase_limit(
+                sess,
+                receipt,
+                product,
+                limit_type="account",
+                limit=product.account_limit,
+                use_avatar=True,
+            )
 
         prefix, body = product.google_sku.split("pass")
         try:
@@ -903,18 +915,103 @@ def request_product(
         except:
             pass_type = None
             season_index = 0
+
+        # 고정 SKU: 위 SKU 파싱은 숫자가 없어 pass_type=None·season_index=0 이 된다. 시즌 번호는
+        #   **결제 시각**의 시즌(시즌패스 서버)에서, 구성품은 그 회차 행에서 읽는다(app/fixed_pass.py).
+        #   고정 행 자체엔 구성품이 없다.
+        reward_product = product
+        fixed_kind = fixed_pass_kind(product.google_sku)
+        if fixed_kind:
+
+            def reject_not_granted(reason: str) -> NoReturn:
+                # 시즌패스를 부르기 전이라 지급이 없었음이 확실하다. #497 의 "지급 전 거절"과
+                #   같은 규칙: Google/원스토어는 INVALID(확정 안 함 → 자동환불), Apple/WEB 은
+                #   예전 시즌패스 실패와 같은 모양(VALID+msg, 500).
+                receipt.msg = reason
+                logger.error(f"[FIXED_PASS_REJECTED] {receipt.uuid} :: {reason}")
+                if receipt.store in DEFERRED_ACK_STORES:
+                    receipt.status = ReceiptStatus.INVALID
+                    raise_error(sess, receipt, ValueError(reason))
+                raise_error(sess, receipt, Exception(reason))
+
+            # 시즌 귀속 시각은 스토어가 검증해 준 값만 쓴다. Google 의 receipt.purchased_at 은
+            #   클라 Payload 그대로라(서명 검증 없음) 시즌을 고르게 둘 수 없다.
+            if (
+                receipt.store in (Store.GOOGLE, Store.GOOGLE_TEST)
+                and purchase is not None
+                and purchase.purchaseTimeMillis
+            ):
+                granted_at = datetime.fromtimestamp(
+                    int(purchase.purchaseTimeMillis) / 1000, tz=timezone.utc
+                )
+            else:
+                granted_at = receipt.purchased_at
+            if granted_at.tzinfo is None:
+                granted_at = granted_at.replace(tzinfo=timezone.utc)
+
+            try:
+                window = fetch_season_for_purchase(
+                    fixed_kind.pass_type, PlanetID(receipt.planet_id), granted_at
+                )
+            except SeasonLookupError as e:
+                reject_not_granted(f"season lookup failed :: {e}")
+            if window is None:
+                # 결제 시각에 진행 중인 시즌이 없다(경계 공백·시즌 미등록). 회차 SKU 시절에
+                #   끝난 시즌 결제가 /upgrade 404 로 끝나던 것과 같은 결과다.
+                reject_not_granted(f"no season at {granted_at.isoformat()}")
+            reward_product = find_component_product(
+                sess, product, fixed_kind, window.season_index
+            )
+            if reward_product is None:
+                reject_not_granted(
+                    f"no component row for season {window.season_index}"
+                )
+            # 아바타당 시즌당 1회 — 시즌패스가 중복을 거절하기 전에 IAP 가 먼저 막는다. 결제 확정
+            #   전이다. Google/원스토어는 INVALID 로 닫는다(재진입 400 → 어떤 클라도 consume 안 함 →
+            #   자동환불). PURCHASE_LIMIT_EXCEED 는 재진입 때 200 이라 구버전 클라(470.0.11 前)가
+            #   consume 해 버린다. Apple/WEB 은 기존 한도 초과와 같은 PURCHASE_LIMIT_EXCEED(400).
+            if (
+                count_granted_in_season(
+                    sess, product, receipt, window.season_index, reward_product
+                )
+                >= FIXED_PASS_LIMIT_PER_SEASON
+            ):
+                reason = f"already purchased in season {window.season_index}"
+                receipt.msg = reason
+                logger.info(f"[FIXED_PASS_LIMIT] {receipt.uuid} :: {reason}")
+                receipt.status = (
+                    ReceiptStatus.INVALID
+                    if receipt.store in DEFERRED_ACK_STORES
+                    else ReceiptStatus.PURCHASE_LIMIT_EXCEED
+                )
+                raise_error(
+                    sess,
+                    receipt,
+                    ValueError("Season pass already purchased for this season."),
+                )
+            pass_type = fixed_kind.pass_type
+            season_index = window.season_index
+            # CS·감사용 — 영수증은 고정 행을 가리키므로 몇 회차 구성품이 나갔는지 여기 남긴다.
+            data = dict(receipt.data or {})
+            data["SeasonPassGrant"] = {
+                "season_index": season_index,
+                "component_product_id": reward_product.id,
+                "component_sku": reward_product.google_sku,
+            }
+            receipt.data = data
+
         season_pass_host = config.season_pass_host
         claim_list = [
             {"ticker": x.fungible_item_id,
              "amount": x.amount * (2 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1),
              "decimal_places": 0}
-            for x in product.fungible_item_list
+            for x in reward_product.fungible_item_list
         ]
         claim_list.extend([
             {"ticker": x.ticker,
              "amount": floor(x.amount * (2 if receipt.planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL) else 1)),
              "decimal_places": x.decimal_places}
-            for x in product.fav_list
+            for x in reward_product.fav_list
         ])
         season_pass_type = "".join([x for x in body if x.isalpha()])
         try:
