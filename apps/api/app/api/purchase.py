@@ -74,6 +74,37 @@ def raise_error(sess, receipt: Receipt, e: Exception):
     raise e
 
 
+# 시즌패스 `/api/user/upgrade` 가 InvalidUpgradeRequestError 로 거절할 때의 문구. 이 예외는
+#   시즌패스 쪽 핸들러가 500 으로 내보내서(season-pass apps/api/main.py) 상태 코드만으로는
+#   "지급 전 거절" 과 "지급 커밋 뒤 실패"(Claim 커밋 후 send_to_worker 예외 등)를 못 가른다.
+#   그래서 문구로 가른다 — 시즌패스 쪽 문구가 바뀌면 이 목록도 같이 바꿔야 한다
+#   (안 바꾸면 "불확실" 로 떨어져 오늘과 같은 동작이 될 뿐, 잘못 환불하지는 않는다).
+SEASON_PASS_REJECTED_BEFORE_GRANT = (
+    "Duplicated purchase",
+    "doesn't request premium",
+    "Neither premium nor premium_plus requested",
+)
+
+# 지급 결과를 서버가 확정한 뒤에야 결제를 확정(ack)하는 스토어. 둘 다 미확정 결제를
+#   스토어가 자동환불한다(Google 3일, 원스토어 3일). Apple/WEB 은 서버 ack 가 없고
+#   Apple 은 자동환불도 없어서 여기 넣지 않는다.
+DEFERRED_ACK_STORES = (Store.GOOGLE, Store.GOOGLE_TEST, Store.ONESTORE)
+
+
+def season_pass_rejected_before_grant(status_code: int, text: str) -> bool:
+    """시즌패스 upgrade 의 non-200 응답이 **지급이 없었음이 확실한** 거절인가.
+
+    - 4xx: 인증·스키마 검증(422)·시즌 없음(404) — 전부 Claim/USP 쓰기 앞에서 난다.
+    - 500 + InvalidUpgradeRequestError 문구: 중복 구매 등, 역시 쓰기 앞.
+    - 그 밖의 5xx·204(ReadTimeout) 등은 지급됐을 수도 있다 → False.
+    """
+    if 400 <= status_code < 500:
+        return True
+    if status_code == 500:
+        return any(x in (text or "") for x in SEASON_PASS_REJECTED_BEFORE_GRANT)
+    return False
+
+
 PURCHASE_SUCCESS_STAGE = "PurchaseSuccess"
 
 
@@ -451,7 +482,9 @@ def request_product(
         # INVALID is the only status that proves nothing was delivered. Every
         # assignment of it in this function happens before the delivery side effects
         # (the season-pass POST and `send_to_worker`), so it cannot coexist with a
-        # delivery.
+        # delivery. The one assignment after the season-pass POST is gated on
+        # `season_pass_rejected_before_grant` — a response that proves the pass was
+        # not granted.
         #
         # Deliberately NOT rejected:
         #   INIT / VALIDATION_REQUEST — these do not prove non-delivery. `status =
@@ -461,8 +494,12 @@ def request_product(
         #     `tx_status`, so the gate above cannot rescue those — and for WEB orders a
         #     400 would fire an unattended Stripe refund on a delivered pass.
         #   TIME_LIMIT / REQUIRED_LEVEL / PURCHASE_LIMIT_EXCEED / REFUNDED_* — these are
-        #     set after validation, and on Google `ack_google` has already run by then,
-        #     so refusing returns nothing to the buyer. REFUNDED_* also has to stay
+        #     set after validation, and on Google `ack_google` has already run by then
+        #     (except for season-pass products, whose ack is deferred until the grant
+        #     succeeds), so refusing returns nothing to the buyer. For those deferred
+        #     season-pass receipts a 400 here *would* keep the store refund alive for
+        #     old clients (470.0.11+ already skip confirming non-VALID); left as 200
+        #     for now — widen only after checking the old-client share. REFUNDED_* also has to stay
         #     reachable as an operator release valve.
         if prev_receipt.status == ReceiptStatus.INVALID:
             raise ValueError(
@@ -568,6 +605,37 @@ def request_product(
         )
 
     receipt.status = ReceiptStatus.VALIDATION_REQUEST
+    deferred_google_ack = None  # (sku, token) — 시즌패스 Google 결제의 미뤄둔 ack
+
+    def confirm_store_purchase():
+        """스토어에 결제를 확정한다(= 자동환불을 끈다). 지급이 나갔거나 나갔을 수 있을 때만 부른다.
+
+        - Google: 시즌패스만 여기로 미뤄 온다. 일반 상품은 검증 직후에 이미 ack 했다.
+        - 원스토어: 모든 상품이 여기서 확정한다(아래 commit 뒤 블록 주석).
+        - Apple/WEB: 서버 확정이 없다.
+        실패해도 로그만 남긴다 — 지급 상태는 이미 DB 에 있다.
+        """
+        if deferred_google_ack:
+            ack_google(config.google_credential, x_iap_packagename, *deferred_google_ack)
+        if receipt.store == Store.ONESTORE:
+            acked, ack_msg = acknowledge_onestore(
+                resolve_host(
+                    config.onestore_host,
+                    config.onestore_sandbox_host,
+                    receipt_data.order["purchaseToken"],
+                    config.stage in PROD_STAGES,
+                ),
+                config.onestore_client_id,
+                config.onestore_client_secret,
+                product_id,
+                receipt_data.order["purchaseToken"],
+                config.onestore_market_code,
+            )
+            if not acked:
+                logger.error(
+                    f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
+                    "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나갔을 수 있음)"
+                )
 
     # validate
     ## Google
@@ -593,7 +661,14 @@ def request_product(
         #     raise_error(sess, receipt, ValueError(
         #         f"Invalid Product ID: Given {product.google_sku} is not identical to found from receipt: {purchase.productId}"))
         if success:
-            ack_google(config.google_credential, x_iap_packagename, product_id, token)
+            # 시즌패스는 지급(시즌패스 API) 결과를 본 뒤에 ack 한다 — 아래 시즌패스 분기와
+            #   commit 뒤 블록. 여기서 ack 하면 지급이 막힌 결제(구매제한·중복 구매 등)의
+            #   자동환불까지 지워져 유저는 돈만 내고 끝난다. product 가 None 이면 위에서
+            #   이미 INVALID 로 빠졌다.
+            if is_season_pass_product(product):
+                deferred_google_ack = (product_id, token)
+            else:
+                ack_google(config.google_credential, x_iap_packagename, product_id, token)
     ## ONE Store
     elif receipt_data.store == Store.ONESTORE:
         # 전제조건(시크릿·필수 필드)은 영수증을 만들기 전에 이미 봤다.
@@ -842,28 +917,66 @@ def request_product(
             for x in product.fav_list
         ])
         season_pass_type = "".join([x for x in body if x.isalpha()])
-        resp = requests.post(
-            f"{season_pass_host}/api/user/upgrade",
-            json={
-                "planet_id": receipt_data.planetId.value.decode("utf-8"),
-                "agent_addr": receipt.agent_addr.lower(),
-                "avatar_addr": receipt.avatar_addr.lower(),
-                "pass_type": pass_type,
-                "season_index": int(season_index),
-                "is_premium": season_pass_type in ("", "all", "premium"),
-                "is_premium_plus": season_pass_type in ("plus", "all", "premium"),
-                "g_sku": product.google_sku,
-                "a_sku": product.apple_sku,
-                # SeasonPass only uses claims
-                "reward_list": claim_list,
-            },
-            headers={"Authorization": f"Bearer {create_season_pass_jwt()}"},
-        )
+        try:
+            resp = requests.post(
+                f"{season_pass_host}/api/user/upgrade",
+                json={
+                    "planet_id": receipt_data.planetId.value.decode("utf-8"),
+                    "agent_addr": receipt.agent_addr.lower(),
+                    "avatar_addr": receipt.avatar_addr.lower(),
+                    "pass_type": pass_type,
+                    "season_index": int(season_index),
+                    "is_premium": season_pass_type in ("", "all", "premium"),
+                    "is_premium_plus": season_pass_type in ("plus", "all", "premium"),
+                    "g_sku": product.google_sku,
+                    "a_sku": product.apple_sku,
+                    # SeasonPass only uses claims
+                    "reward_list": claim_list,
+                },
+                headers={"Authorization": f"Bearer {create_season_pass_jwt()}"},
+            )
+        except requests.RequestException as e:
+            # 요청이 시즌패스에 닿았는지 모른다(연결 중 끊김 등) → 지급됐을 수 있다.
+            #   아래 "불확실" non-200 과 똑같이 VALID+msg 로 commit 하고 결제를 확정한다(무료
+            #   지급을 막는 쪽). commit 을 먼저 해서 advisory 락을 푼 뒤에 외부 왕복을 한다.
+            #   연결 자체가 안 된 경우(ConnectTimeout 등)도 구분하지 않고 보수적으로 확정한다.
+            receipt.msg = f"request failed :: {e}"
+            logger.error(
+                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: season-pass request failed: {e}"
+            )
+            sess.add(receipt)
+            sess.commit()
+            confirm_store_purchase()
+            raise
         if resp.status_code != 200:
             receipt.msg = f"{resp.status_code} :: {resp.text}"
             msg = f"SeasonPass Upgrade Failed: {resp.text}"
             logging.error(msg)
-            raise_error(sess, receipt, Exception(msg))
+            if receipt.store in DEFERRED_ACK_STORES and season_pass_rejected_before_grant(
+                resp.status_code, resp.text
+            ):
+                # 지급이 없었음이 확실하다 → 결제를 확정하지 않고(ack 안 함) INVALID 로 닫는다.
+                #   설정 오류(JWT 시크릿·시계 차이 401, 라우트 404)면 **모든** 시즌패스 결제가
+                #   여기로 와서 조용히 환불된다 — 태그로 급증 알람을 붙일 수 있게 남긴다.
+                #   스토어가 3일 뒤 자동환불하고, 같은 결제로 다시 들어오면 dedup 게이트가
+                #   400 으로 거절해 클라이언트도 consume 하지 않는다. 예전엔 VALID+msg 로 남아
+                #   재진입 시 200 VALID → 클라 consume → 돈만 내고 끝났다(중복 구매 사례).
+                logger.error(
+                    f"[SP_REJECTED_BEFORE_GRANT] {receipt.uuid} :: "
+                    f"status={resp.status_code} store={receipt.store.name}"
+                )
+                receipt.status = ReceiptStatus.INVALID
+                raise_error(sess, receipt, ValueError(msg))
+            # 지급 여부가 불확실하다(Apple/WEB 은 전부 여기) → 예전과 같이 VALID+msg 로 남기고
+            #   결제를 확정한다(운영 확인 대상, /retry 는 msg 를 보고 거절한다). commit 뒤에 확정.
+            logger.error(
+                f"[SP_GRANT_UNKNOWN] {receipt.uuid} :: status={resp.status_code}"
+            )
+            sess.add(receipt)
+            sess.commit()
+            confirm_store_purchase()
+            logger.error(f"[{receipt.uuid}] :: {msg}")
+            raise Exception(msg)
     else:
         if product.daily_limit:
             receipt = check_purchase_limit(
@@ -897,7 +1010,7 @@ def request_product(
     #   구매를 자동 환불하는데, 클라이언트가 consume 을 안 하면(앱을 죽이거나 호출을 막으면)
     #   **지급은 나갔는데 결제만 사라진다.** 정상 흐름에서는 클라이언트 consume 이 먼저
     #   닫지만, 그걸 믿을 수 없으니 서버가 같은 창을 닫는다.
-    #   Google(`ack_google`)과 달리 검증 직후가 아니라 여기서 하는 이유는, 검증만 되고
+    #   Google 일반 상품(`ack_google`)과 달리 검증 직후가 아니라 여기서 하는 이유는, 검증만 되고
     #   지급이 막힌 건(TIME_LIMIT·구매제한·시즌패스 실패 등)은 환불되게 두려는 것이다 —
     #   그 경로들은 위에서 raise_error 로 빠져나가 여기까지 오지 않는다.
     #   실패해도 지급은 이미 나갔으므로 로그만 남기고 진행한다.
@@ -912,25 +1025,8 @@ def request_product(
     #   원스토어 경로가 그 예산을 혼자 넘긴다. API 풀은 기본(5+10)이라 원스토어가 느려지면
     #   Google/Apple 요청까지 커넥션 체크아웃에서 대기한다.
     #   순서를 바꿔도 안전한 이유: 실패해도 로그만 남기고 진행하므로 DB 상태에 의존하지 않는다.
-    if receipt.store == Store.ONESTORE:
-        acked, ack_msg = acknowledge_onestore(
-            resolve_host(
-                config.onestore_host,
-                config.onestore_sandbox_host,
-                receipt_data.order["purchaseToken"],
-                config.stage in PROD_STAGES,
-            ),
-            config.onestore_client_id,
-            config.onestore_client_secret,
-            product_id,
-            receipt_data.order["purchaseToken"],
-            config.onestore_market_code,
-        )
-        if not acked:
-            logger.error(
-                f"[ONESTORE_ACK_FAILED] {receipt.uuid} :: {order_id} :: {ack_msg} "
-                "— 3일 내 자동환불 대상으로 남는다(지급은 이미 나감)"
-            )
+    #   시즌패스 Google 결제의 미뤄둔 ack 도 같은 이유로 여기서 친다(시즌패스 지급 성공 뒤).
+    confirm_store_purchase()
 
     return receipt
 
