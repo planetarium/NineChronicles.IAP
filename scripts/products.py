@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from shared.models.product import Product, ProductRarity, ProductAssetUISize, ProductType
+from shared.models.product import assert_season_pass_sku_registrable
 from sqlalchemy.exc import SQLAlchemyError
 
 # ✅ .env 파일 로드
@@ -67,6 +68,8 @@ def parse_datetime(value: str):
 
 def process_csv_row(row: dict, is_internal: bool) -> dict:
     """CSV 행을 파싱하여 Product 모델에 맞는 데이터로 변환합니다."""
+    # apps/api 의 process_csv_row 와 같은 시즌패스 SKU 가드(근거: assert_season_pass_sku_registrable).
+    assert_season_pass_sku_registrable(row.get("google_sku"))
     csv_data = {
         "id": parse_int(row["id"]),
         "name": row["name"],

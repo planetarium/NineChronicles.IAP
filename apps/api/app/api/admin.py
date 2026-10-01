@@ -24,6 +24,9 @@ from pydantic.alias_generators import to_camel
 from shared.enums import GrantStatus, PackageName, PlanetID, ProductType, ReceiptStatus, Store
 from shared.models.grant_outbox import GrantOutbox
 from shared.models.product import (
+    ADVENTURE_BOSS_PASS_SKU_PATTERN,
+    COURAGE_PASS_SKU_PATTERN,
+    SPEND_EXCLUDED_PASS_SKU_PATTERNS,
     Category,
     FungibleAssetProduct,
     FungibleItemProduct,
@@ -32,7 +35,7 @@ from shared.models.product import (
     category_product_table,
 )
 from shared.models.product_voucher_grant import ProductVoucherGrant
-from shared.models.receipt import Receipt
+from shared.models.receipt import Receipt, spend_counted_stores
 from shared.schemas.message import SendGrantMessage
 from shared.schemas.product import AdminProductSchema
 from shared.schemas.receipt import FullReceiptSchema, RefundedReceiptSchema
@@ -192,7 +195,8 @@ class AdventureBossPassCheckResponse(BaseModel):
 
 class NonPassPurchaseCheckResponse(BaseModel):
     agent_address: str
-    avatar_address: str
+    #: None = 계정(agent) 전체 합산으로 조회했다.
+    avatar_address: Optional[str] = None
     year: int
     month: int
     total_amount: Decimal
@@ -1005,7 +1009,7 @@ def check_courage_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium",
+        sku_pattern=COURAGE_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1078,7 +1082,7 @@ def check_courage_pass_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="couragepass\\d+premium",
+        sku_pattern=COURAGE_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1126,7 +1130,7 @@ def check_adventure_boss_pass_purchases(
         month=month,
         include_product=True,
         only_paid_products=True,
-        sku_pattern="adventurebosspass\\d+premium",
+        sku_pattern=ADVENTURE_BOSS_PASS_SKU_PATTERN,
         planet_id=planet_id,
     )
 
@@ -1159,7 +1163,10 @@ def check_adventure_boss_pass_purchases(
 )
 def check_non_pass_purchase_amount(
     agent_address: str = Query(..., description="9c agent 주소"),
-    avatar_address: str = Query(..., description="9c avatar 주소"),
+    avatar_address: Optional[str] = Query(
+        None,
+        description="9c avatar 주소. 생략하면 계정(agent) 전체 합산 — 결제 미션은 계정 누적이다",
+    ),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     amount_threshold: Decimal = Query(
@@ -1184,11 +1191,11 @@ def check_non_pass_purchase_amount(
     # 주소 형식 정규화
     if not agent_address.startswith("0x"):
         agent_address = "0x" + agent_address
-    if not avatar_address.startswith("0x"):
+    if avatar_address and not avatar_address.startswith("0x"):
         avatar_address = "0x" + avatar_address
 
     agent_address = agent_address.lower()
-    avatar_address = avatar_address.lower()
+    avatar_address = avatar_address.lower() if avatar_address else None
 
     # 패스 제외 구매 내역 조회
     non_pass_receipts = Receipt.get_user_receipts_by_month(
@@ -1199,8 +1206,14 @@ def check_non_pass_purchase_amount(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        exclude_sku_patterns=list(SPEND_EXCLUDED_PASS_SKU_PATTERNS),
         planet_id=planet_id,
+        # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
+        #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
+        #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
+        statuses=(ReceiptStatus.VALID,),
+        # 결제만 센다 — 쿠폰(REDEEM)은 유료 SKU 로 VALID 가 되지만 돈을 낸 게 아니다.
+        stores=spend_counted_stores(config.stage),
     )
 
     # 총 금액 계산
@@ -1247,7 +1260,10 @@ def check_non_pass_purchase_amount(
 )
 def check_non_pass_purchase_count(
     agent_address: str = Query(..., description="9c agent 주소"),
-    avatar_address: str = Query(..., description="9c avatar 주소"),
+    avatar_address: Optional[str] = Query(
+        None,
+        description="9c avatar 주소. 생략하면 계정(agent) 전체 합산 — 결제 미션은 계정 누적이다",
+    ),
     year: int = Query(..., ge=2020, le=2030, description="조회할 연도"),
     month: int = Query(..., ge=1, le=12, description="조회할 월"),
     count_threshold: int = Query(1, ge=1, description="구매 건수 임계값 (기본값: 1)"),
@@ -1270,11 +1286,11 @@ def check_non_pass_purchase_count(
     # 주소 형식 정규화
     if not agent_address.startswith("0x"):
         agent_address = "0x" + agent_address
-    if not avatar_address.startswith("0x"):
+    if avatar_address and not avatar_address.startswith("0x"):
         avatar_address = "0x" + avatar_address
 
     agent_address = agent_address.lower()
-    avatar_address = avatar_address.lower()
+    avatar_address = avatar_address.lower() if avatar_address else None
 
     # 패스 제외 구매 내역 조회
     non_pass_receipts = Receipt.get_user_receipts_by_month(
@@ -1285,8 +1301,14 @@ def check_non_pass_purchase_count(
         month=month,
         include_product=True,
         only_paid_products=True,
-        exclude_sku_patterns=["adventurebosspass\\d+premium", "couragepass\\d+premium"],
+        exclude_sku_patterns=list(SPEND_EXCLUDED_PASS_SKU_PATTERNS),
         planet_id=planet_id,
+        # 보상(환전 가능 포인트)을 주는 판정이라 스토어 검증이 끝난 것만 센다. 기본 집합은
+        #   결제 진행 중(INIT/VALIDATION_REQUEST)도 세서, 가짜 영수증을 넣고 검증이 끝나기
+        #   전에 수령하는 경로가 열린다. 패스 보유 판정(위 엔드포인트들)은 기본값이 맞다.
+        statuses=(ReceiptStatus.VALID,),
+        # 결제만 센다 — 쿠폰(REDEEM)은 유료 SKU 로 VALID 가 되지만 돈을 낸 게 아니다.
+        stores=spend_counted_stores(config.stage),
     )
 
     # 총 금액 계산
