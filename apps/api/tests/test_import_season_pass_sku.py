@@ -18,6 +18,10 @@ def test_live_pass_sku_imports():
     assert process_csv_row(_row("g_pkg_couragepass36premium"), is_internal=False)["google_sku"] == "g_pkg_couragepass36premium"
 
 
-def test_fixed_pass_sku_rejected_at_import():
-    with pytest.raises(ValueError, match="season_index"):
-        process_csv_row(_row("g_pkg_couragepasspremium"), is_internal=False)
+def test_fixed_pass_sku_imports():
+    assert process_csv_row(_row("g_pkg_couragepasspremium"), is_internal=False)["google_sku"] == "g_pkg_couragepasspremium"
+
+
+def test_malformed_pass_sku_rejected_at_import():
+    with pytest.raises(ValueError, match="알려진 형식이 아니다"):
+        process_csv_row(_row("g_pkg_couragepass_36premium"), is_internal=False)
