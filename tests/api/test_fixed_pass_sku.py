@@ -205,8 +205,16 @@ class TestPurchase:
 
 
 def schema_of(product):
-    # apply_fixed_pass_listing 은 name·fav_list·fungible_item_list 만 바꾼다.
-    return SimpleNamespace(name=product.name, fav_list=[], fungible_item_list=[])
+    # apply_fixed_pass_listing 은 name·구성품, 아바타가 오면 한도 필드까지 바꾼다.
+    #   한도 필드 기본값은 product_list 가 고정 행(제한 없음)에 채우는 값과 같다.
+    return SimpleNamespace(
+        name=product.name,
+        fav_list=[],
+        fungible_item_list=[],
+        account_limit=product.account_limit,
+        purchase_count=0,
+        buyable=True,
+    )
 
 
 class TestListing:
@@ -263,6 +271,87 @@ class TestListing:
             None, schema, product, fixed_pass_kind(FIXED_SKU), PlanetID.ODIN, {}
         )
         assert schema.name == "COURAGEPASSPremium"
+
+    # ── 아바타 기준 한도 표시 (PLD-1674) ────────────────────────────────────
+    def _apply(self, fixed_pass, product, schema, avatar_addr):
+        from shared.models.product import fixed_pass_kind
+
+        return fixed_pass.apply_fixed_pass_listing(
+            None,
+            schema,
+            product,
+            fixed_pass_kind(FIXED_SKU),
+            PlanetID.ODIN,
+            {},
+            avatar_addr=avatar_addr,
+        )
+
+    @pytest.mark.parametrize("granted,buyable", [(0, True), (1, False)])
+    def test_아바타가_오면_시즌당_1회_한도와_이번_시즌_구매수를_싣는다(
+        self, fp, monkeypatch, granted, buyable
+    ):
+        fixed_pass, _ = fp
+        seen = []
+
+        def fake_count(sess, product, planet_id, avatar_addr, season_index, component):
+            seen.append((planet_id, avatar_addr, season_index, component.id))
+            return granted
+
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", fake_count)
+        product = fixed_product(name="COURAGEPASSPremium")
+        schema = schema_of(product)
+
+        assert self._apply(fixed_pass, product, schema, "0xav")
+
+        assert seen == [(PlanetID.ODIN, "0xav", 36, 536)]
+        assert schema.account_limit == fixed_pass.FIXED_PASS_LIMIT_PER_SEASON == 1
+        assert schema.purchase_count == granted
+        assert schema.buyable is buyable
+
+    def test_아바타가_없으면_한도_필드를_건드리지_않는다(self, fp, monkeypatch):
+        """게임 클라는 agent_addr 만 보내고 구매 직전 buyable 을 본다(SeasonPassPremiumPopup).
+        계정 기준으로 막으면 같은 계정의 다른 아바타가 못 산다 → 응답을 지금 그대로 둔다."""
+        fixed_pass, _ = fp
+
+        def boom(*_a, **_kw):
+            raise AssertionError("아바타 없이 구매수를 세면 안 된다")
+
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", boom)
+        product = fixed_product(name="COURAGEPASSPremium")
+        schema = schema_of(product)
+
+        assert self._apply(fixed_pass, product, schema, None)
+
+        assert schema.account_limit is None
+        assert schema.purchase_count == 0
+        assert schema.buyable is True
+
+    def test_아바타_집계_쿼리는_그_아바타의_이번_시즌만_센다(self):
+        from app import fixed_pass
+        from sqlalchemy.dialects import postgresql
+
+        captured = {}
+
+        class S:
+            def scalar(self, stmt):
+                compiled = stmt.compile(dialect=postgresql.dialect())
+                captured["sql"] = str(compiled)
+                captured["params"] = compiled.params
+                return 2
+
+        assert (
+            fixed_pass.count_granted_for_avatar(
+                S(), fixed_product(), PlanetID.ODIN, "0xav", 36, component_row(36)
+            )
+            == 2
+        )
+        sql = captured["sql"]
+        for frag in ("receipt.avatar_addr =", "receipt.planet_id =", "receipt.msg IS NULL", "->>"):
+            assert frag in sql, frag
+        # 결제 경로와 달리 제외할 "현재 영수증" 이 없다.
+        assert "receipt.id !=" not in sql
+        params = set(map(str, captured["params"].values()))
+        assert {"0xav", "36"} <= params
 
     def _categories(self, *product_lists):
         return [SimpleNamespace(product_list=list(pl)) for pl in product_lists]
@@ -599,3 +688,105 @@ class TestSeasonLimit:
         assert {"SeasonPassGrant", "season_index", "36"} <= params
         # 시즌 키는 영수증 기록이지 purchased_at 이 아니다.
         assert "purchased_at" not in sql
+
+
+# ── 상점 라우트 (PLD-1674) ────────────────────────────────────────────────────
+
+
+class TestProductListRoute:
+    """`GET /api/product` 응답까지 — 실제 apply_fixed_pass_listing·drop_shadowed_pass_rows 를 거친다.
+    시즌 조회·회차 행·구매수 집계만 가짜다."""
+
+    @pytest.fixture
+    def route(self, purchase_api, monkeypatch):
+        from app import fixed_pass
+        from app.api import product as product_api
+        from shared.enums import ProductAssetUISize, ProductRarity
+        from shared.models.product import Category
+
+        fixed = fixed_product(
+            name="COURAGEPASSPremium",
+            order=1,
+            active=True,
+            mileage=1440,
+            rarity=ProductRarity.LEGENDARY,
+            size=ProductAssetUISize.ONE_BY_TWO,
+            l10n_key="NoShow_Pass",
+            price_list=[],
+            point_shop_grantable=False,
+            apple_sku="a_pkg_couragepasspremium",
+            apple_sku_k="a_pkg_couragepasspremium_2",
+            point_payable_kinds="ANY",
+            discount=0,
+            path="=",
+            gacha_draw_count=1,
+        )
+        cat = Category(
+            id=1, name="NoShow", order=1, active=True, l10n_key="NoShow_X", product_list=[fixed]
+        )
+
+        class Sess:
+            def scalars(self, _stmt):
+                return SimpleNamespace(unique=lambda: SimpleNamespace(fetchall=lambda: [cat]))
+
+        state = {"granted": 0, "seen": []}
+
+        def fake_count(sess, product, planet_id, avatar_addr, season_index, component):
+            state["seen"].append(avatar_addr)
+            g = state["granted"]
+            if isinstance(g, Exception):
+                raise g
+            return g
+
+        monkeypatch.setattr(
+            fixed_pass, "current_season_for_listing", lambda *_a: purchase_api_window(36)
+        )
+        monkeypatch.setattr(
+            fixed_pass, "find_component_product", lambda *_a: component_row(36)
+        )
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", fake_count)
+        monkeypatch.setattr(
+            product_api,
+            "get_purchase_history",
+            lambda *_a, **_kw: {"daily": {}, "weekly": {}, "account": {}},
+        )
+        monkeypatch.setattr(product_api, "attach_voucher_tickets", lambda *_a, **_kw: None)
+
+        def call(**kw):
+            cats = product_api.product_list(
+                agent_addr="0xAgent", planet_id="0x000000000000", sess=Sess(), **kw
+            )
+            (p,) = [p for c in cats for p in c.product_list]
+            return p
+
+        return call, state
+
+    @pytest.mark.parametrize("granted,buyable,count", [(0, True, 0), (1, False, 1)])
+    def test_아바타가_오면_한도_필드가_응답까지_실린다(self, route, granted, buyable, count):
+        call, state = route
+        state["granted"] = granted
+
+        p = call(avatar_addr="ABCdef")
+
+        # 라우트가 소문자·0x 로 정규화해 넘긴다(영수증 avatar_addr 저장 형식과 같다).
+        assert state["seen"] == ["0xabcdef"]
+        assert p.name == "COURAGEPASS36Premium"
+        assert (p.account_limit, p.purchase_count, p.buyable) == (1, count, buyable)
+
+    def test_아바타가_없으면_한도_필드는_예전_그대로다(self, route):
+        call, state = route
+
+        p = call()
+
+        assert state["seen"] == []
+        assert p.name == "COURAGEPASS36Premium"
+        assert (p.account_limit, p.purchase_count, p.buyable) == (None, 0, True)
+
+    def test_집계가_실패해도_상점은_뜨고_한도_필드는_예전_그대로다(self, route):
+        """표시 전용 조회다 — 실제 한도는 결제 경로가 다시 막는다."""
+        call, state = route
+        state["granted"] = RuntimeError("db down")
+
+        p = call(avatar_addr="0xav")
+
+        assert (p.account_limit, p.purchase_count, p.buyable) == (None, 0, True)

@@ -232,12 +232,28 @@ def find_component_product(
 # ── 상점 목록(`GET /api/product`) ─────────────────────────────────────────────
 
 
-def apply_fixed_pass_listing(sess, schema, product: Product, kind: FixedPassKind, planet_id, memo) -> bool:
+def apply_fixed_pass_listing(
+    sess,
+    schema,
+    product: Product,
+    kind: FixedPassKind,
+    planet_id,
+    memo,
+    avatar_addr: Optional[str] = None,
+) -> bool:
     """고정 행 스키마에 이번 시즌 이름·구성품을 넣는다. 못 정하면 False(호출자가 구매 불가로 둔다).
 
     이름은 클라가 상품을 찾는 키다(`{PASS}{시즌}Premium`). 주입하지 않으면 DB 의 고정 행 이름
     (`COURAGEPASSPremium` 처럼 숫자 없이)이 나가서 어떤 클라도 그 상품을 못 찾는다 = 판매 정지.
     `memo` 는 요청 하나 안에서 같은 고정 행을 두 번 풀지 않게 한다.
+
+    `avatar_addr` 가 오면(포탈, PLD-1674) 결제 경로와 같은 한도 — 아바타당 시즌당 1회 — 를
+    `account_limit`/`purchase_count`/`buyable` 로 싣는다. 고정 행은 `account_limit` 을 비워 둬서
+    (상품 누적은 시즌을 넘어 쌓인다) 그대로면 포탈이 한도를 못 그리고, 이미 산 아바타에게도
+    구매 가능으로 보인다.
+    **안 오면 한도 필드를 건드리지 않는다.** 게임 클라는 `agent_addr` 만 보내고 결제 직전에
+    `buyable` 을 다시 본다(SeasonPassPremiumPopup → CheckProductAvailable). 계정 기준으로 막으면
+    같은 계정의 다른 아바타가 못 산다 — 아바타별 보유 표시는 클라가 시즌패스 서버로 이미 한다.
     """
     if product.google_sku not in memo:
         window = component = None
@@ -259,6 +275,19 @@ def apply_fixed_pass_listing(sess, schema, product: Product, kind: FixedPassKind
     schema.fungible_item_list = [
         FungibleItemSchema.model_validate(x) for x in component.fungible_item_list
     ]
+    if avatar_addr:
+        try:
+            granted = count_granted_for_avatar(
+                sess, product, planet_id, avatar_addr, window.season_index, component
+            )
+        except Exception as e:
+            # 표시 전용이다 — 실제 한도는 결제 경로가 다시 막는다. 이 조회 하나로 상점 전체를
+            #   500 으로 만들지 않고, 한도 필드를 건드리지 않은 채(아바타 없을 때와 같은 응답) 둔다.
+            logger.error(f"[FIXED_PASS_LIMIT_LOOKUP] {kind.token} {avatar_addr} :: {e}")
+            return True
+        schema.account_limit = FIXED_PASS_LIMIT_PER_SEASON
+        schema.purchase_count = granted
+        schema.buyable = granted < FIXED_PASS_LIMIT_PER_SEASON
     return True
 
 
@@ -320,15 +349,36 @@ def count_granted_in_season(
     시즌패스가 중복으로 거절한다). INIT 등 미완료 건을 세지 않는 것도 같은 이유다 — 멈춘
     영수증 하나가 그 시즌 구매를 영영 막으면 안 된다.
 
-    ⚠️ receipt 에 (product_id, avatar_addr) 인덱스가 없어 seq scan 이다 — 회차 SKU 의
-    `check_purchase_limit` 도 같은 비용이라 회귀는 아니지만, 인덱스 추가는 후속 과제다.
+    `ix_receipt_avatar_valid`(avatar_addr, product_id; status='VALID' 부분 인덱스)를 탄다.
     """
+    stmt = _granted_in_season_stmt(
+        product, receipt.planet_id, receipt.avatar_addr, season_index, component
+    )
+    if receipt.id is not None:
+        stmt = stmt.where(Receipt.id != receipt.id)
+    return sess.scalar(stmt) or 0
+
+
+def count_granted_for_avatar(
+    sess, product: Product, planet_id, avatar_addr: str, season_index: int, component: Product
+) -> int:
+    """상점 표시용 — 이 아바타가 이 시즌 패스를 지급까지 받은 횟수. 규칙은 `count_granted_in_season`
+    과 같다(같은 쿼리). 상점 요청마다 돌아서 `ix_receipt_avatar_valid` 를 탄다."""
+    return (
+        sess.scalar(
+            _granted_in_season_stmt(product, planet_id, avatar_addr, season_index, component)
+        )
+        or 0
+    )
+
+
+def _granted_in_season_stmt(product, planet_id, avatar_addr, season_index, component):
     # 정수 캐스트 대신 문자열 비교 — data 는 클라 JSON 을 그대로 담으니 숫자가 아닌 값이 든
     #   행이 있으면 캐스트가 500 을 낸다. 우리가 쓰는 값은 int 라 `->>` 결과가 "36" 이다.
     granted_season = Receipt.data["SeasonPassGrant"]["season_index"].as_string()
-    stmt = select(func.count(Receipt.id)).where(
-        Receipt.planet_id == receipt.planet_id,
-        Receipt.avatar_addr == receipt.avatar_addr,
+    return select(func.count(Receipt.id)).where(
+        Receipt.planet_id == planet_id,
+        Receipt.avatar_addr == avatar_addr,
         Receipt.status == ReceiptStatus.VALID,
         Receipt.msg.is_(None),
         or_(
@@ -336,6 +386,3 @@ def count_granted_in_season(
             Receipt.product_id == component.id,
         ),
     )
-    if receipt.id is not None:
-        stmt = stmt.where(Receipt.id != receipt.id)
-    return sess.scalar(stmt) or 0

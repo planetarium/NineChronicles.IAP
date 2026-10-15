@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi_cache.decorator import cache
@@ -66,6 +66,10 @@ class ProductCatalog(str, Enum):
 
 
 _CATALOG_DESC = "카탈로그 선택. 기본 `cash`(현금 상품만) / `point`(포인트샵 전용 상품만). 두 목록은 안 겹친다"
+_AVATAR_DESC = (
+    "(PLD-1674) 구매 대상 아바타. 주면 고정 SKU 시즌패스에 아바타당 시즌당 1회 한도"
+    "(`account_limit`=1·이번 시즌 `purchase_count`·`buyable`)를 싣는다. 안 주면 응답은 그대로다"
+)
 
 
 @router.get("", response_model=List[CategorySchema])
@@ -78,6 +82,9 @@ def product_list(
     catalog: Annotated[
         ProductCatalog, Query(description=_CATALOG_DESC)
     ] = ProductCatalog.CASH,
+    avatar_addr: Annotated[
+        Optional[str], Query(description=_AVATAR_DESC)
+    ] = None,
     sess=Depends(session),
 ):
     if not planet_id:
@@ -88,6 +95,7 @@ def product_list(
         planet_id = PlanetID(bytes(planet_id, "utf-8"))
 
     agent_addr = format_addr(agent_addr)
+    avatar_addr = format_addr(avatar_addr) if avatar_addr else None
     all_category_list = (
         sess.scalars(
             select(Category)
@@ -170,7 +178,7 @@ def product_list(
             #   못 정하면 구매 불가 — 클라가 결제창 전에 막는다(과금 없음).
             fixed_kind = fixed_pass_kind(product.google_sku)
             if fixed_kind and not apply_fixed_pass_listing(
-                sess, schema, product, fixed_kind, planet_id, fixed_pass_memo
+                sess, schema, product, fixed_kind, planet_id, fixed_pass_memo, avatar_addr
             ):
                 schema.buyable = False
 
