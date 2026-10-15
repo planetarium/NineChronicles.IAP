@@ -205,8 +205,16 @@ class TestPurchase:
 
 
 def schema_of(product):
-    # apply_fixed_pass_listing 은 name·fav_list·fungible_item_list 만 바꾼다.
-    return SimpleNamespace(name=product.name, fav_list=[], fungible_item_list=[])
+    # apply_fixed_pass_listing 은 name·구성품, 아바타가 오면 한도 필드까지 바꾼다.
+    #   한도 필드 기본값은 product_list 가 고정 행(제한 없음)에 채우는 값과 같다.
+    return SimpleNamespace(
+        name=product.name,
+        fav_list=[],
+        fungible_item_list=[],
+        account_limit=product.account_limit,
+        purchase_count=0,
+        buyable=True,
+    )
 
 
 class TestListing:
@@ -263,6 +271,87 @@ class TestListing:
             None, schema, product, fixed_pass_kind(FIXED_SKU), PlanetID.ODIN, {}
         )
         assert schema.name == "COURAGEPASSPremium"
+
+    # ── 아바타 기준 한도 표시 (PLD-1674) ────────────────────────────────────
+    def _apply(self, fixed_pass, product, schema, avatar_addr):
+        from shared.models.product import fixed_pass_kind
+
+        return fixed_pass.apply_fixed_pass_listing(
+            None,
+            schema,
+            product,
+            fixed_pass_kind(FIXED_SKU),
+            PlanetID.ODIN,
+            {},
+            avatar_addr=avatar_addr,
+        )
+
+    @pytest.mark.parametrize("granted,buyable", [(0, True), (1, False)])
+    def test_아바타가_오면_시즌당_1회_한도와_이번_시즌_구매수를_싣는다(
+        self, fp, monkeypatch, granted, buyable
+    ):
+        fixed_pass, _ = fp
+        seen = []
+
+        def fake_count(sess, product, planet_id, avatar_addr, season_index, component):
+            seen.append((planet_id, avatar_addr, season_index, component.id))
+            return granted
+
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", fake_count)
+        product = fixed_product(name="COURAGEPASSPremium")
+        schema = schema_of(product)
+
+        assert self._apply(fixed_pass, product, schema, "0xav")
+
+        assert seen == [(PlanetID.ODIN, "0xav", 36, 536)]
+        assert schema.account_limit == fixed_pass.FIXED_PASS_LIMIT_PER_SEASON == 1
+        assert schema.purchase_count == granted
+        assert schema.buyable is buyable
+
+    def test_아바타가_없으면_한도_필드를_건드리지_않는다(self, fp, monkeypatch):
+        """게임 클라는 agent_addr 만 보내고 구매 직전 buyable 을 본다(SeasonPassPremiumPopup).
+        계정 기준으로 막으면 같은 계정의 다른 아바타가 못 산다 → 응답을 지금 그대로 둔다."""
+        fixed_pass, _ = fp
+
+        def boom(*_a, **_kw):
+            raise AssertionError("아바타 없이 구매수를 세면 안 된다")
+
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", boom)
+        product = fixed_product(name="COURAGEPASSPremium")
+        schema = schema_of(product)
+
+        assert self._apply(fixed_pass, product, schema, None)
+
+        assert schema.account_limit is None
+        assert schema.purchase_count == 0
+        assert schema.buyable is True
+
+    def test_아바타_집계_쿼리는_그_아바타의_이번_시즌만_센다(self):
+        from app import fixed_pass
+        from sqlalchemy.dialects import postgresql
+
+        captured = {}
+
+        class S:
+            def scalar(self, stmt):
+                compiled = stmt.compile(dialect=postgresql.dialect())
+                captured["sql"] = str(compiled)
+                captured["params"] = compiled.params
+                return 2
+
+        assert (
+            fixed_pass.count_granted_for_avatar(
+                S(), fixed_product(), PlanetID.ODIN, "0xav", 36, component_row(36)
+            )
+            == 2
+        )
+        sql = captured["sql"]
+        for frag in ("receipt.avatar_addr =", "receipt.planet_id =", "receipt.msg IS NULL", "->>"):
+            assert frag in sql, frag
+        # 결제 경로와 달리 제외할 "현재 영수증" 이 없다.
+        assert "receipt.id !=" not in sql
+        params = set(map(str, captured["params"].values()))
+        assert {"0xav", "36"} <= params
 
     def _categories(self, *product_lists):
         return [SimpleNamespace(product_list=list(pl)) for pl in product_lists]
@@ -599,3 +688,71 @@ class TestSeasonLimit:
         assert {"SeasonPassGrant", "season_index", "36"} <= params
         # 시즌 키는 영수증 기록이지 purchased_at 이 아니다.
         assert "purchased_at" not in sql
+
+
+# ── 상점 라우트 (PLD-1674) ────────────────────────────────────────────────────
+
+
+class TestProductListRoute:
+    """`GET /api/product` 가 `avatar_addr` 를 정규화해 고정 행 처리로 넘기는지."""
+
+    @pytest.fixture
+    def route(self, purchase_api, monkeypatch):
+        from app.api import product as product_api
+        from shared.enums import ProductAssetUISize, ProductRarity
+        from shared.models.product import Category
+
+        fixed = fixed_product(
+            name="COURAGEPASSPremium",
+            order=1,
+            active=True,
+            mileage=1440,
+            rarity=ProductRarity.LEGENDARY,
+            size=ProductAssetUISize.ONE_BY_TWO,
+            l10n_key="NoShow_Pass",
+            price_list=[],
+            point_shop_grantable=False,
+            apple_sku="a_pkg_couragepasspremium",
+            apple_sku_k="a_pkg_couragepasspremium_2",
+            point_payable_kinds="ANY",
+            discount=0,
+            path="=",
+            gacha_draw_count=1,
+        )
+        cat = Category(
+            id=1, name="NoShow", order=1, active=True, l10n_key="NoShow_X", product_list=[fixed]
+        )
+
+        class Sess:
+            def scalars(self, _stmt):
+                return SimpleNamespace(unique=lambda: SimpleNamespace(fetchall=lambda: [cat]))
+
+        seen = []
+
+        def fake_apply(sess, schema, product, kind, planet_id, memo, avatar_addr=None):
+            seen.append(avatar_addr)
+            return True
+
+        monkeypatch.setattr(product_api, "apply_fixed_pass_listing", fake_apply)
+        monkeypatch.setattr(
+            product_api,
+            "get_purchase_history",
+            lambda *_a, **_kw: {"daily": {}, "weekly": {}, "account": {}},
+        )
+        monkeypatch.setattr(product_api, "attach_voucher_tickets", lambda *_a, **_kw: None)
+        return product_api, Sess(), seen
+
+    def _call(self, product_api, sess, **kw):
+        return product_api.product_list(
+            agent_addr="0xAgent", planet_id="0x000000000000", sess=sess, **kw
+        )
+
+    def test_avatar_addr_를_소문자_0x_로_정규화해_넘긴다(self, route):
+        product_api, sess, seen = route
+        self._call(product_api, sess, avatar_addr="ABCdef")
+        assert seen == ["0xabcdef"]
+
+    def test_avatar_addr_가_없으면_None(self, route):
+        product_api, sess, seen = route
+        self._call(product_api, sess)
+        assert seen == [None]
