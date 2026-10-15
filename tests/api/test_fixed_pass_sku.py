@@ -694,10 +694,12 @@ class TestSeasonLimit:
 
 
 class TestProductListRoute:
-    """`GET /api/product` 가 `avatar_addr` 를 정규화해 고정 행 처리로 넘기는지."""
+    """`GET /api/product` 응답까지 — 실제 apply_fixed_pass_listing·drop_shadowed_pass_rows 를 거친다.
+    시즌 조회·회차 행·구매수 집계만 가짜다."""
 
     @pytest.fixture
     def route(self, purchase_api, monkeypatch):
+        from app import fixed_pass
         from app.api import product as product_api
         from shared.enums import ProductAssetUISize, ProductRarity
         from shared.models.product import Category
@@ -727,32 +729,64 @@ class TestProductListRoute:
             def scalars(self, _stmt):
                 return SimpleNamespace(unique=lambda: SimpleNamespace(fetchall=lambda: [cat]))
 
-        seen = []
+        state = {"granted": 0, "seen": []}
 
-        def fake_apply(sess, schema, product, kind, planet_id, memo, avatar_addr=None):
-            seen.append(avatar_addr)
-            return True
+        def fake_count(sess, product, planet_id, avatar_addr, season_index, component):
+            state["seen"].append(avatar_addr)
+            g = state["granted"]
+            if isinstance(g, Exception):
+                raise g
+            return g
 
-        monkeypatch.setattr(product_api, "apply_fixed_pass_listing", fake_apply)
+        monkeypatch.setattr(
+            fixed_pass, "current_season_for_listing", lambda *_a: purchase_api_window(36)
+        )
+        monkeypatch.setattr(
+            fixed_pass, "find_component_product", lambda *_a: component_row(36)
+        )
+        monkeypatch.setattr(fixed_pass, "count_granted_for_avatar", fake_count)
         monkeypatch.setattr(
             product_api,
             "get_purchase_history",
             lambda *_a, **_kw: {"daily": {}, "weekly": {}, "account": {}},
         )
         monkeypatch.setattr(product_api, "attach_voucher_tickets", lambda *_a, **_kw: None)
-        return product_api, Sess(), seen
 
-    def _call(self, product_api, sess, **kw):
-        return product_api.product_list(
-            agent_addr="0xAgent", planet_id="0x000000000000", sess=sess, **kw
-        )
+        def call(**kw):
+            cats = product_api.product_list(
+                agent_addr="0xAgent", planet_id="0x000000000000", sess=Sess(), **kw
+            )
+            (p,) = [p for c in cats for p in c.product_list]
+            return p
 
-    def test_avatar_addr_를_소문자_0x_로_정규화해_넘긴다(self, route):
-        product_api, sess, seen = route
-        self._call(product_api, sess, avatar_addr="ABCdef")
-        assert seen == ["0xabcdef"]
+        return call, state
 
-    def test_avatar_addr_가_없으면_None(self, route):
-        product_api, sess, seen = route
-        self._call(product_api, sess)
-        assert seen == [None]
+    @pytest.mark.parametrize("granted,buyable,count", [(0, True, 0), (1, False, 1)])
+    def test_아바타가_오면_한도_필드가_응답까지_실린다(self, route, granted, buyable, count):
+        call, state = route
+        state["granted"] = granted
+
+        p = call(avatar_addr="ABCdef")
+
+        # 라우트가 소문자·0x 로 정규화해 넘긴다(영수증 avatar_addr 저장 형식과 같다).
+        assert state["seen"] == ["0xabcdef"]
+        assert p.name == "COURAGEPASS36Premium"
+        assert (p.account_limit, p.purchase_count, p.buyable) == (1, count, buyable)
+
+    def test_아바타가_없으면_한도_필드는_예전_그대로다(self, route):
+        call, state = route
+
+        p = call()
+
+        assert state["seen"] == []
+        assert p.name == "COURAGEPASS36Premium"
+        assert (p.account_limit, p.purchase_count, p.buyable) == (None, 0, True)
+
+    def test_집계가_실패해도_상점은_뜨고_한도_필드는_예전_그대로다(self, route):
+        """표시 전용 조회다 — 실제 한도는 결제 경로가 다시 막는다."""
+        call, state = route
+        state["granted"] = RuntimeError("db down")
+
+        p = call(avatar_addr="0xav")
+
+        assert (p.account_limit, p.purchase_count, p.buyable) == (None, 0, True)

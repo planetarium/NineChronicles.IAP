@@ -276,9 +276,15 @@ def apply_fixed_pass_listing(
         FungibleItemSchema.model_validate(x) for x in component.fungible_item_list
     ]
     if avatar_addr:
-        granted = count_granted_for_avatar(
-            sess, product, planet_id, avatar_addr, window.season_index, component
-        )
+        try:
+            granted = count_granted_for_avatar(
+                sess, product, planet_id, avatar_addr, window.season_index, component
+            )
+        except Exception as e:
+            # 표시 전용이다 — 실제 한도는 결제 경로가 다시 막는다. 이 조회 하나로 상점 전체를
+            #   500 으로 만들지 않고, 한도 필드를 건드리지 않은 채(아바타 없을 때와 같은 응답) 둔다.
+            logger.error(f"[FIXED_PASS_LIMIT_LOOKUP] {kind.token} {avatar_addr} :: {e}")
+            return True
         schema.account_limit = FIXED_PASS_LIMIT_PER_SEASON
         schema.purchase_count = granted
         schema.buyable = granted < FIXED_PASS_LIMIT_PER_SEASON

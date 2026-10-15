@@ -32,11 +32,15 @@ product_id = 회차행)` 이다. 키에 product_id 를 넣어 OR 두 갈래를 I
 
 ## 주의
 
-CONCURRENTLY 라서 테이블을 잠그지 않는다(라이브 결제 흐름 무영향). 대신 실패하면
-INVALID 인덱스가 남을 수 있으니, 실패 시 DROP INDEX 후 재실행한다:
+- CONCURRENTLY 라서 테이블을 잠그지 않는다(라이브 결제 흐름 무영향). 그래도 빌드가 힙을
+  두 번 훑으므로 그동안 버퍼가 밀려 감시 쿼리(invalid-receipt-count 등)가 느려지고 알람이
+  날 수 있다 → **저트래픽 시간대에** 돌리고 그 사이 감시 알람은 감안한다.
+- 실패하면 INVALID 인덱스가 남는다. 그 상태로 재실행하면 IF NOT EXISTS 가 조용히 통과하므로
+  `upgrade()` 가 끝에서 `indisvalid` 를 확인해 거짓이면 실패시킨다. 그때는 DROP 후 재실행:
 
-    SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+      DROP INDEX CONCURRENTLY IF EXISTS ix_receipt_avatar_valid;
 """
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -55,6 +59,20 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_receipt_avatar_valid
 def upgrade() -> None:
     with op.get_context().autocommit_block():
         op.execute(AVATAR_VALID_INDEX)
+    valid = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT indisvalid FROM pg_index "
+                "WHERE indexrelid = 'ix_receipt_avatar_valid'::regclass"
+            )
+        )
+        .scalar()
+    )
+    if not valid:
+        raise RuntimeError(
+            "ix_receipt_avatar_valid 가 INVALID 다 — DROP INDEX CONCURRENTLY 후 다시 실행할 것"
+        )
 
 
 def downgrade() -> None:
