@@ -23,7 +23,6 @@ class Settings(BaseSettings):
 
     stage: str = "development"
 
-    iap_garage_webhook_url: Optional[str] = None
     iap_alert_webhook_url: Optional[str] = None
     iap_sales_webhook_url: Optional[str] = None
 

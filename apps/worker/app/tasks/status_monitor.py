@@ -3,10 +3,8 @@ from typing import Dict, List
 
 import requests
 import structlog
-from shared._graphql import GQL
-from shared.enums import PlanetID, ReceiptStatus, TxStatus
+from shared.enums import ReceiptStatus, TxStatus
 from shared.models.receipt import Receipt
-from shared.utils.balance import BALANCE_QUERY
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -239,33 +237,6 @@ def check_no_tx(sess):
     )
 
 
-def check_token_balance(planet: PlanetID):
-    """Report IAP Garage stock"""
-    url = config.converted_gql_url_map[planet]
-    gql = GQL(url, jwt_secret=config.headless_jwt_secret)
-
-    resp = requests.post(
-        url,
-        json={"query": BALANCE_QUERY},
-        headers={"Authorization": f"Bearer {gql.create_token()}"},
-    )
-    data = resp.json()["data"]["stateQuery"]
-
-    msg = []
-    for name, balance in data.items():
-        msg.append(
-            create_block(
-                f"*{name}* (`{balance['currency']['ticker']}`) : {int(balance['quantity']):,}"
-            )
-        )
-
-    send_message(
-        config.iap_garage_webhook_url,
-        f"[NineChronicles.IAP] Daily Token Report :: {' '.join([x.capitalize() for x in planet.name.split('_')])}",
-        msg,
-    )
-
-
 @app.task(
     name="iap.status_monitor",
     bind=True,
@@ -280,14 +251,7 @@ def status_monitor(self):
 
     try:
         if is_daily_slot(datetime.now(tz=timezone.utc)):
-            # ⚠️ GQL 루프보다 **먼저** 부른다. check_token_balance 는 timeout 없는
-            #   requests.post 라, 한 번 흔들리면 예외가 올라가 이 회차가 통째로 날아간다.
             report_stale_halt_tx(sess)
-            for planet_id in config.converted_gql_url_map.keys():
-                # Token balance report should exclude Thor network.
-                if planet_id in (PlanetID.THOR, PlanetID.THOR_INTERNAL):
-                    continue
-                check_token_balance(planet_id)
 
         check_halt_tx(sess)
         # check_tx_failure(sess)

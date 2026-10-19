@@ -29,8 +29,7 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("WORKER_KMS_KEY_ID", "test-dummy-key")
-for _leaky in ("WORKER_IAP_ALERT_WEBHOOK_URL", "WORKER_IAP_GARAGE_WEBHOOK_URL"):
-    os.environ[_leaky] = ""
+os.environ["WORKER_IAP_ALERT_WEBHOOK_URL"] = ""
 
 _repo_shared = Path(__file__).resolve().parents[2] / "shared"
 
