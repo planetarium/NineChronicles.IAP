@@ -140,6 +140,13 @@ def is_season_pass_receipt(sess, receipt) -> bool:
     return product is not None and is_season_pass_product(product)
 
 
+def enroll_order_by(cutoff):
+    """enroll 정렬. 컷오프가 있으면 (created_at, id) — 이유는 grant_vouchers 의 (A) 주석."""
+    if cutoff is not None:
+        return (Receipt.created_at, Receipt.id)
+    return (Receipt.id,)
+
+
 def grantable_tx_condition():
     """
     발급 대상 영수증의 tx 조건 — enroll·dispatch 가 같은 규칙을 보도록 한 곳에 둔다.
@@ -373,6 +380,7 @@ def grant_vouchers(self):
         # (A) enroll — 적격 영수증(실스토어) 중 아웃박스 없는 건을 PENDING으로.
         #   ⚠️ 스토어 필터를 SQL에 둠: skip 대상(REDEEM 등)을 Python에서 거르면 아웃박스가 안 생겨
         #      매 회차 재조회되어 limit 윈도우를 침전·starve시킨다(리뷰 지적).
+        product_ids = list(sess.execute(grantable_product_ids()).scalars().all())
         conditions = [
             Receipt.status == ReceiptStatus.VALID,
             # tx 조건은 grantable_tx_condition() 한 곳에 둔다(근거는 그 docstring).
@@ -382,15 +390,28 @@ def grant_vouchers(self):
             Receipt.store.in_(grantable),
             # 바우처 발급 대상 상품만(active 매핑 + 결제 상품) — 미대상 상품이 윈도우 침전하지 않게.
             #   (C6) 상품유형 조건은 grantable_product_ids() 한 곳에 둔다(dispatch 와 동일 조건).
-            Receipt.product_id.in_(grantable_product_ids()),
+            # 서브쿼리 IN 이 아니라 리터럴 목록으로 넘긴다 — 서브쿼리면 semi-join 으로 끌어올려져
+            #   ix_receipt_valid_created_product 의 두 번째 키(product_id)가 Index Cond 가 되지 못하고
+            #   컷오프 이후 VALID 영수증을 전부 힙에서 읽는다(메인넷 ~10만 행, 매달 증가).
+            #   리터럴이면 인덱스 단계에서 대상 상품만 남아 힙은 후보 몇백 건만 읽는다.
+            Receipt.product_id.in_(product_ids),
             Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
         ]
         # 타임스탬프 컷오프(설정 시): 이 시각(created_at) 이후 결제만 대상 — 과거 소급 방지.
+        #   ⚠️ 정렬도 created_at 으로 한다. `ORDER BY id LIMIT` 이면 플래너가 PK 를 1번부터 훑으며
+        #      조건을 거르는데, 대상이 없으면(평시: 적격분이 이미 전부 아웃박스에 있음) 끝까지 간다 —
+        #      메인넷 receipt 힙 1.4GB 를 2분마다 통째로 읽어 공유 PG(shared_buffers 128MB)의 캐시를
+        #      밀어내고 포탈·펫팝이 P1001/P2024 를 냈다(2026-10-22). id 정렬을 버리면 PK 경로를 쓸
+        #      이유가 없어져 ix_receipt_valid_created_product(created_at≥컷오프 범위 + product_id 목록)를
+        #      탄다. 인덱스 키 순서와 정렬이 달라 결과에 Sort 가 붙지만 후보가 몇백 건이라 무시할 만하다.
         if config.voucher_grant_cutoff is not None:
             conditions.append(Receipt.created_at >= config.voucher_grant_cutoff)
         eligible = (
             sess.execute(
-                select(Receipt).where(*conditions).order_by(Receipt.id).limit(ENROLL_BATCH)
+                select(Receipt)
+                .where(*conditions)
+                .order_by(*enroll_order_by(config.voucher_grant_cutoff))
+                .limit(ENROLL_BATCH)
             )
             .scalars()
             .all()
