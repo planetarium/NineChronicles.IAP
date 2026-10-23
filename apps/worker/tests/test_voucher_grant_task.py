@@ -415,3 +415,16 @@ class TestRetryerSharesSeasonPassToken:
         assert ":season_pass_pattern" in src, "바인드 파라미터를 써야 한다"
         assert "NOT LIKE '%pass%'" not in src, "하드코딩 사본이 남았다"
         assert SEASON_PASS_SKU_TOKEN == "pass"
+
+
+class TestEnrollOrderBy:
+    """컷오프가 있으면 created_at 정렬 — `ORDER BY id LIMIT` 은 PK 를 1번부터 훑어 0건일 때 receipt 전체를 읽는다."""
+
+    def test_cutoff_orders_by_created_at_then_id(self):
+        import datetime
+
+        cols = [c.key for c in vg.enroll_order_by(datetime.datetime(2026, 9, 1))]
+        assert cols == ["created_at", "id"]
+
+    def test_no_cutoff_keeps_id_order(self):
+        assert [c.key for c in vg.enroll_order_by(None)] == ["id"]

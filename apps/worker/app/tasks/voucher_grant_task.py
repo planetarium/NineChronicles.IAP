@@ -140,6 +140,13 @@ def is_season_pass_receipt(sess, receipt) -> bool:
     return product is not None and is_season_pass_product(product)
 
 
+def enroll_order_by(cutoff):
+    """enroll 정렬. 컷오프가 있으면 (created_at, id) — 이유는 grant_vouchers 의 (A) 주석."""
+    if cutoff is not None:
+        return (Receipt.created_at, Receipt.id)
+    return (Receipt.id,)
+
+
 def grantable_tx_condition():
     """
     발급 대상 영수증의 tx 조건 — enroll·dispatch 가 같은 규칙을 보도록 한 곳에 둔다.
@@ -386,11 +393,19 @@ def grant_vouchers(self):
             Receipt.id.notin_(select(VoucherGrantOutbox.receipt_id)),
         ]
         # 타임스탬프 컷오프(설정 시): 이 시각(created_at) 이후 결제만 대상 — 과거 소급 방지.
+        #   ⚠️ 정렬도 created_at 으로 한다. `ORDER BY id LIMIT` 이면 플래너가 PK 를 1번부터 훑으며
+        #      조건을 거르는데, 대상이 없으면(평시: 적격분이 이미 전부 아웃박스에 있음) 끝까지 간다 —
+        #      메인넷 receipt 힙 1.4GB 를 2분마다 통째로 읽어 공유 PG(shared_buffers 128MB)의 캐시를
+        #      밀어내고 포탈·펫팝이 P1001/P2024 를 냈다(2026-10-22). created_at 정렬이면
+        #      ix_receipt_valid_created_product 로 컷오프 이후 구간만 읽는다(id 는 동률 정렬용).
         if config.voucher_grant_cutoff is not None:
             conditions.append(Receipt.created_at >= config.voucher_grant_cutoff)
         eligible = (
             sess.execute(
-                select(Receipt).where(*conditions).order_by(Receipt.id).limit(ENROLL_BATCH)
+                select(Receipt)
+                .where(*conditions)
+                .order_by(*enroll_order_by(config.voucher_grant_cutoff))
+                .limit(ENROLL_BATCH)
             )
             .scalars()
             .all()
