@@ -8,8 +8,9 @@ Create Date: 2026-10-23 10:00:00.000000
 
     cd apps/shared && alembic upgrade head
 
-**워커 이미지보다 먼저** 적용한다. 순서가 뒤집혀도 오류는 없지만, 인덱스가 없으면 새 정렬
-(`ORDER BY created_at, id`)이 컷오프 이후 구간을 순차로 읽는다(예전 PK 전체 스캔보다는 적다).
+**반드시 워커 이미지보다 먼저** 적용한다. 인덱스 없이 새 이미지가 뜨면 쓸 created_at 인덱스가
+없어(기존 created_at 인덱스는 전부 이 쿼리가 함의하지 못하는 부분 인덱스) receipt 순차 스캔 +
+정렬이 된다 — 예전과 비슷하게 나쁘다.
 
 바우처 enroll(`grant_vouchers`, beat 2분마다)이 `status='VALID' AND created_at >= 컷오프 AND
 product_id IN (발급 대상 상품) ... ORDER BY id LIMIT 500` 이었다. 평시에는 적격 영수증이 전부
@@ -20,8 +21,8 @@ iap_db 디스크 읽기 ~5,000 blk/s). PG 10 shared_buffers 128MB 를 같이 쓰
 
     status = 'VALID' 부분 인덱스 (created_at, product_id)
 
-코드가 정렬을 `(created_at, id)` 로 바꿔 이 인덱스로 컷오프 이후 구간만 읽는다. product_id 를
-키에 넣어 대상 상품 필터를 인덱스 안에서 끝내므로 힙은 적격 후보만 읽는다.
+코드가 정렬을 `(created_at, id)` 로 바꾸고 대상 상품을 리터럴 목록(`product_id IN (…)`)으로 넘겨,
+이 인덱스의 created_at 범위 + product_id 조건으로 거른 적격 후보만 힙에서 읽는다.
 
 - CONCURRENTLY 라서 테이블을 잠그지 않는다. 빌드가 힙을 두 번 훑으므로 **저트래픽 시간대에**.
 - 실패하면 INVALID 인덱스가 남는다 → `upgrade()` 끝에서 `indisvalid` 를 확인한다. 거짓이면:
