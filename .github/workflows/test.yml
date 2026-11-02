@@ -1,0 +1,48 @@
+name: Test
+# Unit tests on every PR and on main — until now CI only built images and tests ran only locally.
+# The repo-root tests/ (legacy, partly stale: removed web_payment_* settings, old import paths,
+# DB-bound cases) are not wired yet.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Tests mock AWS/KMS; dummy credentials make sure an unmocked call fails instead of reaching AWS.
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_DEFAULT_REGION: us-east-2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, shared, worker]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: snok/install-poetry@v1
+        with:
+          version: 1.8.4
+          virtualenvs-in-project: true
+      - uses: actions/cache@v4
+        with:
+          path: apps/${{ matrix.app }}/.venv
+          key: ${{ matrix.app }}-venv-${{ runner.os }}-${{ hashFiles(format('apps/{0}/poetry.lock', matrix.app), 'apps/shared/**/*.py', 'apps/shared/pyproject.toml') }}
+      - run: poetry install --no-interaction
+      # `python -m pytest` so the app directory is on sys.path (see apps/api/tests/conftest.py)
+      - name: pytest
+        run: poetry run python -m pytest tests -q

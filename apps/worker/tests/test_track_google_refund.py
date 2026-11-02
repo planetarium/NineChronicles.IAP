@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from app.config import config
+from shared.enums import PackageName
 from app.tasks.track_google_refund import (
     RefundData,
     VoidReason,
@@ -23,7 +24,7 @@ class TestVoidReason:
         assert VoidReason.Fraud == 5
         assert VoidReason.Friendly_fraud == 6
         assert VoidReason.Chargeback == 7
-        assert VoidReason.what == 8
+        assert VoidReason.Unacknowledged_purchase == 8
 
 
 class TestVoidSource:
@@ -109,6 +110,12 @@ class TestSendSlackAlert:
 
 
 class TestHandle:
+    @pytest.fixture(autouse=True)
+    def no_revoke_queue(self):
+        # handle() finishes by queueing voucher revokes (PLD-1470) in the DB — not part of these tests
+        with patch("app.tasks.track_google_refund.enqueue_revoke_by_order_ids", return_value=0) as q:
+            self.enqueue = q
+            yield
     @patch("app.tasks.track_google_refund.get_google_client")
     @patch("app.tasks.track_google_refund.config")
     @patch("app.tasks.track_google_refund.send_slack_alert")
@@ -117,8 +124,8 @@ class TestHandle:
         self, mock_datetime, mock_send_alert, mock_config, mock_get_client
     ):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
-            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
+            PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
+            PackageName.NINE_CHRONICLES_WEB: "com.planetariumlabs.ninechroniclesweb",
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -140,22 +147,31 @@ class TestHandle:
             ]
         }
 
-        mock_client.purchases.return_value.voidedpurchases.return_value.list.return_value.execute.return_value = mock_voided_list
+        # only the mobile package has a refund
+        def voided_for(packageName, **kwargs):
+            result = mock_voided_list if packageName.endswith("mobile") else {"voidedPurchases": []}
+            return Mock(execute=Mock(return_value=result))
+
+        mock_client.purchases.return_value.voidedpurchases.return_value.list.side_effect = voided_for
         mock_get_client.return_value = mock_client
 
         with patch("app.tasks.track_google_refund.logger") as mock_logger:
             handle(None, None)
 
             mock_send_alert.assert_called_once()
+            alert = mock_send_alert.call_args.args[0]
+            assert "com.planetariumlabs.ninechroniclesmobile" in alert
+            assert "order_123" in alert and "Remorse" in alert
             mock_logger.info.assert_called()
+        self.enqueue.assert_called_once_with(["order_123"])  # refunded order queued for voucher revoke
 
     @patch("app.tasks.track_google_refund.get_google_client")
     @patch("app.tasks.track_google_refund.config")
     @patch("app.tasks.track_google_refund.datetime")
     def test_handle_no_refunds(self, mock_datetime, mock_config, mock_get_client):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
-            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
+            PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
+            PackageName.NINE_CHRONICLES_WEB: "com.planetariumlabs.ninechroniclesweb",
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -171,8 +187,8 @@ class TestHandle:
         with patch("app.tasks.track_google_refund.logger") as mock_logger:
             handle(None, None)
 
-            mock_logger.info.assert_called_with(
-                "NINE_CHRONICLES_M 패키지에서 최근 1시간 내 환불 건이 없습니다."
+            mock_logger.info.assert_any_call(
+                "com.planetariumlabs.ninechroniclesmobile 패키지에서 최근 1시간 내 환불 건이 없습니다."
             )
 
     @patch("app.tasks.track_google_refund.get_google_client")
@@ -180,8 +196,8 @@ class TestHandle:
     @patch("app.tasks.track_google_refund.datetime")
     def test_handle_api_parameters(self, mock_datetime, mock_config, mock_get_client):
         mock_config.google_package_dict = {
-            "NINE_CHRONICLES_M": "com.planetariumlabs.ninechroniclesmobile",
-            "NINE_CHRONICLES_WEB": "com.planetariumlabs.ninechroniclesweb"
+            PackageName.NINE_CHRONICLES_M: "com.planetariumlabs.ninechroniclesmobile",
+            PackageName.NINE_CHRONICLES_WEB: "com.planetariumlabs.ninechroniclesweb",
         }
 
         current_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -207,8 +223,8 @@ class TestHandle:
         )
         expected_end_time = str(int(current_time.timestamp() * 1000))
 
-        mock_voidedpurchases.list.assert_called_once_with(
-            packageName="com.planetariumlabs.ninechroniclesmobile",
-            startTime=expected_start_time,
-            endTime=expected_end_time,
-        )
+        # one query per configured package, all over the last hour
+        assert [c.kwargs for c in mock_voidedpurchases.list.call_args_list] == [
+            {"packageName": pkg, "startTime": expected_start_time, "endTime": expected_end_time}
+            for pkg in ("com.planetariumlabs.ninechroniclesmobile", "com.planetariumlabs.ninechroniclesweb")
+        ]
