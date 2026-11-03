@@ -38,7 +38,7 @@ class TestWebPaymentErrorCases:
         # get_order_data에서 orderId가 None이 되는지 확인
         order_id, product_id, purchased_at = get_order_data(receipt_data)
         assert order_id is None
-        assert product_id == "web_product_456"
+        assert product_id == 1
 
     def test_web_payment_missing_product_data(self):
         """웹 결제에서 상품 데이터 누락 처리"""
@@ -68,7 +68,7 @@ class TestWebPaymentErrorCases:
         # get_order_data에서 현재 시간으로 fallback되는지 확인
         order_id, product_id, purchased_at = get_order_data(receipt_data)
         assert order_id == "web_order_123"
-        assert product_id == "web_product_456"
+        assert product_id == 1
         assert purchased_at is not None  # 현재 시간으로 설정됨
 
     def test_web_payment_negative_purchase_time(self):
@@ -84,7 +84,7 @@ class TestWebPaymentErrorCases:
         # 음수 시간도 처리되는지 확인 (datetime.fromtimestamp는 음수도 처리함)
         order_id, product_id, purchased_at = get_order_data(receipt_data)
         assert order_id == "web_order_123"
-        assert product_id == "web_product_456"
+        assert product_id == 1
         assert purchased_at is not None
 
     def test_web_payment_very_large_purchase_time(self):

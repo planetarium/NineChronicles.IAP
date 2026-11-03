@@ -9,7 +9,7 @@ def validate_web(
     stripe_secret_key: str,
     stripe_api_version: str,
     payment_intent_id: str,
-    expected_product_id: str,
+    expected_product_id: int,
     expected_amount_cents: int,
     db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:
@@ -81,7 +81,7 @@ def validate_web_test(
     stripe_secret_key: str,
     stripe_api_version: str,
     payment_intent_id: str,
-    expected_product_id: str,
+    expected_product_id: int,
     expected_amount_cents: int,
     db_product
 ) -> Tuple[bool, str, Optional[WebPurchaseSchema]]:

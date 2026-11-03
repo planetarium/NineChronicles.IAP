@@ -115,7 +115,7 @@ class TestWebPaymentIntegration:
 
         # 데이터 타입 확인
         assert isinstance(data["orderId"], str)
-        assert isinstance(data["productId"], str)
+        assert isinstance(data["productId"], int)
         assert isinstance(data["purchaseTime"], int)
         assert isinstance(data["amount"], (int, float))
         assert isinstance(data["currency"], str)

@@ -1,32 +1,11 @@
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from shared.models.base import Base
 from shared.models.product import Product, Price
-from shared.enums import Store, ProductType
+from shared.enums import Store, ProductType, ProductAssetUISize, PlanetID
 from shared.schemas.receipt import ReceiptSchema
 from shared.validator.common import get_order_data
 
-# 테스트용 데이터베이스 설정 (PostgreSQL 사용)
-SQLALCHEMY_DATABASE_URL = "postgresql://test_user:test_pass@localhost:5432/test_db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-@pytest.fixture(scope="function")
-def db_session():
-    """테스트용 데이터베이스 세션 픽스처"""
-    # 테이블 생성
-    Base.metadata.create_all(bind=engine)
-
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        # 테이블 삭제
-        Base.metadata.drop_all(bind=engine)
+# DB 는 tests/conftest.py 의 db_session(Postgres, 테스트마다 롤백). TEST_DB_URI 가 없으면 건너뛴다.
 
 @pytest.fixture
 def test_product(db_session):
@@ -38,7 +17,11 @@ def test_product(db_session):
         apple_sku="test_apple_sku",
         apple_sku_k="test_apple_sku_k",
         product_type=ProductType.IAP,
-        active=True
+        active=True,
+        # 지금 스키마의 필수 컬럼(에셋 정보)
+        size=ProductAssetUISize.ONE_BY_ONE,
+        path="test/web_product.png",
+        l10n_key="TEST_WEB_PRODUCT",
     )
     db_session.add(product)
     db_session.flush()  # ID를 얻기 위해 flush
@@ -106,7 +89,7 @@ class TestWebPaymentSimpleDatabase:
         assert receipt_schema.avatarAddress == "0xabcdef1234567890abcdef1234567890abcdef12"
         assert receipt_schema.data["orderId"] == "pi_test123"
         assert receipt_schema.data["productId"] == test_product.id
-        assert receipt_schema.planetId == "0x000000000001"
+        assert receipt_schema.planetId == PlanetID.HEIMDALL
 
     def test_web_payment_get_order_data(self, test_product):
         """웹 결제에서 get_order_data 함수 테스트"""

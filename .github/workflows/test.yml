@@ -1,7 +1,7 @@
 name: Test
 # Unit tests on every PR and on main — until now CI only built images and tests ran only locally.
-# The repo-root tests/ (legacy, partly stale: removed web_payment_* settings, old import paths,
-# DB-bound cases) are not wired yet.
+# `test` runs each app's own tests/; `root-tests` runs the repo-root tests/ (cross-app, some DB-bound)
+# against a throwaway Postgres migrated to alembic head.
 
 on:
   pull_request:
@@ -46,3 +46,40 @@ jobs:
       # `python -m pytest` so the app directory is on sys.path (see apps/api/tests/conftest.py)
       - name: pytest
         run: poetry run python -m pytest tests -q
+
+  root-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: iap_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # tests/conftest.py migrates this DB to head; each test runs in a rolled-back transaction
+      TEST_DB_URI: postgresql://postgres:postgres@localhost:5432/iap_test
+      # root tests import both `app.*` (api) and `shared.*`; the repo root makes `apps.*` importable
+      PYTHONPATH: apps/api:apps/shared
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: snok/install-poetry@v1
+        with:
+          version: 1.8.4
+          virtualenvs-in-project: true
+      - uses: actions/cache@v4
+        with:
+          path: apps/api/.venv
+          key: api-venv-${{ runner.os }}-${{ hashFiles('apps/api/poetry.lock', 'apps/shared/**/*.py', 'apps/shared/pyproject.toml') }}
+      # the api env covers the root tests' imports (api, shared, worker config, alembic)
+      - run: poetry install --no-interaction
+        working-directory: apps/api
+      - name: pytest
+        run: apps/api/.venv/bin/python -m pytest tests -q
