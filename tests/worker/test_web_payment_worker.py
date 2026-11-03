@@ -5,6 +5,9 @@ import pytest
 from shared.enums import PackageName, Store, ReceiptStatus
 from shared.models.receipt import Receipt
 from shared.models.product import Product
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestWebPaymentWorker:
@@ -37,7 +40,7 @@ class TestWebPaymentWorker:
         """Worker 설정에서 웹 패키지명이 포함되어 있는지 테스트"""
         # 설정 파일을 직접 읽어서 테스트
         import os
-        config_path = "/Users/yang/projects/iap/apps/worker/app/config.py"
+        config_path = str(REPO_ROOT / "apps/worker/app/config.py")
         with open(config_path, 'r') as f:
             config_content = f.read()
 
@@ -134,7 +137,7 @@ class TestWebPaymentWorker:
     def test_web_payment_worker_config_validation(self):
         """웹 결제 Worker 설정 검증 테스트"""
         # 설정 파일을 직접 읽어서 테스트
-        config_path = "/Users/yang/projects/iap/apps/worker/app/config.py"
+        config_path = str(REPO_ROOT / "apps/worker/app/config.py")
         with open(config_path, 'r') as f:
             config_content = f.read()
 

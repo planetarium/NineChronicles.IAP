@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta, date
 from unittest.mock import Mock, patch
 from sqlalchemy import Date, cast, func
 
-from shared.enums import PlanetID
+from shared.enums import PackageName, PlanetID, ProductAssetUISize, Store
 from shared.models.receipt import Receipt
 
 
@@ -404,9 +404,14 @@ def test_get_purchase_count_early_morning_purchase_bug(session):
     product = Product(
         name="Test Product",
         google_sku="test_sku",
+        apple_sku="test_apple_sku",
+        apple_sku_k="test_apple_sku_k",  # NOT NULL in the migrated schema
         product_type=ProductType.IAP,
         active=True,
         daily_limit=1,
+        size=ProductAssetUISize.ONE_BY_ONE,
+        path="test/product.png",
+        l10n_key="TEST_PRODUCT",
     )
     session.add(product)
     session.commit()
@@ -427,6 +432,10 @@ def test_get_purchase_count_early_morning_purchase_bug(session):
     assert receipt_daily_limit == date(2025, 12, 3)  # Should be yesterday (before 09:00)
 
     receipt = Receipt(
+        store=Store.GOOGLE,
+        order_id="GPA.test-early-morning",
+        package_name=PackageName.NINE_CHRONICLES_M.value,
+        data={},
         product_id=product.id,
         planet_id=PlanetID.ODIN,
         agent_addr="0x1234567890abcdef",

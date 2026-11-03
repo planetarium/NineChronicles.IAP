@@ -13,9 +13,16 @@ class TestRedeemCode:
     """Redeem Code 사용 처리 API 테스트"""
 
     @pytest.fixture
-    def client(self):
-        """FastAPI TestClient 생성"""
-        return TestClient(app)
+    def client(self, db_session):
+        """FastAPI TestClient — 앱의 DB 세션을 테스트 DB(tests/conftest.py db_session, 롤백)로 바꿔 끼운다.
+        상품을 넣지 않은 테스트는 외부 API 성공 뒤 404 "Product not found" 경로를 탄다."""
+        from app.dependencies import session as app_session  # main 이 쓰는 그 의존성(apps/api 가 sys.path 에 있다)
+
+        app.dependency_overrides[app_session] = lambda: db_session
+        try:
+            yield TestClient(app)
+        finally:
+            app.dependency_overrides.pop(app_session, None)
 
     @pytest.fixture
     def valid_jwt_token(self):
@@ -75,17 +82,36 @@ class TestRedeemCode:
         }
 
     def test_redeem_code_success(
-        self, client, valid_jwt_token, redeem_request_data, success_response_data
+        self, client, db_session, valid_jwt_token, redeem_request_data, success_response_data
     ):
-        """성공 케이스 테스트 - 외부 API 호출 검증"""
-        with patch("apps.api.app.api.redeem.requests.post") as mock_post:
+        """성공 케이스 — 외부 API 호출, Receipt(VALID) 생성, 워커 전송까지"""
+        from sqlalchemy import select
+        from shared.enums import ProductAssetUISize, ProductType, ReceiptStatus, Store
+        from shared.models.product import Product
+        from shared.models.receipt import Receipt
+
+        product = Product(
+            name="Redeem Starter",
+            google_sku=success_response_data["product_code"],
+            apple_sku="redeem_apple_sku",
+            apple_sku_k="redeem_apple_sku_k",
+            product_type=ProductType.IAP,
+            active=True,
+            size=ProductAssetUISize.ONE_BY_ONE,
+            path="test/redeem.png",
+            l10n_key="TEST_REDEEM",
+        )
+        db_session.add(product)
+        db_session.commit()
+
+        with patch("apps.api.app.api.redeem.requests.post") as mock_post, \
+                patch("app.api.redeem.send_to_worker", return_value="task-1") as mock_send:
             # Mock 응답 설정
             mock_response = Mock()
             mock_response.status_code = 201
             mock_response.json.return_value = success_response_data
             mock_post.return_value = mock_response
 
-            # API 호출 (Product를 찾지 못하면 404가 반환되지만, 외부 API 호출은 검증 가능)
             response = client.post(
                 "/api/redeem-codes/redeem",
                 json=redeem_request_data,
@@ -105,17 +131,18 @@ class TestRedeemCode:
             assert call_args[1]["json"]["code"] == redeem_request_data["code"]
             assert call_args[1]["json"]["target_user_id"] == redeem_request_data["target_user_id"]
 
-            # Product를 찾지 못한 경우 404 반환 (정상적인 동작)
-            # 실제 환경에서는 Product가 DB에 있어야 함
-            if response.status_code == 404:
-                assert "Product not found" in response.json()["detail"]
-            else:
-                # Product를 찾은 경우 (실제 DB에 Product가 있는 경우)
-                assert response.status_code == 200
-                data = response.json()
-                assert data["success"] is True
-                assert data["code"] == success_response_data["code"]
-                assert data["product_code"] == success_response_data["product_code"]
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["success"] is True
+            assert data["code"] == success_response_data["code"]
+            assert data["product_code"] == success_response_data["product_code"]
+
+            receipt = db_session.scalar(select(Receipt).where(Receipt.product_id == product.id))
+            assert receipt is not None
+            assert (receipt.store, receipt.status) == (Store.REDEEM, ReceiptStatus.VALID)
+            assert receipt.order_id.startswith(f"REDEEM-{redeem_request_data['code']}-")
+            assert receipt.avatar_addr == redeem_request_data["avatar_address"].lower()
+            mock_send.assert_called_once_with("iap.send_product", {"uuid": str(receipt.uuid)})
 
     def test_redeem_code_no_token(self, client, redeem_request_data):
         """JWT 토큰 없음 테스트 - 인증이 제거되어 항상 외부 API 호출 시도"""

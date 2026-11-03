@@ -1,144 +1,64 @@
+"""WebPurchaseSchema — a Stripe payment_intent as the web store sees it.
+
+productId comes from the intent metadata (int), amount is in cents (int).
+"""
 from datetime import datetime, timezone
+
 import pytest
 
 from shared.schemas.receipt import WebPurchaseSchema
 
+WHEN = datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
-class TestWebPurchaseSchema:
-    def test_web_purchase_schema_creation(self):
-        purchase = WebPurchaseSchema(
-            orderId="web_order_123",
-            productId="web_product_456",
-            purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            amount=9.99,
-            currency="USD",
-            status="completed",
-            paymentMethod="credit_card",
-            transactionId="tx_123456",
-            customerId="customer_789"
-        )
 
-        assert purchase.orderId == "web_order_123"
-        assert purchase.productId == "web_product_456"
-        assert purchase.purchaseDate == datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        assert purchase.amount == 9.99
-        assert purchase.currency == "USD"
-        assert purchase.status == "completed"
-        assert purchase.paymentMethod == "credit_card"
-        assert purchase.transactionId == "tx_123456"
-        assert purchase.customerId == "customer_789"
+def purchase(**kw):
+    data = dict(orderId="pi_test123", productId=320, purchaseDate=WHEN, amount=1299, currency="usd", status="succeeded")
+    data.update(kw)
+    return WebPurchaseSchema(**data)
 
-    def test_web_purchase_schema_minimal_data(self):
-        purchase = WebPurchaseSchema(
-            orderId="web_order_123",
-            productId="web_product_456",
-            purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            amount=9.99,
-            currency="USD",
-            status="completed",
-            paymentMethod="credit_card"
-        )
 
-        assert purchase.orderId == "web_order_123"
-        assert purchase.productId == "web_product_456"
-        assert purchase.amount == 9.99
-        assert purchase.currency == "USD"
-        assert purchase.status == "completed"
-        assert purchase.paymentMethod == "credit_card"
-        assert purchase.transactionId is None
-        assert purchase.customerId is None
+def test_creation_with_all_fields():
+    p = purchase(paymentMethod="pm_123", metadata={"productId": "320", "avatarAddress": "0x1234"}, livemode=True)
+    assert (p.orderId, p.productId, p.purchaseDate, p.amount, p.currency, p.status) == (
+        "pi_test123", 320, WHEN, 1299, "usd", "succeeded")
+    assert p.paymentMethod == "pm_123"
+    assert p.metadata["avatarAddress"] == "0x1234"
+    assert p.livemode is True
 
-    def test_web_purchase_schema_json_data(self):
-        purchase = WebPurchaseSchema(
-            orderId="web_order_123",
-            productId="web_product_456",
-            purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-            amount=9.99,
-            currency="USD",
-            status="completed",
-            paymentMethod="credit_card",
-            transactionId="tx_123456",
-            customerId="customer_789"
-        )
 
-        json_data = purchase.json_data
+def test_defaults():
+    p = purchase()
+    assert (p.paymentMethod, p.metadata, p.livemode) == (None, {}, False)
 
-        assert json_data["orderId"] == "web_order_123"
-        assert json_data["productId"] == "web_product_456"
-        assert json_data["purchaseDate"] == 1640995200.0  # timestamp
-        assert json_data["amount"] == 9.99
-        assert json_data["currency"] == "USD"
-        assert json_data["status"] == "completed"
-        assert json_data["paymentMethod"] == "credit_card"
-        assert json_data["transactionId"] == "tx_123456"
-        assert json_data["customerId"] == "customer_789"
 
-    def test_web_purchase_schema_validation(self):
-        # Test with invalid data types
-        with pytest.raises(ValueError):
-            WebPurchaseSchema(
-                orderId="web_order_123",
-                productId="web_product_456",
-                purchaseDate="invalid_date",  # Should be datetime
-                amount=9.99,
-                currency="USD",
-                status="completed",
-                paymentMethod="credit_card"
-            )
+def test_numeric_strings_are_coerced():
+    p = purchase(productId="320", amount="1299")   # Stripe metadata values are strings
+    assert (p.productId, p.amount) == (320, 1299)
 
-        with pytest.raises(ValueError):
-            WebPurchaseSchema(
-                orderId="web_order_123",
-                productId="web_product_456",
-                purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                amount="invalid_amount",  # Should be float
-                currency="USD",
-                status="completed",
-                paymentMethod="credit_card"
-            )
 
-    def test_web_purchase_schema_required_fields(self):
-        # Test missing required fields
-        with pytest.raises(ValueError):
-            WebPurchaseSchema(
-                # Missing orderId
-                productId="web_product_456",
-                purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                amount=9.99,
-                currency="USD",
-                status="completed",
-                paymentMethod="credit_card"
-            )
+def test_json_data_uses_timestamp():
+    data = purchase().json_data
+    assert data["purchaseDate"] == 1640995200.0
+    assert (data["orderId"], data["productId"], data["amount"]) == ("pi_test123", 320, 1299)
 
-    def test_web_purchase_schema_with_metadata(self):
-        """Stripe metadata 포함 테스트"""
-        purchase = WebPurchaseSchema(
-            orderId="pi_test123",
-            productId="320",
-            purchaseDate=datetime.now(timezone.utc),
-            amount=1299,
-            currency="usd",
-            status="succeeded",
-            paymentMethod="pm_123",
-            metadata={
-                "productId": "320",
-                "userId": "user123",
-                "avatarAddress": "0x1234"
-            },
-            livemode=False
-        )
 
-        assert purchase.metadata["productId"] == "320"
-        assert purchase.livemode is False
-        assert purchase.amount == 1299
+@pytest.mark.parametrize(
+    "bad",
+    [
+        dict(purchaseDate="invalid_date"),
+        dict(amount=9.99),                 # cents only — a float price is a caller bug
+        dict(amount="invalid_amount"),
+        dict(productId="web_product_456"),  # must be the numeric product id
+    ],
+)
+def test_invalid_values_are_rejected(bad):
+    with pytest.raises(ValueError):
+        purchase(**bad)
 
-        with pytest.raises(ValueError):
-            WebPurchaseSchema(
-                orderId="web_order_123",
-                # Missing productId
-                purchaseDate=datetime(2022, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                amount=9.99,
-                currency="USD",
-                status="completed",
-                paymentMethod="credit_card"
-            )
+
+@pytest.mark.parametrize("missing", ["orderId", "productId", "purchaseDate", "amount", "currency", "status"])
+def test_required_fields(missing):
+    data = dict(orderId="pi_test123", productId=320, purchaseDate=WHEN, amount=1299, currency="usd", status="succeeded")
+    data.pop(missing)
+    with pytest.raises(ValueError):
+        WebPurchaseSchema(**data)

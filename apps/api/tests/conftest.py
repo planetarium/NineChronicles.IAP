@@ -23,7 +23,7 @@ API 테스트 부트스트랩 — 두 가지를 한다.
 들어가 `import app` 이 풀린다(`pytest tests/` 로 부르면 수집 단계에서 깨진다). cwd 가 apps/api 여야
 `app.config` 의 `.env` 도 같이 읽힌다.
 
-이 저장소 CI(.github/workflows/build_docker.yml)는 pytest 를 돌리지 않는다 — 로컬 실행이 유일하다.
+CI(.github/workflows/test.yml)가 PR·main 마다 apps/api·shared·worker 를 같은 방식(poetry 새 설치 + `python -m pytest`)으로 돌린다.
 """
 import importlib.util
 import os
