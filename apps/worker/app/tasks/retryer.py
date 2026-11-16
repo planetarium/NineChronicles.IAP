@@ -50,6 +50,11 @@ def get_pending_receipts(session) -> List[Dict]:
     return result
 
 
+def configured_planet_ids() -> List[bytes]:
+    """`gql_url_map` 에 접속 주소가 있는 플래닛. receipt.planet_id 와 같은 bytes 형태."""
+    return [planet_id.encode() for planet_id in config.gql_url_map]
+
+
 def get_null_tx_status_receipts(session) -> List[Dict]:
     """tx_status가 NULL이고 특정 조건에 맞는 영수증들을 조회"""
     query = text(
@@ -64,13 +69,20 @@ def get_null_tx_status_receipts(session) -> List[Dict]:
         --   판별 토큰은 shared.models.product.SEASON_PASS_SKU_TOKEN 한 곳에서 온다(하드코딩 금지).
         AND p.google_sku NOT LIKE :season_pass_pattern
         AND r.status = 'VALID'
+        -- 접속 주소가 없는 플래닛(내린 thor 등)은 다시 보내도 지급할 수 없다. 매분 재전송하면
+        --   concurrency=1 인 product_queue 를 막아 다른 플래닛 지급까지 멈춘다(11/16 인터널 289만 건).
+        AND r.planet_id = ANY(:planet_ids)
         ORDER BY r.id DESC
         """
     )
 
     result = []
     for row in session.execute(
-        query, {"season_pass_pattern": f"%{SEASON_PASS_SKU_TOKEN}%"}
+        query,
+        {
+            "season_pass_pattern": f"%{SEASON_PASS_SKU_TOKEN}%",
+            "planet_ids": configured_planet_ids(),
+        },
     ):
         result.append(
             {
