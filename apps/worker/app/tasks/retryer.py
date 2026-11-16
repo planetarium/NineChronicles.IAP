@@ -93,6 +93,9 @@ def get_null_tx_status_receipts(session) -> List[Dict]:
     return result
 
 
+RETRY_TASK_EXPIRES_SECONDS = 60
+
+
 def send_uuid_to_worker(uuid: str) -> bool:
     """워커에 uuid만 보내서 처리하도록 요청"""
     try:
@@ -106,6 +109,9 @@ def send_uuid_to_worker(uuid: str) -> bool:
             #   거기서 재진입 데드락이 나면 concurrency=1 인 background 워커가 통째로 선다.
             #   beat 은 멀쩡하므로 beat liveness probe 로도 안 잡히는 사각지대다.
             ignore_result=True,
+            # 1분 뒤 이 루프가 같은 영수증을 다시 넣는다. 그 전에 처리되지 못한 사본은 버려야
+            #   노드가 멈춘 동안 대기열이 처리량보다 빨리 쌓이지 않는다(11/16 인터널 289만 건).
+            expires=RETRY_TASK_EXPIRES_SECONDS,
         )
         logger.info(f"UUID {uuid}를 워커에 전송했습니다. task_id: {task.id}")
         return True

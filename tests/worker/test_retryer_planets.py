@@ -19,6 +19,7 @@ from shared.models.receipt import Receipt
 from tests.worker.test_reconcile_purchase_signal import worker_app_imported
 
 ODIN = b"0x000000000000"
+HEIMDALL = b"0x000000000001"
 THOR = b"0x000000000003"
 
 
@@ -43,10 +44,8 @@ def make_receipt(product: Product, planet_id: bytes) -> Receipt:
     )
 
 
-def test_skips_planets_without_gql_url(retryer, db_session, monkeypatch):
-    monkeypatch.setattr(
-        retryer.config, "gql_url_map", {ODIN.decode(): "http://odin/graphql"}
-    )
+@pytest.fixture
+def receipts(db_session):
     product = Product(
         name="Retryer Planet Test",
         google_sku="g_pkg_retryer_planet_test",
@@ -60,12 +59,41 @@ def test_skips_planets_without_gql_url(retryer, db_session, monkeypatch):
     )
     db_session.add(product)
     db_session.commit()
-    odin = make_receipt(product, ODIN)
-    thor = make_receipt(product, THOR)
-    db_session.add_all([odin, thor])
+    rows = {p: make_receipt(product, p) for p in (ODIN, HEIMDALL, THOR)}
+    db_session.add_all(rows.values())
     db_session.commit()
+    return rows
 
-    found = {r["uuid"] for r in retryer.get_null_tx_status_receipts(db_session)}
 
-    assert odin.uuid in found
-    assert thor.uuid not in found
+def found_uuids(retryer, db_session):
+    return {r["uuid"] for r in retryer.get_null_tx_status_receipts(db_session)}
+
+
+def test_skips_planets_without_gql_url(retryer, db_session, receipts, monkeypatch):
+    monkeypatch.setattr(
+        retryer.config,
+        "gql_url_map",
+        {ODIN.decode(): "http://odin/graphql", HEIMDALL.decode(): "http://heimdall/graphql"},
+    )
+
+    found = found_uuids(retryer, db_session)
+
+    assert receipts[ODIN].uuid in found
+    assert receipts[HEIMDALL].uuid in found
+    assert receipts[THOR].uuid not in found
+
+
+def test_empty_gql_url_map_selects_nothing(retryer, db_session, receipts, monkeypatch):
+    monkeypatch.setattr(retryer.config, "gql_url_map", {})
+
+    assert not found_uuids(retryer, db_session) & {r.uuid for r in receipts.values()}
+
+
+def test_retry_task_expires_before_next_round(retryer, monkeypatch):
+    sent = {}
+    monkeypatch.setattr(
+        retryer.app, "send_task", lambda *a, **kw: sent.update(kw) or type("T", (), {"id": "t"})()
+    )
+
+    assert retryer.send_uuid_to_worker("u")
+    assert sent["expires"] == retryer.RETRY_TASK_EXPIRES_SECONDS == 60
