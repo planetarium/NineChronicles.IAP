@@ -242,7 +242,7 @@ def all_product_list(sess=Depends(session)):
     # ⚠️ 복권 티켓 매핑(`product_voucher_grant`)과 이 엔드포인트의 캐시 관계 — 선언과 실제가 다르다.
     #   선언상 `@cache(expire=3600)` 이므로 매핑을 백오피스에서 바꿔도 최대 1시간 늦게 반영돼야 한다.
     #   그런데 fastapi-cache 기본 key_builder 가 **kwargs 를 그대로 키에 넣는데**, 여기 kwargs 에는
-    #   요청마다 새로 만들어지는 `sess`(scoped_session) 가 있어 키가 매번 달라진다 → 실측 5회 요청에
+    #   요청마다 새로 만들어지는 `sess`(Session) 가 있어 키가 매번 달라진다 → 실측 5회 요청에
     #   5회 모두 MISS. 즉 **현재는 캐시가 사실상 동작하지 않아 지연도 없다**(대신 InMemoryBackend 에
     #   요청당 항목이 쌓이고 다시 읽히지 않아 만료 삭제도 안 된다 — 이 PR 범위 밖의 선행 문제).
     #   그래서 여기서는 캐시를 살리지도, TTL 을 손대지도 않는다. 살리는 순간 위 1시간 지연이
